@@ -256,7 +256,8 @@ public static class TwoStepEndpoints
         {
             var id = Sub(user); if (id == null) return Results.Unauthorized();
             var key = "disable|" + tenant.Require().Id + "|" + id; if (Locked(key)) return Results.StatusCode(429);
-            var ok = await svc.DisableAsync(id.Value, await ReadField(req, "password", ct), await ReadField(req, "code", ct), ct);
+            var body = await ReadBody(req, ct);   // the body can be read once: take both fields from it
+            var ok = await svc.DisableAsync(id.Value, Str(body, "password"), Str(body, "code"), ct);
             if (!ok) { Fail(key); return Results.BadRequest(new { error = "password_or_code_not_right" }); }
             fails.TryRemove(key, out _);
             return Results.Ok(new { ok = true });
@@ -301,13 +302,11 @@ public static class TwoStepEndpoints
         }).AllowAnonymous();
     }
 
-    static async Task<string> ReadField(HttpRequest req, string name, CancellationToken ct)
+    static async Task<JsonElement> ReadBody(HttpRequest req, CancellationToken ct)
     {
-        try
-        {
-            var el = await req.ReadFromJsonAsync<JsonElement>(ct);
-            return el.ValueKind == JsonValueKind.Object && el.TryGetProperty(name, out var v) ? v.GetString() ?? "" : "";
-        }
-        catch (JsonException) { return ""; }
+        try { return await req.ReadFromJsonAsync<JsonElement>(ct); }
+        catch (JsonException) { return default; }
     }
+    static string Str(JsonElement el, string name) => el.ValueKind == JsonValueKind.Object && el.TryGetProperty(name, out var v) ? v.GetString() ?? "" : "";
+    static async Task<string> ReadField(HttpRequest req, string name, CancellationToken ct) => Str(await ReadBody(req, ct), name);
 }
