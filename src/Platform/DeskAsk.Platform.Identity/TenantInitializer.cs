@@ -20,6 +20,10 @@ public sealed class IdentitySchema : ITenantSchema
         var db = sp.GetRequiredService<IdentityDb>();
         var exists = await db.Database.SqlQueryRaw<bool>("select to_regclass('identity.users') is not null as \"Value\"").SingleAsync(ct);
         if (!exists) await db.Database.ExecuteSqlRawAsync(db.Database.GenerateCreateScript(), ct);
+        // databases made before two-step sign-in existed get its columns (no-op on new ones)
+        await db.Database.ExecuteSqlRawAsync(@"alter table identity.users
+            add column if not exists totp_secret text, add column if not exists totp_enabled boolean not null default false,
+            add column if not exists totp_last_step bigint not null default 0, add column if not exists recovery_hashes text not null default '[]'", ct);
         var cfg = sp.GetRequiredService<IConfiguration>();
         await SeedAdminAsync(db, cfg, sp.GetRequiredService<IPasswordHasher<UserAccount>>(), ct);
         await SeedClientsAsync(sp.GetRequiredService<IOpenIddictApplicationManager>(), cfg, ct);

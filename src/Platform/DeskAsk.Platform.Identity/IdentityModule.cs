@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -43,6 +44,9 @@ public sealed class IdentityModule : IPlatformModule
         });
         s.AddSingleton<IPasswordHasher<UserAccount>, PasswordHasher<UserAccount>>();
         s.AddSingleton<ITenantSchema, IdentitySchema>();
+        s.AddDataProtection();
+        s.AddSingleton<ITotpClock, SystemTotpClock>();
+        s.AddScoped<TwoStepService>();
         s.AddAntiforgery(o => { o.Cookie.Name = "dk.csrf"; o.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest; });
         s.AddAuthentication(OpenIddictValidationAspNetCoreDefaults.AuthenticationScheme)
             .AddCookie(CookieName, o =>
@@ -98,6 +102,7 @@ public sealed class IdentityModule : IPlatformModule
         r.MapMethods("/connect/logout", new[] { "GET", "POST" }, Logout).AllowAnonymous();
         r.MapGet("/account/login", LoginPage).AllowAnonymous();
         r.MapPost("/account/login", LoginPost).AllowAnonymous();
+        TwoStepEndpoints.Map(r);
         r.MapGet("/api/platform/me", (ClaimsPrincipal u) => Results.Ok(new
         {
             sub = u.FindFirstValue(Claims.Subject), email = u.FindFirstValue(Claims.Email),
@@ -107,7 +112,7 @@ public sealed class IdentityModule : IPlatformModule
 
     // ---------------------------------------------------------------- OpenID Connect endpoints
 
-    static async Task<IResult> Authorize(HttpContext http, IdentityDb db, ITenantContext tenant)
+    static async Task<IResult> Authorize(HttpContext http, IdentityDb db, ITenantContext tenant, ISettings settings)
     {
         var req = http.GetOpenIddictServerRequest() ?? throw new InvalidOperationException("No OpenID Connect request.");
         var cookie = await http.AuthenticateAsync(CookieName);
@@ -124,7 +129,15 @@ public sealed class IdentityModule : IPlatformModule
         }
         var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == uid && x.Active, http.RequestAborted);
         if (user == null) { await http.SignOutAsync(CookieName); return Fail(Errors.LoginRequired, "This account is not active."); }
-        var p = Principal(user, tenant.Require());
+        var mfa = cookie.Principal!.HasClaim("mfa", "1");
+        if (user.TotpEnabled && !mfa)   // a session made without the second step is not enough for someone who has one
+        {
+            await http.SignOutAsync(CookieName);
+            return Results.Challenge(new AuthenticationProperties { RedirectUri = http.Request.Path + http.Request.QueryString }, new[] { CookieName });
+        }
+        if (!user.TotpEnabled && await settings.GetAsync("security.require_2fa", http.RequestAborted) == "true")
+            return Results.Redirect("/account/security?returnUrl=" + Uri.EscapeDataString(http.Request.Path + http.Request.QueryString));
+        var p = Principal(user, tenant.Require(), mfa ? new[] { "pwd", "otp" } : new[] { "pwd" });
         p.SetScopes(req.GetScopes());
         SetDestinations(p);
         return Results.SignIn(p, authenticationScheme: OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
@@ -141,7 +154,7 @@ public sealed class IdentityModule : IPlatformModule
         if (old == null || !Guid.TryParse(old.GetClaim(Claims.Subject), out var uid)) return Fail(Errors.InvalidGrant, "The grant is not valid.");
         var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == uid && x.Active, http.RequestAborted);
         if (user == null) return Fail(Errors.InvalidGrant, "This account is not active any more.");
-        var p = Principal(user, tenant.Require());    // claims are rebuilt from the database: a role change shows at the next refresh
+        var p = Principal(user, tenant.Require(), old.GetClaims("amr").ToArray());    // claims are rebuilt from the database: a role change shows at the next refresh
         p.SetScopes(old.GetScopes());
         SetDestinations(p);
         return Results.SignIn(p, authenticationScheme: OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
@@ -174,7 +187,7 @@ public sealed class IdentityModule : IPlatformModule
             [OpenIddictServerAspNetCoreConstants.Properties.ErrorDescription] = description,
         }), new[] { OpenIddictServerAspNetCoreDefaults.AuthenticationScheme });
 
-    static ClaimsPrincipal Principal(UserAccount u, TenantInfo t)
+    static ClaimsPrincipal Principal(UserAccount u, TenantInfo t, string[] amr)
     {
         var id = new ClaimsIdentity("DeskAsk", Claims.Name, Claims.Role);
         id.SetClaim(Claims.Subject, u.Id.ToString());
@@ -182,6 +195,7 @@ public sealed class IdentityModule : IPlatformModule
         id.SetClaim(Claims.Name, u.Name);
         id.SetClaim(Claims.Role, u.Role);
         id.SetClaim("tenant", t.Id);
+        id.SetClaims("amr", amr.ToImmutableArray());
         return new ClaimsPrincipal(id);
     }
 
@@ -199,11 +213,11 @@ public sealed class IdentityModule : IPlatformModule
 
     // ---------------------------------------------------------------- sign-in page
 
-    static string Html(string body) => "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Sign in</title>"
+    internal static string Html(string body) => "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Sign in</title>"
         + "<style>body{font-family:system-ui,sans-serif;background:#f4f5f7;display:flex;justify-content:center;padding-top:10vh}form{background:#fff;padding:28px;border-radius:10px;width:320px;box-shadow:0 2px 12px #0002}"
         + "input,button{width:100%;box-sizing:border-box;padding:10px;margin:6px 0;font-size:16px}button{background:#14213d;color:#fff;border:0;border-radius:6px}.e{color:#b00020}</style></head><body>" + body + "</body></html>";
 
-    static string LocalOrRoot(string? url) =>
+    internal static string LocalOrRoot(string? url) =>
         !string.IsNullOrEmpty(url) && url[0] == '/' && !url.StartsWith("//") && !url.StartsWith("/\\") ? url : "/";
 
     static IResult Page(HttpContext http, IAntiforgery af, string? returnUrl, string error = "", int status = 200)
@@ -249,6 +263,7 @@ public sealed class IdentityModule : IPlatformModule
             return Page(http, af, returnUrl, "Email or password is not correct.", StatusCodes.Status401Unauthorized);
         }
         fails.TryRemove(key, out _);
+        if (user.TotpEnabled) return TwoStepEndpoints.Pending(http, af, user.Id, returnUrl);   // password was right; the session starts after the second step
         await audit.WriteAsync("auth.login", target: email, actor: email);
         if (res == PasswordVerificationResult.SuccessRehashNeeded) { user.PasswordHash = hasher.HashPassword(user, f["password"].ToString()); await db.SaveChangesAsync(http.RequestAborted); }
         await http.SignInAsync(CookieName, new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", user.Id.ToString()) }, CookieName)));

@@ -11,6 +11,10 @@ public sealed class UserAccount
     public string PasswordHash { get; set; } = "";
     public bool Active { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public string? TotpSecret { get; set; }              // sealed (AES-GCM), see TwoStepService
+    public bool TotpEnabled { get; set; }
+    public long TotpLastStep { get; set; }               // a code is accepted once: only steps after this one
+    public string RecoveryHashes { get; set; } = "[]";   // SHA-256 of the unused recovery codes
 }
 
 /// <summary>The identity schema of one customer database: users plus the OpenIddict tables (clients, authorizations, tokens).</summary>
@@ -30,6 +34,10 @@ public sealed class IdentityDb : DbContext
             e.Property(x => x.Email).HasMaxLength(320);
             e.Property(x => x.Name).HasMaxLength(200);
             e.Property(x => x.Role).HasMaxLength(50);
+            e.Property(x => x.TotpSecret).HasColumnName("totp_secret");
+            e.Property(x => x.TotpEnabled).HasColumnName("totp_enabled");
+            e.Property(x => x.TotpLastStep).HasColumnName("totp_last_step");
+            e.Property(x => x.RecoveryHashes).HasColumnName("recovery_hashes");
         });
     }
 }
