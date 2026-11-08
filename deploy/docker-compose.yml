@@ -1,0 +1,13 @@
+# Local development stack: docker compose -f deploy/docker-compose.yml up -d
+services:
+  postgres:
+    image: postgres:17
+    environment: { POSTGRES_PASSWORD: dev, POSTGRES_DB: deskask_platform }
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data", "./catalog.sql:/docker-entrypoint-initdb.d/catalog.sql:ro"]
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment: { MINIO_ROOT_USER: dev, MINIO_ROOT_PASSWORD: devdevdev }
+    ports: ["9000:9000", "9001:9001"]
+volumes: { pgdata: {} }

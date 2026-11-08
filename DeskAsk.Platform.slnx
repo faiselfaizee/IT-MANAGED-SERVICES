@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Platform/DeskAsk.Platform.Abstractions/DeskAsk.Platform.Abstractions.csproj" />
+    <Project Path="src/Platform/DeskAsk.Platform.Tenancy/DeskAsk.Platform.Tenancy.csproj" />
+    <Project Path="src/Platform/DeskAsk.Platform.Host/DeskAsk.Platform.Host.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DeskAsk.Platform.Tests/DeskAsk.Platform.Tests.csproj" />
+  </Folder>
+</Solution>
