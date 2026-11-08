@@ -1,4 +1,5 @@
 using DeskAsk.Platform;
+using DeskAsk.Platform.Connect;
 using DeskAsk.Platform.Core;
 using DeskAsk.Platform.Identity;
 using DeskAsk.Platform.Tenancy;
@@ -17,7 +18,7 @@ ITenantCatalog catalog = string.IsNullOrWhiteSpace(catalogConn)
 builder.Services.AddTenancy(catalog);
 
 // Modules register here as they are built (Phase 1 onward).
-var modules = new List<IPlatformModule> { new CoreModule(), new IdentityModule() };
+var modules = new List<IPlatformModule> { new CoreModule(), new IdentityModule(), new ConnectModule() };
 foreach (var m in modules) m.AddServices(builder.Services, builder.Configuration);
 
 var app = builder.Build();

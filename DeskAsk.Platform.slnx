@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Platform/DeskAsk.Platform.Abstractions/DeskAsk.Platform.Abstractions.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Tenancy/DeskAsk.Platform.Tenancy.csproj" />
+    <Project Path="src/Platform/DeskAsk.Platform.Connect/DeskAsk.Platform.Connect.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Core/DeskAsk.Platform.Core.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Identity/DeskAsk.Platform.Identity.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Host/DeskAsk.Platform.Host.csproj" />

@@ -25,7 +25,9 @@ func main() {
 	defer stop()
 	c := &link.Client{BaseURL: *url, Token: *token}
 	log.Printf("deskask agent %s -> %s", version, *url)
-	c.Run(ctx, link.Hello{AgentID: *id, Version: version, Plugins: []string{}}, 30*time.Second, func(err error) { log.Printf("heartbeat failed: %v", err) })
+	if err := c.Run(ctx, link.Hello{AgentID: *id, Version: version, Plugins: []string{}}, 30*time.Second, func(err error) { log.Printf("heartbeat failed: %v", err) }); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func mustHost() string { h, _ := os.Hostname(); return h }

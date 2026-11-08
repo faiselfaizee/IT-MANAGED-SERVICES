@@ -5,10 +5,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 )
+
+// ErrRevoked means the platform does not accept this agent token (any more). Retrying will not help.
+var ErrRevoked = errors.New("the platform does not accept this agent token")
+
+// Response is what the platform answers to a heartbeat.
+type Response struct {
+	OK              bool `json:"ok"`
+	IntervalSeconds int  `json:"intervalSeconds"`
+}
 
 type Hello struct {
 	AgentID string   `json:"agentId"`
@@ -22,11 +32,12 @@ type Client struct {
 	HTTP    *http.Client
 }
 
-func (c *Client) Heartbeat(ctx context.Context, h Hello) error {
+func (c *Client) Heartbeat(ctx context.Context, h Hello) (Response, error) {
+	var out Response
 	b, _ := json.Marshal(h)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/connect/heartbeat", bytes.NewReader(b))
 	if err != nil {
-		return err
+		return out, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.Token)
@@ -36,13 +47,17 @@ func (c *Client) Heartbeat(ctx context.Context, h Hello) error {
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return err
+		return out, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("platform answered %d", resp.StatusCode)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return out, ErrRevoked
 	}
-	return nil
+	if resp.StatusCode/100 != 2 {
+		return out, fmt.Errorf("platform answered %d", resp.StatusCode)
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out) // an empty answer is fine: keep our own interval
+	return out, nil
 }
 
 // Backoff doubles from 1 s up to 60 s: a platform restart never makes agents hammer it.
@@ -54,17 +69,25 @@ func Backoff(failures int) time.Duration {
 	return min(d, 60*time.Second)
 }
 
-// Run sends a heartbeat every interval until ctx ends, backing off while the platform is unreachable.
-func (c *Client) Run(ctx context.Context, h Hello, every time.Duration, onErr func(error)) {
+// Run sends a heartbeat every interval until ctx ends, backing off while the platform is unreachable and
+// following the interval the platform asks for. It returns ErrRevoked when the token is refused, nil when ctx ends.
+func (c *Client) Run(ctx context.Context, h Hello, every time.Duration, onErr func(error)) error {
 	fails := 0
 	for {
-		if err := c.Heartbeat(ctx, h); err != nil {
+		resp, err := c.Heartbeat(ctx, h)
+		if errors.Is(err, ErrRevoked) {
+			return err
+		}
+		if err != nil {
 			fails++
-			if onErr != nil {
+			if onErr != nil && ctx.Err() == nil {
 				onErr(err)
 			}
 		} else {
 			fails = 0
+			if resp.IntervalSeconds > 0 {
+				every = time.Duration(resp.IntervalSeconds) * time.Second
+			}
 		}
 		wait := every
 		if fails > 0 {
@@ -72,7 +95,7 @@ func (c *Client) Run(ctx context.Context, h Hello, every time.Duration, onErr fu
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-time.After(wait):
 		}
 	}
