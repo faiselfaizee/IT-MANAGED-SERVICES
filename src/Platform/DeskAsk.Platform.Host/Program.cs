@@ -1,4 +1,5 @@
 using DeskAsk.Platform;
+using DeskAsk.Platform.Core;
 using DeskAsk.Platform.Identity;
 using DeskAsk.Platform.Tenancy;
 
@@ -16,11 +17,12 @@ ITenantCatalog catalog = string.IsNullOrWhiteSpace(catalogConn)
 builder.Services.AddTenancy(catalog);
 
 // Modules register here as they are built (Phase 1 onward).
-var modules = new List<IPlatformModule> { new IdentityModule() };
+var modules = new List<IPlatformModule> { new CoreModule(), new IdentityModule() };
 foreach (var m in modules) m.AddServices(builder.Services, builder.Configuration);
 
 var app = builder.Build();
 app.UseTenancy();
+app.UseTenantSchemas();
 app.UseIdentity();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", version = typeof(Program).Assembly.GetName().Version?.ToString(), roles = roles.ToString() }));

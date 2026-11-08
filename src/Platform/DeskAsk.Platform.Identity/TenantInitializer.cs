@@ -1,5 +1,3 @@
-using System.Collections.Concurrent;
-using DeskAsk.Platform.Tenancy;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -13,28 +11,18 @@ namespace DeskAsk.Platform.Identity;
 /// Makes sure a customer database has the identity schema, a first administrator and the configured sign-in clients.
 /// Runs once per customer per process, on the customer's first request. (Real migrations replace the create script later.)
 /// </summary>
-public sealed class TenantInitializer
+public sealed class IdentitySchema : ITenantSchema
 {
-    readonly ConcurrentDictionary<string, SemaphoreSlim> locks = new();
-    readonly ConcurrentDictionary<string, bool> done = new();
+    public string Name => "identity";
 
     public async Task EnsureAsync(IServiceProvider sp, TenantInfo tenant, CancellationToken ct)
     {
-        if (done.ContainsKey(tenant.Id)) return;
-        var gate = locks.GetOrAdd(tenant.Id, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(ct);
-        try
-        {
-            if (done.ContainsKey(tenant.Id)) return;
-            var db = sp.GetRequiredService<IdentityDb>();
-            var exists = await db.Database.SqlQueryRaw<bool>("select to_regclass('identity.users') is not null as \"Value\"").SingleAsync(ct);
-            if (!exists) await db.Database.ExecuteSqlRawAsync(db.Database.GenerateCreateScript(), ct);
-            var cfg = sp.GetRequiredService<IConfiguration>();
-            await SeedAdminAsync(db, cfg, sp.GetRequiredService<IPasswordHasher<UserAccount>>(), ct);
-            await SeedClientsAsync(sp.GetRequiredService<IOpenIddictApplicationManager>(), cfg, ct);
-            done[tenant.Id] = true;
-        }
-        finally { gate.Release(); }
+        var db = sp.GetRequiredService<IdentityDb>();
+        var exists = await db.Database.SqlQueryRaw<bool>("select to_regclass('identity.users') is not null as \"Value\"").SingleAsync(ct);
+        if (!exists) await db.Database.ExecuteSqlRawAsync(db.Database.GenerateCreateScript(), ct);
+        var cfg = sp.GetRequiredService<IConfiguration>();
+        await SeedAdminAsync(db, cfg, sp.GetRequiredService<IPasswordHasher<UserAccount>>(), ct);
+        await SeedClientsAsync(sp.GetRequiredService<IOpenIddictApplicationManager>(), cfg, ct);
     }
 
     static async Task SeedAdminAsync(IdentityDb db, IConfiguration cfg, IPasswordHasher<UserAccount> hasher, CancellationToken ct)

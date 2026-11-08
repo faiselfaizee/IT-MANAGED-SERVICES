@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <ItemGroup>
     <ProjectReference Include="..\DeskAsk.Platform.Abstractions\DeskAsk.Platform.Abstractions.csproj" />
+    <ProjectReference Include="..\DeskAsk.Platform.Core\DeskAsk.Platform.Core.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.Identity\DeskAsk.Platform.Identity.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.Tenancy\DeskAsk.Platform.Tenancy.csproj" />
   </ItemGroup>

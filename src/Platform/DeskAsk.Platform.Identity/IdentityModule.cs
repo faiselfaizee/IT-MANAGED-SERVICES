@@ -42,7 +42,7 @@ public sealed class IdentityModule : IPlatformModule
             o.UseOpenIddict();
         });
         s.AddSingleton<IPasswordHasher<UserAccount>, PasswordHasher<UserAccount>>();
-        s.AddSingleton<TenantInitializer>();
+        s.AddSingleton<ITenantSchema, IdentitySchema>();
         s.AddAntiforgery(o => { o.Cookie.Name = "dk.csrf"; o.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest; });
         s.AddAuthentication(OpenIddictValidationAspNetCoreDefaults.AuthenticationScheme)
             .AddCookie(CookieName, o =>
@@ -159,9 +159,11 @@ public sealed class IdentityModule : IPlatformModule
         return Results.Ok(d);
     }
 
-    static async Task<IResult> Logout(HttpContext http)
+    static async Task<IResult> Logout(HttpContext http, IAuditLog audit)
     {
+        var who = (await http.AuthenticateAsync(CookieName)).Principal?.FindFirstValue("sub");
         await http.SignOutAsync(CookieName);
+        if (who != null) await audit.WriteAsync("auth.logout", actor: who);
         return Results.SignOut(new AuthenticationProperties { RedirectUri = "/" }, new[] { OpenIddictServerAspNetCoreDefaults.AuthenticationScheme });
     }
 
@@ -224,7 +226,7 @@ public sealed class IdentityModule : IPlatformModule
     const int MaxFails = 5;
     static readonly UserAccount Dummy = new();
 
-    static async Task<IResult> LoginPost(HttpContext http, IAntiforgery af, IdentityDb db, IPasswordHasher<UserAccount> hasher, ITenantContext tenant, ILogger<IdentityModule> log)
+    static async Task<IResult> LoginPost(HttpContext http, IAntiforgery af, IdentityDb db, IPasswordHasher<UserAccount> hasher, ITenantContext tenant, ILogger<IdentityModule> log, IAuditLog audit)
     {
         try { await af.ValidateRequestAsync(http); } catch (AntiforgeryValidationException) { return Results.BadRequest(new { error = "invalid_form" }); }
         var f = await http.Request.ReadFormAsync();
@@ -232,7 +234,10 @@ public sealed class IdentityModule : IPlatformModule
         var returnUrl = f["returnUrl"].ToString();
         var key = tenant.Require().Id + "|" + email;
         if (fails.TryGetValue(key, out var fl) && fl.n >= MaxFails && fl.until > DateTime.UtcNow)
+        {
+            await audit.WriteAsync("auth.locked", target: email, actor: email);
             return Page(http, af, returnUrl, "Too many attempts. Try again in a few minutes.", StatusCodes.Status429TooManyRequests);
+        }
 
         var user = await db.Users.FirstOrDefaultAsync(x => x.Email == email && x.Active, http.RequestAborted);
         var res = hasher.VerifyHashedPassword(user ?? Dummy, user?.PasswordHash ?? hasher.HashPassword(Dummy, "x"), f["password"].ToString());   // same work whether or not the account exists
@@ -240,9 +245,11 @@ public sealed class IdentityModule : IPlatformModule
         {
             fails.AddOrUpdate(key, (1, DateTime.UtcNow.AddMinutes(15)), (_, o) => (o.until > DateTime.UtcNow ? o.n + 1 : 1, DateTime.UtcNow.AddMinutes(15)));
             log.LogWarning("Failed sign-in for {Email} on {Tenant}", email, tenant.Require().Id);
+            await audit.WriteAsync("auth.login_failed", target: email, actor: email);
             return Page(http, af, returnUrl, "Email or password is not correct.", StatusCodes.Status401Unauthorized);
         }
         fails.TryRemove(key, out _);
+        await audit.WriteAsync("auth.login", target: email, actor: email);
         if (res == PasswordVerificationResult.SuccessRehashNeeded) { user.PasswordHash = hasher.HashPassword(user, f["password"].ToString()); await db.SaveChangesAsync(http.RequestAborted); }
         await http.SignInAsync(CookieName, new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", user.Id.ToString()) }, CookieName)));
         return Results.Redirect(LocalOrRoot(returnUrl));
@@ -251,18 +258,6 @@ public sealed class IdentityModule : IPlatformModule
 
 public static class IdentityPipeline
 {
-    /// <summary>After tenancy: prepares the customer's identity schema, then authentication and authorization.</summary>
-    public static IApplicationBuilder UseIdentity(this IApplicationBuilder app)
-    {
-        app.Use(async (http, next) =>
-        {
-            if (!http.Request.Path.StartsWithSegments("/health"))
-            {
-                var t = http.RequestServices.GetRequiredService<ITenantContext>().Current;
-                if (t != null && t.ConnectionString != "") await http.RequestServices.GetRequiredService<TenantInitializer>().EnsureAsync(http.RequestServices, t, http.RequestAborted);
-            }
-            await next();
-        });
-        return app.UseAuthentication().UseAuthorization();
-    }
+    /// <summary>After tenancy and tenant schemas: authentication and authorization.</summary>
+    public static IApplicationBuilder UseIdentity(this IApplicationBuilder app) => app.UseAuthentication().UseAuthorization();
 }

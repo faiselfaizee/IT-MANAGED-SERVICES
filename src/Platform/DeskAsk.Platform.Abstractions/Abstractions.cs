@@ -28,3 +28,26 @@ public interface IPlatformModule
     void AddServices(IServiceCollection services, IConfiguration configuration);
     void MapEndpoints(IEndpointRouteBuilder routes);
 }
+
+/// <summary>Writes to the customer's tamper-evident audit log (each row carries the hash of the one before it).</summary>
+public interface IAuditLog
+{
+    /// <summary>actor defaults to the signed-in person of the current request, else "system".</summary>
+    Task WriteAsync(string action, string target = "", string detail = "", string? actor = null, CancellationToken ct = default);
+}
+
+/// <summary>Per-customer settings, stored as JSON text. Never put secrets here (use the Vault module).</summary>
+public interface ISettings
+{
+    Task<string?> GetAsync(string key, CancellationToken ct = default);
+    Task SetAsync(string key, string jsonValue, CancellationToken ct = default);
+    Task<bool> DeleteAsync(string key, CancellationToken ct = default);
+    Task<IReadOnlyDictionary<string, string>> ListAsync(string prefix = "", CancellationToken ct = default);
+}
+
+/// <summary>A module's part of the customer database. Run once per customer per process, before the first request is handled.</summary>
+public interface ITenantSchema
+{
+    string Name { get; }
+    Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct);
+}

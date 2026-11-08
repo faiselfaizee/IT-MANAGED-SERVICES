@@ -69,6 +69,35 @@ public sealed class TenantResolutionMiddleware
     }
 }
 
+/// <summary>After tenancy: lets every module prepare its schema in the customer database (once per customer per process).</summary>
+public sealed class TenantSchemaMiddleware
+{
+    readonly RequestDelegate next;
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> done = new();
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> locks = new();
+    public TenantSchemaMiddleware(RequestDelegate next) => this.next = next;
+    public async Task InvokeAsync(HttpContext http, IEnumerable<ITenantSchema> schemas, ITenantContext ctx)
+    {
+        var t = ctx.Current;
+        if (t != null && t.ConnectionString != "")
+            foreach (var sc in schemas)
+            {
+                var key = t.Id + "|" + sc.Name;
+                if (done.ContainsKey(key)) continue;
+                var gate = locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+                await gate.WaitAsync(http.RequestAborted);
+                try
+                {
+                    if (done.ContainsKey(key)) continue;
+                    await sc.EnsureAsync(http.RequestServices, t, http.RequestAborted);
+                    done[key] = true;
+                }
+                finally { gate.Release(); }
+            }
+        await next(http);
+    }
+}
+
 public static class TenancyExtensions
 {
     public static IServiceCollection AddTenancy(this IServiceCollection s, ITenantCatalog catalog)
@@ -78,5 +107,6 @@ public static class TenancyExtensions
         s.AddScoped<ITenantContext>(sp => sp.GetRequiredService<TenantContext>());
         return s;
     }
+    public static IApplicationBuilder UseTenantSchemas(this IApplicationBuilder app) => app.UseMiddleware<TenantSchemaMiddleware>();
     public static IApplicationBuilder UseTenancy(this IApplicationBuilder app) => app.UseMiddleware<TenantResolutionMiddleware>();
 }
