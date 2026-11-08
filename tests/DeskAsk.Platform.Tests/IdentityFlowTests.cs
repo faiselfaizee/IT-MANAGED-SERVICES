@@ -49,6 +49,7 @@ public class IdentityFlowTests : IClassFixture<WebApplicationFactory<Program>>
         { ["__RequestVerificationToken"] = token, ["returnUrl"] = returnUrl, ["email"] = "admin@acme.test", ["password"] = password }));
     }
 
+    static string PathOf(Uri u) => u.IsAbsoluteUri ? u.PathAndQuery : u.OriginalString;
     static JsonElement Json(string s) => JsonDocument.Parse(s).RootElement;
     static JsonElement Jwt(string jwt) => Json(Encoding.UTF8.GetString(Convert.FromBase64String(jwt.Split('.')[1].Replace('-', '+').Replace('_', '/').PadRight((jwt.Split('.')[1].Length + 3) / 4 * 4, '='))));
 
@@ -57,7 +58,7 @@ public class IdentityFlowTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var c = NewClient();
         var d = Json(await c.GetStringAsync("/.well-known/openid-configuration"));
-        Assert.Equal("http://localhost", d.GetProperty("issuer").GetString());
+        Assert.Equal("http://localhost", d.GetProperty("issuer").GetString()!.TrimEnd('/'));
         Assert.Contains("S256", d.GetProperty("code_challenge_methods_supported").EnumerateArray().Select(x => x.GetString()));
         var jwks = Json(await c.GetStringAsync("/.well-known/jwks"));
         Assert.True(jwks.GetProperty("keys").GetArrayLength() > 0);
@@ -72,7 +73,7 @@ public class IdentityFlowTests : IClassFixture<WebApplicationFactory<Program>>
 
         var first = await c.GetAsync(url);                                   // not signed in: sent to the sign-in page
         Assert.Equal(HttpStatusCode.Redirect, first.StatusCode);
-        Assert.StartsWith("/account/login", first.Headers.Location!.OriginalString);
+        Assert.StartsWith("/account/login", PathOf(first.Headers.Location!));
 
         var bad = await Login(c, url, "wrong-password");
         Assert.Equal(HttpStatusCode.Unauthorized, bad.StatusCode);
@@ -82,9 +83,8 @@ public class IdentityFlowTests : IClassFixture<WebApplicationFactory<Program>>
 
         var back = await c.GetAsync(url);                                    // signed in: back to the app with a code
         Assert.Equal(HttpStatusCode.Redirect, back.StatusCode);
-        var loc = new Uri("http://localhost" + (back.Headers.Location!.IsAbsoluteUri ? back.Headers.Location.PathAndQuery : back.Headers.Location.OriginalString));
-        Assert.StartsWith(Redirect, back.Headers.Location.ToString());
-        var q = System.Web.HttpUtility.ParseQueryString(back.Headers.Location.Query);
+        Assert.StartsWith(Redirect, back.Headers.Location!.ToString());
+        var q = System.Web.HttpUtility.ParseQueryString(new Uri(back.Headers.Location.ToString()).Query);
         Assert.Equal("st1", q["state"]);
         var code = q["code"]; Assert.False(string.IsNullOrEmpty(code));
 
