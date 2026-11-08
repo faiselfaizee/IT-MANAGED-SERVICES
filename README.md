@@ -16,6 +16,8 @@ One platform for Service Desk, Assets, Monitoring, AD Manager, Vault and Backup.
 3. `cd web && npm ci && npm run dev`, open http://localhost:5173
 
 ## Phase 0 status
-Done: repository layout, ADRs, tenancy (host name to customer), host with roles, web shell, agent heartbeat, CI.
-Next (Phase 0 gate): identity (OpenIddict), audit, licensing/entitlements, settings, jobs, the Connect gateway endpoint the agent calls, signed bundles.
+Done: repository layout, ADRs, tenancy (host name to customer), host with roles, web shell, agent heartbeat, CI, identity (OpenIddict: code flow + PKCE, users and clients in each customer database, sign-in page, userinfo, tested end to end against PostgreSQL in CI).
+Next (Phase 0 gate): audit, licensing/entitlements, settings, jobs, the Connect gateway endpoint the agent calls, two-step sign-in, per-customer signing keys, signed bundles.
+
+Identity notes: the issuer is the customer's web address and ends with "/" (OpenIddict default). Signing key: `Identity:SigningKeyPem` (EC P-256 PEM) plus `Identity:EncryptionSecret`; without them keys are made new at every start (development only). Clients come from `Identity:Clients:N:*` configuration for now. First admin: `Platform:BootstrapAdmin:Email/Password`.
 Note: the .NET part was written without a .NET SDK at hand; the first `dotnet build` is the real test. The web and agent parts are built and tested.
