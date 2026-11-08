@@ -65,7 +65,7 @@ public class TwoStepFlowTests : IClassFixture<WebApplicationFactory<Program>>
     static async Task Cleanup()
     {
         await using var db = new NpgsqlConnection(Environment.GetEnvironmentVariable("TEST_PG_CONNECTION")); await db.OpenAsync();
-        await using var cmd = new NpgsqlCommand("update identity.users set totp_enabled = false, totp_secret = null, recovery_hashes = '[]', totp_last_step = 0", db);
+        await using var cmd = new NpgsqlCommand("update identity.users set totp_enabled = false, totp_secret = null, recovery_hashes = '[]', totp_last_step = 0; delete from core.settings where key = 'security.require_2fa'", db);
         await cmd.ExecuteNonQueryAsync();
     }
 
@@ -200,12 +200,7 @@ public class TwoStepFlowTests : IClassFixture<WebApplicationFactory<Program>>
             var page = await (await c.GetAsync("/account/security?returnUrl=" + Uri.EscapeDataString(url))).Content.ReadAsStringAsync();
             Assert.Contains("Switch on two-step sign-in", page);
         }
-        finally
-        {
-            var admin = await TestSupport.AdminClient(factory);
-            await admin.DeleteAsync("/api/platform/settings/security.require_2fa");
-            await Cleanup();
-        }
+        finally { await Cleanup(); }
     }
 
     [PgFact]
