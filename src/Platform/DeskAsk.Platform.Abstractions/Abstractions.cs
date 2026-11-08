@@ -51,3 +51,50 @@ public interface ITenantSchema
     string Name { get; }
     Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct);
 }
+
+/// <summary>The product modules a customer can be licensed for.</summary>
+public static class Modules
+{
+    public const string ServiceDesk = "servicedesk", Assets = "assets", Monitoring = "monitoring", AdSuite = "adsuite", Vault = "vault", Backup = "backup";
+    public static readonly string[] All = { ServiceDesk, Assets, Monitoring, AdSuite, Vault, Backup };
+}
+
+public sealed record ModuleGrant(Dictionary<string, int>? Limits = null);
+
+/// <summary>What the vendor signed: who, which plan, which modules (with limits), from when to when.</summary>
+public sealed record LicensePayload(int V, string Tenant, string Plan, long Issued, long NotBefore, long Expires, int GraceDays, Dictionary<string, ModuleGrant> Modules);
+
+public enum LicenseState { Missing, Invalid, NotYetValid, Valid, Grace, Expired }
+
+public sealed record License(LicenseState State, LicensePayload? Payload, string Reason)
+{
+    /// <summary>Valid, or expired but still inside the grace period.</summary>
+    public bool InForce => State is LicenseState.Valid or LicenseState.Grace;
+    public bool Has(string module) => InForce && Payload != null && Payload.Modules.ContainsKey(module);
+    public int? Limit(string module, string name) =>
+        Has(module) && Payload!.Modules[module].Limits is { } l && l.TryGetValue(name, out var v) ? v : null;
+}
+
+/// <summary>The licence of the current customer. Modules ask this; they never read licence files themselves.</summary>
+public interface IEntitlements
+{
+    Task<License> CurrentAsync(CancellationToken ct = default);
+}
+
+public static class EntitlementExtensions
+{
+    /// <summary>402 {"error":"module_not_licensed"} unless the customer's licence includes the module.</summary>
+    public static RouteHandlerBuilder RequireModule(this RouteHandlerBuilder b, string module) =>
+        b.AddEndpointFilter(async (ctx, next) =>
+        {
+            var lic = await ctx.HttpContext.RequestServices.GetRequiredService<IEntitlements>().CurrentAsync(ctx.HttpContext.RequestAborted);
+            return lic.Has(module) ? await next(ctx) : Results.Json(new { error = "module_not_licensed", module }, statusCode: 402);
+        });
+
+    /// <summary>True when count is still below the licensed limit (no limit = unlimited). Call before creating the next item.</summary>
+    public static async Task<bool> WithinLimitAsync(this IEntitlements e, string module, string limit, long currentCount, CancellationToken ct = default)
+    {
+        var l = (await e.CurrentAsync(ct)).Limit(module, limit);
+        return l == null || currentCount < l;
+    }
+}

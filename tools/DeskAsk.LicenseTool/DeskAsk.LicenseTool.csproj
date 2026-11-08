@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>deskask-license</AssemblyName></PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\..\src\Platform\DeskAsk.Platform.Licensing\DeskAsk.Platform.Licensing.csproj" /></ItemGroup>
+</Project>

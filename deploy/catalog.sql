@@ -5,3 +5,7 @@ create table if not exists platform.tenants (
 insert into platform.tenants (id, name, host, connection_string)
 values ('dev', 'Development', 'localhost', 'Host=localhost;Database=deskask_dev;Username=postgres;Password=dev')
 on conflict do nothing;
+
+-- SaaS licences: one signed token per customer, issued with tools/DeskAsk.LicenseTool
+create table if not exists platform.licenses (
+  tenant_id text primary key references platform.tenants(id), token text not null, updated_at timestamptz not null default now());
