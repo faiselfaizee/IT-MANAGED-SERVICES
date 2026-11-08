@@ -69,6 +69,9 @@ public class TwoStepFlowTests : IClassFixture<WebApplicationFactory<Program>>
         await cmd.ExecuteNonQueryAsync();
     }
 
+    /// <summary>Makes sure the customer schemas exist (the first request creates them), then clears two-step state. Tests may run in any order.</summary>
+    async Task Reset() { await factory.CreateClient().GetAsync("/api/platform/whoami"); await Cleanup(); }
+
     // password step of the browser sign-in; returns the client (holding cookies), the authorize address, the PKCE verifier and the answer
     async Task<(HttpClient c, string url, string verifier, HttpResponseMessage resp)> PasswordStep()
     {
@@ -102,7 +105,7 @@ public class TwoStepFlowTests : IClassFixture<WebApplicationFactory<Program>>
     {
         try
         {
-            await Cleanup();
+            await Reset();
             var (secret, recovery, admin) = await SwitchOn();
             Assert.Equal(10, recovery.Length); Assert.Matches("^[a-z2-7]{5}-[a-z2-7]{5}$", recovery[0]);
             Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync("/api/account/totp/setup", null)).StatusCode);   // already on
@@ -161,7 +164,7 @@ public class TwoStepFlowTests : IClassFixture<WebApplicationFactory<Program>>
     {
         try
         {
-            await Cleanup();
+            await Reset();
             var admin = await TestSupport.AdminClient(factory);
             await admin.PostAsync("/api/account/totp/setup", null);
             Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync("/api/account/totp/enable", Json(new { code = "000000" }))).StatusCode);
@@ -175,7 +178,7 @@ public class TwoStepFlowTests : IClassFixture<WebApplicationFactory<Program>>
     {
         try
         {
-            await Cleanup();
+            await Reset();
             var (_, _, admin) = await SwitchOn();
             Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/admin/users/totp-reset", Json(new { email = "admin@acme.test" }))).StatusCode);
             Assert.False(Parse(await admin.GetStringAsync("/api/account/security")).GetProperty("totpEnabled").GetBoolean());
@@ -189,7 +192,7 @@ public class TwoStepFlowTests : IClassFixture<WebApplicationFactory<Program>>
     {
         try
         {
-            await Cleanup();
+            await Reset();
             var admin = await TestSupport.AdminClient(factory);
             await admin.PutAsync("/api/platform/settings/security.require_2fa", Json(new { value = true }));
             var (c, url, _, pw) = await PasswordStep();
