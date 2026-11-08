@@ -41,3 +41,44 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: GOOS=windows go build ./cmd/agent
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [backend, agent]
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_PASSWORD: dev, POSTGRES_DB: deskask_e2e }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { global-json-file: global.json }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: agent/go.mod }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Build the real agent and the real platform
+        run: |
+          (cd agent && go build -o ../out/deskask-agent ./cmd/agent)
+          dotnet publish src/Platform/DeskAsk.Platform.Host -c Release -o out/host
+      - name: Start the platform
+        env:
+          ASPNETCORE_URLS: http://localhost:5080
+          Platform__DevTenantConnection: Host=localhost;Port=5432;Database=deskask_e2e;Username=postgres;Password=dev
+          Platform__BootstrapAdmin__Email: admin@acme.test
+          Platform__BootstrapAdmin__Password: Correct-Horse-9
+          Identity__AllowInsecureHttp: "true"
+          Identity__Clients__0__Id: web
+          Identity__Clients__0__RedirectUris__0: http://localhost:5080/cb
+          Licensing__AllowUnlicensed: "true"
+        run: |
+          nohup dotnet out/host/DeskAsk.Platform.Host.dll > out/host.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://localhost:5080/health && break; sleep 1; done
+          curl -sf http://localhost:5080/health
+      - name: Real agent against the real platform
+        run: node tools/e2e/run.mjs --base http://localhost:5080 --agent out/deskask-agent
+      - name: Platform log
+        if: always()
+        run: tail -n 80 out/host.log
