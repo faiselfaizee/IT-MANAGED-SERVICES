@@ -252,7 +252,8 @@ public sealed class AssetsModule : IPlatformModule
         {
             var name = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString()!.Trim() : "";
             if (name.Length is < 1 or > 100) return Bad("bad_input", "name: 1 to 100 characters");
-            var fields = body.TryGetProperty("fields", out var f) ? ParseFields(f, out var err) : new List<FieldDef>();
+            string? err = null;
+            var fields = body.TryGetProperty("fields", out var f) ? ParseFields(f, out err) : new List<FieldDef>();
             if (fields == null) return Bad("bad_input", err);
             await using var db = await Open(t, ct);
             await using var c = new NpgsqlCommand("insert into assets.types (name, fields) values (@n, @f) on conflict do nothing returning id", db);
