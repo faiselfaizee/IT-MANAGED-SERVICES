@@ -45,6 +45,56 @@ public sealed class AssetsSchema : ITenantSchema
               id bigserial primary key, asset_id bigint not null references assets.assets(id) on delete cascade,
               at timestamptz not null default now(), actor text not null, action text not null, changes text not null default '{}');
             create index if not exists history_asset on assets.history (asset_id, id)"),
+        new(2, "companies, device fields, AMC, rentals", @"
+            create table if not exists assets.companies (
+              id serial primary key, name text not null, code text not null default '', contact_name text not null default '', contact_email text not null default '',
+              phone text not null default '', address text not null default '', notes text not null default '',
+              status text not null default 'active' check (status in ('active','inactive')), remote_allowed boolean not null default false,
+              created_at timestamptz not null default now());
+            create unique index if not exists companies_name on assets.companies (lower(name));
+            alter table assets.assets
+              add column if not exists company_id int references assets.companies(id) on delete set null,
+              add column if not exists category text not null default '',
+              add column if not exists hostname text not null default '',
+              add column if not exists dns_name text not null default '',
+              add column if not exists ip_address text not null default '',
+              add column if not exists os_family text not null default '',
+              add column if not exists os_name text not null default '',
+              add column if not exists os_version text not null default '',
+              add column if not exists cpu_make text not null default '',
+              add column if not exists cpu_model text not null default '',
+              add column if not exists cpu_socket text not null default '',
+              add column if not exists total_cpu int not null default 0,
+              add column if not exists cpu_cores int not null default 0,
+              add column if not exists cores_per_cpu int not null default 0,
+              add column if not exists logical_processors int not null default 0,
+              add column if not exists ram_bytes bigint not null default 0,
+              add column if not exists total_storage_bytes bigint not null default 0,
+              add column if not exists disks jsonb not null default '[]',
+              add column if not exists nics jsonb not null default '[]',
+              add column if not exists mac_addresses jsonb not null default '[]',
+              add column if not exists connected_ips jsonb not null default '[]',
+              add column if not exists installed_apps jsonb not null default '[]',
+              add column if not exists antivirus jsonb not null default '[]',
+              add column if not exists antivirus_status text not null default '',
+              add column if not exists domain_type text not null default '',
+              add column if not exists domain_workgroup text not null default '',
+              add column if not exists bios_version text not null default '',
+              add column if not exists last_patch_date date,
+              add column if not exists inventory_at timestamptz,
+              add column if not exists agent_id text not null default '',
+              add column if not exists remote_ok boolean not null default true,
+              add column if not exists last_seen timestamptz,
+              add column if not exists uptime_s bigint not null default 0;
+            create index if not exists assets_company on assets.assets (company_id);
+            create index if not exists assets_host on assets.assets (lower(hostname)) where hostname <> '';
+            create table if not exists assets.amc (
+              id serial primary key, company_id int references assets.companies(id) on delete set null, title text not null,
+              start_date date, end_date date, coverage text not null default '', visits int not null default 0, sla_pct int not null default 0,
+              notes text not null default '', asset_ids jsonb not null default '[]', updated_at timestamptz not null default now());
+            create table if not exists assets.rentals (
+              id serial primary key, company_id int references assets.companies(id) on delete set null, title text not null,
+              start_date date, end_date date, notes text not null default '', asset_ids jsonb not null default '[]', updated_at timestamptz not null default now())"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
         SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
@@ -236,6 +286,8 @@ public sealed class AssetsModule : IPlatformModule
     {
         var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(Key);
         var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(Key);
+
+        AssetsDevice.Map(r, Key);
 
         // ---- types
         anyone(r.MapGet("/api/assets/types", async (ITenantContext t, CancellationToken ct) =>
