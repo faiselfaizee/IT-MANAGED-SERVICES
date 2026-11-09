@@ -1,0 +1,24 @@
+name: release-tools
+# One-time helper (Actions > release-tools > Run workflow). Publishes the release-key tool, so you can make the signing key on any PC
+# without installing Go or Git. The release named "tools" holds: deskask-release (Windows and Linux) and install-windows.ps1.
+on:
+  workflow_dispatch:
+permissions: { contents: write }
+jobs:
+  tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: updater/go.mod }
+      - name: Build
+        run: |
+          mkdir -p out
+          (cd updater && GOOS=windows GOARCH=amd64 go build -o ../out/deskask-release-windows-amd64.exe ./cmd/deskask-release && GOOS=linux GOARCH=amd64 go build -o ../out/deskask-release-linux-amd64 ./cmd/deskask-release)
+          cp deploy/windows/install-windows.ps1 out/
+      - name: Publish
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release delete tools --yes --cleanup-tag 2>/dev/null || true
+          gh release create tools --prerelease --target "$GITHUB_SHA" --title "Tools (release key maker, Windows installer)" \
+            --notes "deskask-release makes the release signing key (keygen). It holds no secrets. install-windows.ps1 is also attached to every release." out/*

@@ -1,9 +1,14 @@
 name: release
-# Tag vX.Y.Z (or vX.Y.Z-alpha.1) -> signed bundles + tools on a GitHub Release.
+# Two ways to start it, both give signed bundles + tools + install-windows.ps1 on a GitHub Release:
+#   1. in GitHub: Actions > release > Run workflow > type a version such as 0.1.0 (no command line needed), or
+#   2. push a tag vX.Y.Z (or vX.Y.Z-alpha.1).
 # One-time: create the release key with `deskask-release keygen`, store release-private.pem as the repository secret RELEASE_SIGNING_KEY,
 # and give release-public.pem to every server (it is also attached to each release).
 on:
   push: { tags: ["v*"] }
+  workflow_dispatch:
+    inputs:
+      version: { description: "Version to release, for example 0.1.0 or 0.1.0-alpha.1", required: true }
 permissions: { contents: write }
 jobs:
   release:
@@ -27,8 +32,10 @@ jobs:
           (cd web && npm ci && npm run build && npm test)
         env: { TEST_PG_CONNECTION: "" }
       - name: Build
+        env: { INPUT_VERSION: "${{ github.event.inputs.version }}" }
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"; VERSION="${VERSION#v}"
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' || { echo "::error::Version must look like 1.2.3 or 1.2.3-alpha.1"; exit 1; }
           mkdir -p out/bundles out/tools
           dotnet publish src/Platform/DeskAsk.Platform.Host -c Release -r linux-x64 --self-contained false -p:Version=$VERSION -o out/host-linux-x64
           dotnet publish src/Platform/DeskAsk.Platform.Host -c Release -r win-x64 --self-contained true -p:Version=$VERSION -o out/host-win-x64
@@ -37,6 +44,7 @@ jobs:
           for t in "linux amd64 " "windows amd64 .exe"; do set -- $t; \\
             (cd updater && GOOS=$1 GOARCH=$2 go build -o ../out/tools/deskask-updater-$1-$2$3 ./cmd/deskask-updater); \\
             (cd agent && GOOS=$1 GOARCH=$2 go build -o ../out/tools/deskask-agent-$1-$2$3 ./cmd/agent); done
+          cp deploy/windows/install-windows.ps1 out/tools/
           echo "$VERSION" > out/version.txt
       - name: Sign and pack
         env: { RELEASE_SIGNING_KEY: "${{ secrets.RELEASE_SIGNING_KEY }}" }
@@ -51,6 +59,7 @@ jobs:
       - name: Publish the release
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          PRE=""; case "$GITHUB_REF_NAME" in *-*) PRE="--prerelease";; esac
-          gh release create "$GITHUB_REF_NAME" $PRE --title "DeskAsk Platform $GITHUB_REF_NAME" --generate-notes \\
+          VERSION=$(cat out/version.txt); TAG="v$VERSION"
+          PRE=""; case "$VERSION" in *-*) PRE="--prerelease";; esac
+          gh release create "$TAG" $PRE --target "$GITHUB_SHA" --title "DeskAsk Platform $TAG" --generate-notes \\
             out/bundles/* out/tools/* out/release-public.pem out/SHA256SUMS.txt
