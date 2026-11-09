@@ -141,6 +141,7 @@ jobs:
           & C:\DeskAsk\deskask-tenant.cmd list
           if ($LASTEXITCODE -ne 2) { throw "tenant command exit code $LASTEXITCODE (expected 2: no catalog set)" }
           Write-Host 'install OK'
+          exit 0
       - name: Upgrade by running the script again
         shell: powershell
         run: |
