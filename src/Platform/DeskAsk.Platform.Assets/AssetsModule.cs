@@ -132,6 +132,55 @@ public sealed class AssetsSchema : ITenantSchema
             create table if not exists assets.rc_log (
               id bigserial primary key, agent_id text not null, at timestamptz not null default now(), level text not null default 'info', text text not null default '');
             create index if not exists rc_log_agent on assets.rc_log (agent_id, id)"),
+        new(5, "discovery, collectors, service checks, handovers, ticket links", @"
+            alter table assets.enroll_tokens add column if not exists kind text not null default 'agent';
+            alter table assets.assets
+              add column if not exists collector_id text not null default '',
+              add column if not exists monitor text not null default '',
+              add column if not exists check_up boolean,
+              add column if not exists check_rtt int not null default 0,
+              add column if not exists checked_at timestamptz,
+              add column if not exists unalloc_at timestamptz,
+              add column if not exists prev_holder text not null default '';
+            create table if not exists assets.creds (
+              id serial primary key, name text not null, kind text not null default 'windows' check (kind in ('windows','ssh','snmp','login')),
+              username text not null default '', secret text not null, company_id int references assets.companies(id) on delete set null, created_at timestamptz not null default now());
+            create table if not exists assets.collectors (
+              id text primary key, company_id int references assets.companies(id) on delete set null, name text not null default '', key_hash text not null,
+              platform text not null default '', version text not null default '', hostname text not null default '', ip text not null default '',
+              last_seen timestamptz, created_at timestamptz not null default now(), monitor_default text not null default 'ping',
+              scan_cidrs text not null default '', scan_req boolean not null default false);
+            create table if not exists assets.found (
+              collector_id text not null references assets.collectors(id) on delete cascade, ip text not null, hostname text not null default '', open jsonb not null default '[]',
+              mac text not null default '', cat text not null default '', sub text not null default '', seen_at timestamptz not null default now(), primary key (collector_id, ip));
+            create table if not exists assets.collector_log (
+              id bigserial primary key, collector_id text not null references assets.collectors(id) on delete cascade, at timestamptz not null default now(),
+              level text not null default 'info', text text not null default '');
+            create index if not exists collector_log_c on assets.collector_log (collector_id, id);
+            create table if not exists assets.deploys (
+              asset_id bigint primary key references assets.assets(id) on delete cascade, collector_id text not null, status text not null default 'queued',
+              message text not null default '', at timestamptz not null default now());
+            create table if not exists assets.service_checks (
+              id serial primary key, asset_id bigint not null references assets.assets(id) on delete cascade, name text not null,
+              type text not null check (type in ('tcp','http','ssl','dns')), host text not null default '', port int not null default 0, url text not null default '',
+              expect text not null default '', status text not null default '', insecure boolean not null default false, dns text not null default '',
+              timeout_s int not null default 10, enabled boolean not null default true, created_at timestamptz not null default now(),
+              last_at timestamptz, last_ok boolean, last_ms real not null default 0, last_days real, last_detail text not null default '');
+            create unique index if not exists service_checks_name on assets.service_checks (asset_id, lower(name));
+            create table if not exists assets.check_results (
+              id bigserial primary key, check_id int not null references assets.service_checks(id) on delete cascade, at timestamptz not null default now(),
+              ok boolean not null, ms real not null default 0, days real);
+            create index if not exists check_results_c on assets.check_results (check_id, id);
+            create table if not exists assets.handovers (
+              id bigserial primary key, asset_id bigint not null references assets.assets(id) on delete cascade, kind text not null check (kind in ('assign','handover')),
+              holder text not null default '', at timestamptz not null default now(), by_name text not null default '', cond text not null default 'good',
+              accessories jsonb not null default '[]', notes text not null default '');
+            create index if not exists handovers_asset on assets.handovers (asset_id, id);
+            create table if not exists assets.ticket_links (
+              id bigserial primary key, asset_id bigint not null references assets.assets(id) on delete cascade, ref text not null default '', title text not null,
+              priority text not null default 'normal', status text not null default 'open', source text not null default 'manual', note text not null default '',
+              created_at timestamptz not null default now(), created_by text not null default '');
+            create index if not exists ticket_links_asset on assets.ticket_links (asset_id, id)"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -336,6 +385,9 @@ public sealed class AssetsModule : IPlatformModule
         AssetsDevice.Map(r, Key);
         AgentsApi.Map(r, Key);
         ShellApi.Map(r, Key);
+        DiscoveryApi.Map(r, Key);
+        CollectorsApi.Map(r, Key);
+        ExtrasApi.Map(r, Key);
 
         // ---- types
         anyone(r.MapGet("/api/assets/types", async (ITenantContext t, CancellationToken ct) =>

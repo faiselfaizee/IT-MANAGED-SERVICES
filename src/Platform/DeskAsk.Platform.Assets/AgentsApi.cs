@@ -71,14 +71,14 @@ public static class AgentsApi
     static string AgentDir(IConfiguration cfg) => cfg["Assets:AgentDir"] ?? Path.Combine(AppContext.BaseDirectory, "agent-dist");
     static string AgentVersion(IConfiguration cfg) { try { return File.ReadAllText(Path.Combine(AgentDir(cfg), "version.txt")).Trim(); } catch { return ""; } }
     static readonly Dictionary<string, string> Files = new() { ["windows"] = "deskask-agent-windows-amd64.exe", ["linux"] = "deskask-agent-linux-amd64", ["linux-arm64"] = "deskask-agent-linux-arm64" };
-    static string? AgentFile(IConfiguration cfg, string platform) => Files.TryGetValue(platform, out var f) && File.Exists(Path.Combine(AgentDir(cfg), f)) ? Path.Combine(AgentDir(cfg), f) : null;
-    static string LinuxFlavour(HttpContext h) => h.Request.Query["arch"] == "arm64" ? "linux-arm64" : "linux";
+    internal static string? AgentFile(IConfiguration cfg, string platform) => Files.TryGetValue(platform, out var f) && File.Exists(Path.Combine(AgentDir(cfg), f)) ? Path.Combine(AgentDir(cfg), f) : null;
+    internal static string LinuxFlavour(HttpContext h) => h.Request.Query["arch"] == "arm64" ? "linux-arm64" : "linux";
 
     static bool BadSerial(string s) { var v = s.Trim().ToLowerInvariant(); return v.Length < 4 || v.Contains("o.e.m") || v.Contains("default string") || v.Contains("not specified") || v.Contains("to be filled") || v.Contains("system serial") || v.Trim('0', '-', ' ', 'x', 'f') == ""; }
 
     // ---------------------------------------------------------------- install scripts
-    const string PsAdmin = "if(-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Run this in PowerShell as administrator.'}";
-    static string Fill(string t, string url, string tok) => t.Replace("@@ADMIN@@", PsAdmin).Replace("@@URL@@", url).Replace("@@TOK@@", tok).Replace("\r\n", "\n");
+    internal const string PsAdmin = "if(-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Run this in PowerShell as administrator.'}";
+    internal static string Fill(string t, string url, string tok) => t.Replace("@@ADMIN@@", PsAdmin).Replace("@@URL@@", url).Replace("@@TOK@@", tok).Replace("\r\n", "\n");
     public static string InstallPs1(string url, string tok) => Fill(@"# DeskAsk agent installer for Windows - run in an elevated PowerShell
 $ErrorActionPreference='Stop'
 @@ADMIN@@
@@ -223,7 +223,7 @@ chmod 755 /opt/deskask-agent/deskask-agent
             var tok = Str(body, "token") ?? "";
             await using var db = await Open(t, ct);
             int? company = null; long? tokAsset = null; bool monitorOnly = false; int tokId;
-            await using (var c = new NpgsqlCommand("select id, company_id, asset_id, monitor_only, revoked, expires_at from assets.enroll_tokens where token_hash = @h", db))
+            await using (var c = new NpgsqlCommand("select id, company_id, asset_id, monitor_only, revoked, expires_at from assets.enroll_tokens where token_hash = @h and kind = 'agent'", db))
             {
                 P(c, "h", Hash(tok)); await using var rd = await c.ExecuteReaderAsync(ct);
                 if (!await rd.ReadAsync(ct) || rd.GetBoolean(4) || (!rd.IsDBNull(5) && rd.GetDateTime(5) < DateTime.UtcNow))
@@ -345,7 +345,7 @@ chmod 755 /opt/deskask-agent/deskask-agent
         async Task<bool> TokenOk(string tok, ITenantContext t, CancellationToken ct)
         {
             await using var db = await Open(t, ct);
-            await using var c = new NpgsqlCommand("select 1 from assets.enroll_tokens where token_hash = @h and not revoked and (expires_at is null or expires_at > now())", db); P(c, "h", Hash(tok));
+            await using var c = new NpgsqlCommand("select 1 from assets.enroll_tokens where token_hash = @h and kind = 'agent' and not revoked and (expires_at is null or expires_at > now())", db); P(c, "h", Hash(tok));
             return await c.ExecuteScalarAsync(ct) != null;
         }
         open(r.MapGet("/agent/download/{platform}", async (string platform, HttpContext http, ITenantContext t, IConfiguration cfg, CancellationToken ct) =>
@@ -375,7 +375,7 @@ chmod 755 /opt/deskask-agent/deskask-agent
         admin(r.MapGet("/api/assets/enrolments", async (ITenantContext t, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
-            await using var c = new NpgsqlCommand("select e.id, e.company_id, coalesce(c.name,''), e.label, e.prefix, e.created_at, e.expires_at, e.uses, e.revoked, e.monitor_only from assets.enroll_tokens e left join assets.companies c on c.id = e.company_id where e.asset_id is null order by e.id desc", db);
+            await using var c = new NpgsqlCommand("select e.id, e.company_id, coalesce(c.name,''), e.label, e.prefix, e.created_at, e.expires_at, e.uses, e.revoked, e.monitor_only from assets.enroll_tokens e left join assets.companies c on c.id = e.company_id where e.asset_id is null and e.kind = 'agent' order by e.id desc", db);
             var rows = new List<object>(); await using var rd = await c.ExecuteReaderAsync(ct);
             while (await rd.ReadAsync(ct)) rows.Add(new { id = rd.GetInt32(0), companyId = rd.IsDBNull(1) ? (int?)null : rd.GetInt32(1), company = rd.GetString(2), label = rd.GetString(3), prefix = rd.GetString(4), created = rd.GetDateTime(5), expires = rd.IsDBNull(6) ? (DateTime?)null : rd.GetDateTime(6), uses = rd.GetInt32(7), revoked = rd.GetBoolean(8), monitorOnly = rd.GetBoolean(9) });
             return Results.Ok(rows);
