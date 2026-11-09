@@ -53,9 +53,13 @@ public class TestClock : ITotpClock
 public class TwoStepFlowTests : IClassFixture<WebApplicationFactory<Program>>
 {
     readonly WebApplicationFactory<Program> factory; readonly TestClock clock = new();
+    static string updatesDir = "";
     public TwoStepFlowTests(WebApplicationFactory<Program> f) => factory = f.WithWebHostBuilder(b =>
     {
         TestSupport.Configure(b);
+        var d = Path.Combine(Path.GetTempPath(), "dk-upd-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(d, "inbox")); Directory.CreateDirectory(Path.Combine(d, "state", "jobs"));
+        b.UseSetting("Updates:Dir", d); updatesDir = d;
         b.ConfigureTestServices(s => s.AddSingleton<ITotpClock>(clock));
     });
 
@@ -213,5 +217,66 @@ public class TwoStepFlowTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.GetAsync("/api/account/security")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.PostAsync("/api/account/totp/setup", null)).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.PostAsync("/api/admin/users/totp-reset", Json(new { email = "x@y.z" }))).StatusCode);
+    }
+
+    // after the second step: authorize + token, returns a client sending the access token (which carries amr "otp")
+    async Task<HttpClient> SignInWithCode(string secret)
+    {
+        var (c, url, verifier, pw) = await PasswordStep();
+        clock.Advance();
+        var ok = await SendCode(c, await pw.Content.ReadAsStringAsync(), CodeFor(secret));
+        Assert.Equal(HttpStatusCode.Redirect, ok.StatusCode);
+        var back = await c.GetAsync(url);
+        var q = System.Web.HttpUtility.ParseQueryString(new Uri(back.Headers.Location!.ToString()).Query);
+        var tr = await c.PostAsync("/connect/token", new FormUrlEncodedContent(new Dictionary<string, string>
+        { ["grant_type"] = "authorization_code", ["code"] = q["code"]!, ["redirect_uri"] = TestSupport.Redirect, ["client_id"] = "web", ["code_verifier"] = verifier }));
+        var api = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
+        api.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Parse(await tr.Content.ReadAsStringAsync()).GetProperty("access_token").GetString());
+        return api;
+    }
+
+    static ByteArrayContent Zip(int size = 300) { var b = new byte[size]; b[0] = (byte)'P'; b[1] = (byte)'K'; return new ByteArrayContent(b); }
+
+    [PgFact]
+    public async Task UploadingAnUpdateNeedsTheSecondStep_AndOnlyDropsTheFileInTheInbox()
+    {
+        try
+        {
+            await Reset();
+            var (secret, _, plain) = await SwitchOn();                          // plain: a token from a sign-in without the second step
+            var no = await plain.PostAsync("/api/platform/updates?name=host.dkb", Zip());
+            Assert.Equal(HttpStatusCode.Forbidden, no.StatusCode);
+            Assert.Equal("two_step_required", Parse(await no.Content.ReadAsStringAsync()).GetProperty("error").GetString());
+            Assert.Empty(Directory.GetDirectories(Path.Combine(updatesDir, "inbox")));
+
+            var strong = await SignInWithCode(secret);
+            Assert.Equal(HttpStatusCode.BadRequest, (await strong.PostAsync("/api/platform/updates?name=host.exe", Zip())).StatusCode);   // wrong extension
+            Assert.Equal(HttpStatusCode.BadRequest, (await strong.PostAsync("/api/platform/updates?name=host.dkb", new ByteArrayContent(new byte[300]))).StatusCode);   // not a zip
+            Assert.Empty(Directory.GetDirectories(Path.Combine(updatesDir, "inbox")));   // refused uploads leave nothing behind
+
+            var up = await strong.PostAsync("/api/platform/updates?name=host-linux-x64-2.0.1.dkb", Zip());
+            Assert.Equal(HttpStatusCode.Accepted, up.StatusCode);
+            var id = Parse(await up.Content.ReadAsStringAsync()).GetProperty("id").GetString()!;
+            Assert.True(File.Exists(Path.Combine(updatesDir, "inbox", id, "package.dkb")));
+            var job = Parse(await File.ReadAllTextAsync(Path.Combine(updatesDir, "inbox", id, "job.json")));
+            Assert.Equal("admin@acme.test", job.GetProperty("by").GetString());
+
+            Assert.Equal(HttpStatusCode.Conflict, (await strong.PostAsync("/api/platform/updates?name=again.dkb", Zip())).StatusCode);   // one at a time
+            var list = Parse(await strong.GetStringAsync("/api/platform/updates"));
+            Assert.True(list.GetProperty("installed").GetBoolean()); Assert.False(list.GetProperty("serviceAlive").GetBoolean());
+            Assert.Equal(id, list.GetProperty("queued")[0].GetProperty("id").GetString());
+
+            await File.WriteAllTextAsync(Path.Combine(updatesDir, "state", "status.json"), "{"updated":" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + ","current":"2.0.0"}");
+            Assert.True(Parse(await strong.GetStringAsync("/api/platform/updates")).GetProperty("serviceAlive").GetBoolean());
+
+            Assert.Equal(HttpStatusCode.OK, (await strong.DeleteAsync("/api/platform/updates/" + id)).StatusCode);   // cancel before the updater starts
+            Assert.False(Directory.Exists(Path.Combine(updatesDir, "inbox", id)));
+            Assert.Equal(HttpStatusCode.NotFound, (await strong.DeleteAsync("/api/platform/updates/" + id)).StatusCode);
+            Assert.NotEqual(HttpStatusCode.OK, (await strong.DeleteAsync("/api/platform/updates/not-an-id")).StatusCode);   // only real ids are accepted
+
+            var audit = Parse(await strong.GetStringAsync("/api/platform/audit?action=update.")).EnumerateArray().Select(r => r.GetProperty("action").GetString()).ToList();
+            Assert.Contains("update.uploaded", audit); Assert.Contains("update.cancelled", audit);
+        }
+        finally { await Cleanup(); }
     }
 }
