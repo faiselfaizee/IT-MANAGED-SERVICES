@@ -17,6 +17,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.DataProtection;
+using OpenIddict.Server;
+using OpenIddict.Validation;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
 using OpenIddict.Server.AspNetCore;
@@ -44,7 +48,11 @@ public sealed class IdentityModule : IPlatformModule
         });
         s.AddSingleton<IPasswordHasher<UserAccount>, PasswordHasher<UserAccount>>();
         s.AddSingleton<ITenantSchema, IdentitySchema>();
-        s.AddDataProtection();
+        var dp = s.AddDataProtection().SetApplicationName("DeskAsk.Platform");
+        var dpPath = cfg["Platform:DataProtectionPath"];   // keep these keys on persistent storage in production so the two-step cookie survives restarts
+        if (!string.IsNullOrWhiteSpace(dpPath)) dp.PersistKeysToFileSystem(new DirectoryInfo(dpPath));
+        s.AddHttpContextAccessor();
+        s.AddSingleton<TenantKeys>();
         s.AddSingleton<ITotpClock, SystemTotpClock>();
         s.AddScoped<TwoStepService>();
         s.AddSingleton<IJobHandler, IdentityPruneJob>();
@@ -66,7 +74,8 @@ public sealed class IdentityModule : IPlatformModule
             .AddServer(o =>
             {
                 o.SetAuthorizationEndpointUris("/connect/authorize").SetTokenEndpointUris("/connect/token")
-                 .SetUserInfoEndpointUris("/connect/userinfo").SetEndSessionEndpointUris("/connect/logout");
+                 .SetUserInfoEndpointUris("/connect/userinfo").SetEndSessionEndpointUris("/connect/logout")
+                 .SetConfigurationEndpointUris("/.well-known/openid-configuration").SetCryptographyEndpointUris("/.well-known/jwks");
                 o.AllowAuthorizationCodeFlow().AllowRefreshTokenFlow().RequireProofKeyForCodeExchange();
                 o.RegisterScopes(Scopes.OpenId, Scopes.Email, Scopes.Profile, Scopes.Roles, "deskask");
                 o.SetAccessTokenLifetime(TimeSpan.FromMinutes(10)).SetIdentityTokenLifetime(TimeSpan.FromMinutes(10))
@@ -78,6 +87,19 @@ public sealed class IdentityModule : IPlatformModule
                 if (allowHttp) host.DisableTransportSecurityRequirement();
             })
             .AddValidation(o => { o.UseLocalServer(); o.UseAspNetCore(); });
+
+        if (string.IsNullOrWhiteSpace(cfg["Identity:SigningKeyPem"]))
+        {   // each customer gets its own keys (TenantKeys); the options above only supply a placeholder key for start-up
+            s.AddSingleton<IOptionsMonitor<OpenIddictServerOptions>>(sp => new TenantOptionsMonitor<OpenIddictServerOptions>(
+                sp.GetRequiredService<IOptionsFactory<OpenIddictServerOptions>>(), sp.GetRequiredService<IHttpContextAccessor>(), sp.GetRequiredService<TenantKeys>(),
+                (o, k) =>
+                {
+                    o.SigningCredentials.Clear(); foreach (var c in k.Signing) o.SigningCredentials.Add(c);
+                    o.EncryptionCredentials.Clear(); o.EncryptionCredentials.Add(k.Encryption);
+                }));
+            s.AddSingleton<IOptionsMonitor<OpenIddictValidationOptions>>(sp => new TenantOptionsMonitor<OpenIddictValidationOptions>(
+                sp.GetRequiredService<IOptionsFactory<OpenIddictValidationOptions>>(), sp.GetRequiredService<IHttpContextAccessor>(), sp.GetRequiredService<TenantKeys>(), null));
+        }
     }
 
     static void AddKeys(OpenIddictServerBuilder o, IConfiguration cfg)
@@ -105,6 +127,13 @@ public sealed class IdentityModule : IPlatformModule
         r.MapGet("/account/login", LoginPage).AllowAnonymous();
         r.MapPost("/account/login", LoginPost).AllowAnonymous();
         TwoStepEndpoints.Map(r);
+        r.MapPost("/api/platform/identity/keys/rotate", async (ITenantContext t, TenantKeys keys, IAuditLog audit, CancellationToken ct) =>
+        {
+            if (keys.Shared) return Results.Conflict(new { error = "This server uses one fixed key (Identity:SigningKeyPem); rotate it in the configuration." });
+            keys.Rotate(t.Require());
+            await audit.WriteAsync("identity.keys_rotated", ct: ct);
+            return Results.Ok(new { ok = true, kid = keys.Get(t.Require()).Kids[0] });
+        }).RequireAuthorization(p => p.RequireRole("admin"));
         r.MapGet("/api/platform/me", (ClaimsPrincipal u) => Results.Ok(new
         {
             sub = u.FindFirstValue(Claims.Subject), email = u.FindFirstValue(Claims.Email),
@@ -283,6 +312,9 @@ public sealed class IdentityPruneJob : IJobHandler
         var threshold = DateTimeOffset.UtcNow.AddDays(-14);
         await job.Services.GetRequiredService<IOpenIddictTokenManager>().PruneAsync(threshold, ct);
         await job.Services.GetRequiredService<IOpenIddictAuthorizationManager>().PruneAsync(threshold, ct);
+        await using var db = new Npgsql.NpgsqlConnection(job.Tenant.ConnectionString); await db.OpenAsync(ct);
+        await using var cmd = new Npgsql.NpgsqlCommand("delete from identity.keys where retired_at < now() - interval '30 days'", db);
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 }
 

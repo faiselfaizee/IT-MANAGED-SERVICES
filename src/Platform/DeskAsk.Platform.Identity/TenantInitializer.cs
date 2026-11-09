@@ -24,6 +24,10 @@ public sealed class IdentitySchema : ITenantSchema
         await db.Database.ExecuteSqlRawAsync(@"alter table identity.users
             add column if not exists totp_secret text, add column if not exists totp_enabled boolean not null default false,
             add column if not exists totp_last_step bigint not null default 0, add column if not exists recovery_hashes text not null default '[]'", ct);
+        await db.Database.ExecuteSqlRawAsync(@"create table if not exists identity.keys (
+            id bigserial primary key, tenant_id text not null, kid text not null, private_sealed text not null,
+            created_at timestamptz not null default now(), retired_at timestamptz);
+            create unique index if not exists keys_active on identity.keys (tenant_id) where retired_at is null", ct);
         var cfg = sp.GetRequiredService<IConfiguration>();
         await SeedAdminAsync(db, cfg, sp.GetRequiredService<IPasswordHasher<UserAccount>>(), ct);
         await SeedClientsAsync(sp.GetRequiredService<IOpenIddictApplicationManager>(), cfg, ct);
