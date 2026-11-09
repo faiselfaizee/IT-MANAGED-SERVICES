@@ -15,3 +15,4 @@
 All seven were confirmed by the owner on 8 Nov 2026 (the recommended option in each case). The reasons are in the proposal document "DeskAsk Platform Rebuild Proposal".
 Rule for changing one: write a new ADR that supersedes it; never edit history.
 - [0010](0010-background-jobs.md) Background jobs
+- [0011](0011-per-customer-keys.md) Per-customer signing and encryption keys

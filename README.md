@@ -22,9 +22,10 @@ Also done: audit log (hash chain), settings, Connect gateway (agent tokens, hear
 Also done: two-step sign-in (TOTP, recovery codes, admin reset, `security.require_2fa`), end-to-end CI job with the real agent.
 Also done: signed release bundles, the `deskask-updater` service with rollback, upload from the platform (two-step required), release workflow and a release dry run in CI (docs/updates.md, ADR 0009).
 Also done: background jobs (per-customer queue, worker role, retries, recurring audit-verify / token-prune / cleanup jobs, admin API; ADR 0010).
-Next (Phase 0 gate): per-customer signing keys, then the gate review.
+Also done: per-customer signing keys with rotation and a JWKS endpoint (ADR 0011).
+Phase 0 gate review: docs/phase0-gate.md (recommendation: pass).
 
-Two-step notes: set `Identity:EncryptionSecret` in production (it seals the authenticator secrets); data-protection keys must be kept on persistent storage in production so the pending-code cookie survives restarts.
+Set `Platform:DataProtectionPath` to a persistent folder in production. Two-step notes: set `Identity:EncryptionSecret` in production (it seals the authenticator secrets); data-protection keys must be kept on persistent storage in production so the pending-code cookie survives restarts.
 
-Identity notes: the issuer is the customer's web address and ends with "/" (OpenIddict default). Signing key: `Identity:SigningKeyPem` (EC P-256 PEM) plus `Identity:EncryptionSecret`; without them keys are made new at every start (development only). Clients come from `Identity:Clients:N:*` configuration for now. First admin: `Platform:BootstrapAdmin:Email/Password`.
+Identity notes: the issuer is the customer's web address and ends with "/" (OpenIddict default). Each customer gets its own signing key, made on first use and sealed in its database with `Identity:EncryptionSecret` (set it in production; never change it). `Identity:SigningKeyPem` is optional: one fixed key for all customers. Clients come from `Identity:Clients:N:*` configuration for now. First admin: `Platform:BootstrapAdmin:Email/Password`.
 Note: the .NET part was written without a .NET SDK at hand; the first `dotnet build` is the real test. The web and agent parts are built and tested.
