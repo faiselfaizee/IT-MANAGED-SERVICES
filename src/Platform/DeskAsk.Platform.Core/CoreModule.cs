@@ -17,12 +17,9 @@ namespace DeskAsk.Platform.Core;
 public sealed class CoreSchema : ITenantSchema
 {
     public string Name => "core";
-    public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
+    public static readonly Migration[] Migrations =
     {
-        await using var db = new NpgsqlConnection(tenant.ConnectionString);
-        await db.OpenAsync(ct);
-        await using var cmd = new NpgsqlCommand(@"
-            select pg_advisory_lock(727002);
+        new(1, "audit log and settings", @"
             create schema if not exists core;
             create table if not exists core.audit (
               id bigserial primary key, at timestamptz not null, actor text not null, action text not null,
@@ -30,10 +27,10 @@ public sealed class CoreSchema : ITenantSchema
               prev_hash text not null, hash text not null);
             create index if not exists audit_action on core.audit (action);
             create table if not exists core.settings (
-              key text primary key, value text not null, updated_at timestamptz not null, updated_by text not null);
-            select pg_advisory_unlock(727002);", db);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
+              key text primary key, value text not null, updated_at timestamptz not null, updated_by text not null);"),
+    };
+    public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
+        SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
 }
 
 public static class AuditHash

@@ -9,18 +9,10 @@ using DeskAsk.Platform.Tenancy;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// One build, several roles (ADR 0004): Platform:Roles = "web,worker,connect" (default: all).
-var roles = PlatformRoles.Parse(builder.Configuration);
+// "DeskAsk.Platform.Host tenant create|list|enable|disable|migrate|init ..." manages customers and exits (docs/provisioning.md).
+if (args.Length > 0 && args[0] == "tenant") { Environment.ExitCode = await TenantCli.RunAsync(args[1..], builder); return; }
 
-var catalogConn = builder.Configuration["Platform:CatalogConnection"];
-ITenantCatalog catalog = string.IsNullOrWhiteSpace(catalogConn)
-    ? new InMemoryTenantCatalog(new[] { new TenantInfo("dev", "Development", "localhost", builder.Configuration["Platform:DevTenantConnection"] ?? "") })   // local development only
-    : new PgTenantCatalog(catalogConn);
-builder.Services.AddTenancy(catalog);
-
-// Modules register here as they are built (Phase 1 onward).
-var modules = new List<IPlatformModule> { new CoreModule(), new IdentityModule(), new ConnectModule(), new LicensingModule(), new UpdatesModule(), new JobsModule() };
-foreach (var m in modules) m.AddServices(builder.Services, builder.Configuration);
+var (roles, modules) = PlatformSetup.Add(builder);
 
 var app = builder.Build();
 app.UseTenancy();

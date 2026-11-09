@@ -14,20 +14,17 @@ namespace DeskAsk.Platform.Connect;
 public sealed class ConnectSchema : ITenantSchema
 {
     public string Name => "connect";
-    public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
+    public static readonly Migration[] Migrations =
     {
-        await using var db = new NpgsqlConnection(tenant.ConnectionString);
-        await db.OpenAsync(ct);
-        await using var cmd = new NpgsqlCommand(@"
-            select pg_advisory_lock(727003);
+        new(1, "agents", @"
             create schema if not exists connect;
             create table if not exists connect.agents (
               id text primary key, name text not null, token_hash text not null unique, created_at timestamptz not null default now(),
               last_seen timestamptz, version text not null default '', plugins text not null default '[]', last_ip text not null default '',
-              reported_name text not null default '', revoked boolean not null default false);
-            select pg_advisory_unlock(727003);", db);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
+              reported_name text not null default '', revoked boolean not null default false);"),
+    };
+    public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
+        SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
 }
 
 /// <summary>

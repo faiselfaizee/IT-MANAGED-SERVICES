@@ -15,19 +15,30 @@ public sealed class IdentitySchema : ITenantSchema
 {
     public string Name => "identity";
 
+    static Migration[] Migrations(IdentityDb db) => new Migration[]
+    {
+        // v1 is the schema as the first release made it (users + OpenIddict tables), generated from the model that shipped then.
+        // From v2 on, every change is plain SQL here.
+        new(1, "users and OpenIddict tables", Run: async (conn, tx, ct) =>
+        {
+            await using var q = new Npgsql.NpgsqlCommand("select to_regclass('identity.users') is not null", conn, tx);
+            if ((bool)(await q.ExecuteScalarAsync(ct))!) return;
+            await using var create = new Npgsql.NpgsqlCommand(db.Database.GenerateCreateScript(), conn, tx);
+            await create.ExecuteNonQueryAsync(ct);
+        }),
+        new(2, "two-step sign-in columns", @"alter table identity.users
+            add column if not exists totp_secret text, add column if not exists totp_enabled boolean not null default false,
+            add column if not exists totp_last_step bigint not null default 0, add column if not exists recovery_hashes text not null default '[]'"),
+        new(3, "per-customer signing keys", @"create table if not exists identity.keys (
+            id bigserial primary key, tenant_id text not null, kid text not null, private_sealed text not null,
+            created_at timestamptz not null default now(), retired_at timestamptz);
+            create unique index if not exists keys_active on identity.keys (tenant_id) where retired_at is null"),
+    };
+
     public async Task EnsureAsync(IServiceProvider sp, TenantInfo tenant, CancellationToken ct)
     {
         var db = sp.GetRequiredService<IdentityDb>();
-        var exists = await db.Database.SqlQueryRaw<bool>("select to_regclass('identity.users') is not null as \"Value\"").SingleAsync(ct);
-        if (!exists) await db.Database.ExecuteSqlRawAsync(db.Database.GenerateCreateScript(), ct);
-        // databases made before two-step sign-in existed get its columns (no-op on new ones)
-        await db.Database.ExecuteSqlRawAsync(@"alter table identity.users
-            add column if not exists totp_secret text, add column if not exists totp_enabled boolean not null default false,
-            add column if not exists totp_last_step bigint not null default 0, add column if not exists recovery_hashes text not null default '[]'", ct);
-        await db.Database.ExecuteSqlRawAsync(@"create table if not exists identity.keys (
-            id bigserial primary key, tenant_id text not null, kid text not null, private_sealed text not null,
-            created_at timestamptz not null default now(), retired_at timestamptz);
-            create unique index if not exists keys_active on identity.keys (tenant_id) where retired_at is null", ct);
+        await SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations(db), ct);
         var cfg = sp.GetRequiredService<IConfiguration>();
         await SeedAdminAsync(db, cfg, sp.GetRequiredService<IPasswordHasher<UserAccount>>(), ct);
         await SeedClientsAsync(sp.GetRequiredService<IOpenIddictApplicationManager>(), cfg, ct);

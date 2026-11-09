@@ -133,3 +133,18 @@ public static class TenancyExtensions
     public static IApplicationBuilder UseTenantSchemas(this IApplicationBuilder app) => app.UseMiddleware<TenantSchemaMiddleware>();
     public static IApplicationBuilder UseTenancy(this IApplicationBuilder app) => app.UseMiddleware<TenantResolutionMiddleware>();
 }
+
+/// <summary>The platform catalog database: the list of customers (and their licences). Made by "tenant init" / "tenant create".</summary>
+public static class CatalogSchema
+{
+    public static readonly Migration[] Migrations =
+    {
+        new(1, "customers and licences", @"
+            create schema if not exists platform;
+            create table if not exists platform.tenants (
+              id text primary key, name text not null, host text not null unique,
+              connection_string text not null, active boolean not null default true, created_at timestamptz not null default now());
+            create table if not exists platform.licenses (
+              tenant_id text primary key references platform.tenants(id), token text not null, updated_at timestamptz not null default now());"),
+    };
+}

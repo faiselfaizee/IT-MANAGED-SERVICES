@@ -15,12 +15,9 @@ namespace DeskAsk.Platform.Jobs;
 public sealed class JobsSchema : ITenantSchema
 {
     public string Name => "jobs";
-    public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
+    public static readonly Migration[] Migrations =
     {
-        await using var db = new NpgsqlConnection(tenant.ConnectionString);
-        await db.OpenAsync(ct);
-        await using var cmd = new NpgsqlCommand(@"
-            select pg_advisory_lock(727004);
+        new(1, "queue and recurring jobs", @"
             create schema if not exists jobs;
             create table if not exists jobs.queue (
               id bigserial primary key, type text not null, payload text not null default '{}', run_at timestamptz not null default now(),
@@ -30,10 +27,10 @@ public sealed class JobsSchema : ITenantSchema
             create index if not exists queue_due on jobs.queue (run_at) where status in ('queued','running');
             create unique index if not exists queue_dedupe on jobs.queue (dedupe_key) where dedupe_key is not null and status in ('queued','running');
             create table if not exists jobs.recurring (
-              name text primary key, type text not null, interval_seconds int not null, next_run timestamptz not null default now());
-            select pg_advisory_unlock(727004);", db);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
+              name text primary key, type text not null, interval_seconds int not null, next_run timestamptz not null default now());"),
+    };
+    public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
+        SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
 }
 
 public sealed class JobQueue : IJobQueue
