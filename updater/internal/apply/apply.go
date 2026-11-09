@@ -193,7 +193,7 @@ func Apply(ctx context.Context, env *Env, bundlePath string, pubs []*ecdsa.Publi
 			if err := env.Runner.Start(ctx); err != nil {
 				return res, fmt.Errorf("%w: %v", ErrRollbackFailed, err)
 			}
-			if err := env.waitHealthy(ctx); err != nil {   // the old version must answer again before we claim it does
+			if err := env.waitHealthy(ctx); err != nil { // the old version must answer again before we claim it does
 				return res, fmt.Errorf("%w: %v", ErrRollbackFailed, err)
 			}
 			env.log("the previous version %s is running again", res.From)

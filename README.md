@@ -8,6 +8,7 @@ One platform for Service Desk, Assets, Monitoring, AD Manager, Vault and Backup.
 | `tests` | xUnit tests (tenancy, host) | `dotnet test DeskAsk.Platform.slnx` |
 | `web` | React and TypeScript shell | `npm ci && npm run build && npm test` |
 | `agent` | Go agent (outbound heartbeat) | `go vet ./... && go test ./...` |
+| `updater` | Release tool and updater service (Go) | `cd updater && go vet ./... && go test ./...` |
 | `deploy` | Local PostgreSQL and MinIO, catalog schema | `docker compose -f deploy/docker-compose.yml up -d` |
 
 ## Run locally
@@ -19,7 +20,8 @@ One platform for Service Desk, Assets, Monitoring, AD Manager, Vault and Backup.
 Done: repository layout, ADRs, tenancy (host name to customer), host with roles, web shell, agent heartbeat, CI, identity (OpenIddict: code flow + PKCE, users and clients in each customer database, sign-in page, userinfo, tested end to end against PostgreSQL in CI).
 Also done: audit log (hash chain), settings, Connect gateway (agent tokens, heartbeat), signed licences with module gating (ADR 0008).
 Also done: two-step sign-in (TOTP, recovery codes, admin reset, `security.require_2fa`), end-to-end CI job with the real agent.
-Next (Phase 0 gate): background jobs, per-customer signing keys, signed release bundles.
+Also done: signed release bundles, the `deskask-updater` service with rollback, upload from the platform (two-step required), release workflow and a release dry run in CI (docs/updates.md, ADR 0009).
+Next (Phase 0 gate): background jobs, per-customer signing keys.
 
 Two-step notes: set `Identity:EncryptionSecret` in production (it seals the authenticator secrets); data-protection keys must be kept on persistent storage in production so the pending-code cookie survives restarts.
 

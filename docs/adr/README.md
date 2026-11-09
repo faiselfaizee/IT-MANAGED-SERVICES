@@ -10,6 +10,7 @@
 | 0006 | Identity with OpenIddict inside the app | accepted |
 | 0007 | Private GitHub, GitHub Actions to build, test and sign | accepted |
 | 0008 | Signed licences and entitlements | accepted |
+| 0009 | Signed release bundles and a separate updater | accepted |
 
 All seven were confirmed by the owner on 8 Nov 2026 (the recommended option in each case). The reasons are in the proposal document "DeskAsk Platform Rebuild Proposal".
 Rule for changing one: write a new ADR that supersedes it; never edit history.

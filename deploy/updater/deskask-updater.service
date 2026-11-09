@@ -1,0 +1,12 @@
+[Unit]
+Description=DeskAsk Updater
+After=network.target
+
+[Service]
+# runs as root: it replaces the platform's files and restarts its service. The platform's own user cannot touch live/.
+ExecStart=/usr/local/bin/deskask-updater run -root /opt/deskask -pub /etc/deskask/release-public.pem \
+  -stop-cmd "systemctl stop deskask-platform" -start-cmd "systemctl start deskask-platform" -health http://localhost:5000/health
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

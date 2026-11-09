@@ -1,0 +1,13 @@
+[Unit]
+Description=DeskAsk Platform
+After=network.target postgresql.service
+
+[Service]
+WorkingDirectory=/opt/deskask/live
+ExecStart=/usr/bin/dotnet /opt/deskask/live/DeskAsk.Platform.Host.dll
+EnvironmentFile=/etc/deskask/platform.env
+User=deskask
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
