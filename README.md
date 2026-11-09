@@ -21,7 +21,8 @@ Done: repository layout, ADRs, tenancy (host name to customer), host with roles,
 Also done: audit log (hash chain), settings, Connect gateway (agent tokens, heartbeat), signed licences with module gating (ADR 0008).
 Also done: two-step sign-in (TOTP, recovery codes, admin reset, `security.require_2fa`), end-to-end CI job with the real agent.
 Also done: signed release bundles, the `deskask-updater` service with rollback, upload from the platform (two-step required), release workflow and a release dry run in CI (docs/updates.md, ADR 0009).
-Next (Phase 0 gate): background jobs, per-customer signing keys.
+Also done: background jobs (per-customer queue, worker role, retries, recurring audit-verify / token-prune / cleanup jobs, admin API; ADR 0010).
+Next (Phase 0 gate): per-customer signing keys, then the gate review.
 
 Two-step notes: set `Identity:EncryptionSecret` in production (it seals the authenticator secrets); data-protection keys must be kept on persistent storage in production so the pending-code cookie survives restarts.
 
