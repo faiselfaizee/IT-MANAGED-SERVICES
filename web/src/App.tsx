@@ -1,21 +1,30 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { whoAmI, type WhoAmI } from './api';
+import { signOut } from './auth';
+import { useHash } from './http';
 
 export const MODULES = ['Service Desk', 'Assets', 'Monitoring', 'AD Manager', 'Vault', 'Backup'];
+const AssetsApp = lazy(() => import('./assets/AssetsApp'));
 
 export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const [who, setWho] = useState<WhoAmI | null>(null);
   const [err, setErr] = useState('');
+  const parts = useHash();
   useEffect(() => { whoAmI(fetcher).then(setWho, (e: Error) => setErr(e.message)); }, [fetcher]);
+  const inAssets = parts[0] === 'assets';
   return (
-    <div style={{ fontFamily: 'system-ui, sans-serif', display: 'flex', minHeight: '100vh' }}>
-      <nav aria-label="Modules" style={{ width: 220, padding: 16, background: '#14213d', color: '#fff' }}>
+    <div className="shell">
+      <nav aria-label="Modules" className="side">
         <strong>DeskAsk Platform</strong>
-        <ul style={{ listStyle: 'none', padding: 0 }}>{MODULES.map((m) => <li key={m} style={{ padding: '6px 0', opacity: 0.6 }}>{m}</li>)}</ul>
+        <a href="#/" className={!inAssets ? 'on' : ''}>Home</a>
+        {MODULES.map((m) => m === 'Assets' ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}>{m}</a> : <span key={m} title="Not built yet">{m}</span>)}
+        {fetcher ? null : <a href="#/" onClick={(e) => { e.preventDefault(); signOut(); }}>Sign out</a>}
       </nav>
-      <main style={{ flex: 1, padding: 24 }}>
-        {err ? <p role="alert">{err}</p> : who ? <h1>Welcome, {who.name}</h1> : <p>Loading…</p>}
-        <p>Phase 0 shell. Modules appear here as they are built.</p>
+      <main className="main">
+        {err ? <p role="alert">{err}</p> : null}
+        {inAssets
+          ? <Suspense fallback={<p>Loading…</p>}><AssetsApp /></Suspense>
+          : <>{who ? <h1>Welcome, {who.name}</h1> : !err ? <p>Loading…</p> : null}<p>Choose a module on the left. Modules appear here as they are built.</p></>}
       </main>
     </div>
   );
