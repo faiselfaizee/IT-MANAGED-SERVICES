@@ -41,8 +41,8 @@ jobs:
           dotnet publish src/Platform/DeskAsk.Platform.Host -c Release -r win-x64 --self-contained true -p:Version=$VERSION -o out/host-win-x64
           for d in out/host-linux-x64 out/host-win-x64; do mkdir -p $d/wwwroot && cp -r web/dist/. $d/wwwroot/; done
           (cd updater && go build -o ../out/dkr ./cmd/deskask-release)
-          for t in "linux amd64 " "windows amd64 .exe"; do set -- $t; \\
-            (cd updater && GOOS=$1 GOARCH=$2 go build -o ../out/tools/deskask-updater-$1-$2$3 ./cmd/deskask-updater); \\
+          for t in "linux amd64 " "windows amd64 .exe"; do set -- $t; \
+            (cd updater && GOOS=$1 GOARCH=$2 go build -o ../out/tools/deskask-updater-$1-$2$3 ./cmd/deskask-updater); \
             (cd agent && GOOS=$1 GOARCH=$2 go build -o ../out/tools/deskask-agent-$1-$2$3 ./cmd/agent); done
           cp deploy/windows/install-windows.ps1 out/tools/
           echo "$VERSION" > out/version.txt
@@ -61,5 +61,5 @@ jobs:
         run: |
           VERSION=$(cat out/version.txt); TAG="v$VERSION"
           PRE=""; case "$VERSION" in *-*) PRE="--prerelease";; esac
-          gh release create "$TAG" $PRE --target "$GITHUB_SHA" --title "DeskAsk Platform $TAG" --generate-notes \\
+          gh release create "$TAG" $PRE --target "$GITHUB_SHA" --title "DeskAsk Platform $TAG" --generate-notes \
             out/bundles/* out/tools/* out/release-public.pem out/SHA256SUMS.txt
