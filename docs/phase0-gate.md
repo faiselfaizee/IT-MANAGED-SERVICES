@@ -16,7 +16,7 @@ Question for the gate: is the foundation good enough to build the product module
 | CI: backend on PostgreSQL, web, agent, updater, end-to-end, release dry run | done | |
 
 ## Not done yet (known, accepted for Phase 0)
-- **Windows Server install has not been run on a real server.** CI proves the Linux path and the bundles for both. An `install-windows.ps1` and a test on a clean Windows Server is the first job of Phase 1 or when you install.
+- ~~Windows Server install not run.~~ Fixed in Phase 1: `install-windows.ps1`, tested on windows-latest in CI (docs/windows-install.md). A run on your own server is still the real proof.
 - ~~Database changes are create scripts, not migrations.~~ Fixed in Phase 1 (ADR 0012).
 - **Web app is a shell** (sign-in, health, layout). No module screens yet.
 - ~~Customer provisioning by hand.~~ Fixed in Phase 1: `tenant create` (docs/provisioning.md). A web API for it waits for a platform-operator identity.
