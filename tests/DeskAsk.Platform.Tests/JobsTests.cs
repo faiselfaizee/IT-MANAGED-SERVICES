@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using DeskAsk.Platform;
 using DeskAsk.Platform.Jobs;
 using DeskAsk.Platform.Tenancy;
 using Npgsql;
