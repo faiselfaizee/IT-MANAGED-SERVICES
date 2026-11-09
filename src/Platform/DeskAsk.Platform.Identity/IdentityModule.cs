@@ -75,7 +75,7 @@ public sealed class IdentityModule : IPlatformModule
             {
                 o.SetAuthorizationEndpointUris("/connect/authorize").SetTokenEndpointUris("/connect/token")
                  .SetUserInfoEndpointUris("/connect/userinfo").SetEndSessionEndpointUris("/connect/logout")
-                 .SetConfigurationEndpointUris("/.well-known/openid-configuration").SetCryptographyEndpointUris("/.well-known/jwks");
+                 .SetConfigurationEndpointUris("/.well-known/openid-configuration").SetJsonWebKeySetEndpointUris("/.well-known/jwks");
                 o.AllowAuthorizationCodeFlow().AllowRefreshTokenFlow().RequireProofKeyForCodeExchange();
                 o.RegisterScopes(Scopes.OpenId, Scopes.Email, Scopes.Profile, Scopes.Roles, "deskask");
                 o.SetAccessTokenLifetime(TimeSpan.FromMinutes(10)).SetIdentityTokenLifetime(TimeSpan.FromMinutes(10))
