@@ -21,7 +21,7 @@ public class AgentsTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var api = await TestSupport.AdminClient(factory);
         await api.GetAsync("/api/assets/types");
-        await Sql("truncate assets.jobs, assets.agent_q, assets.agents, assets.enroll_tokens, assets.amc, assets.rentals, assets.history, assets.assets, assets.companies, assets.types restart identity cascade; alter sequence assets.tag_seq restart");
+        await Sql("truncate assets.shells, assets.rc_log, assets.jobs, assets.agent_q, assets.agents, assets.enroll_tokens, assets.amc, assets.rentals, assets.history, assets.assets, assets.companies, assets.types restart identity cascade; alter sequence assets.tag_seq restart");
         return api;
     }
 

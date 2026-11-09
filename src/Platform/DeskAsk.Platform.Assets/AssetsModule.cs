@@ -122,6 +122,16 @@ public sealed class AssetsSchema : ITenantSchema
               status text not null default 'queued', by_name text not null default '', created_at timestamptz not null default now(), started_at timestamptz, finished_at timestamptz,
               exit_code int, output text not null default '', command_id int, timeout_s int not null default 120);
             create index if not exists jobs_asset on assets.jobs (asset_id, created_at desc)"),
+        new(4, "live shells and remote control", @"
+            create table if not exists assets.shells (
+              id text primary key, asset_id bigint not null references assets.assets(id) on delete cascade, agent_id text not null, shell text not null,
+              by_name text not null, created_at timestamptz not null default now(), closed boolean not null default false, last_in timestamptz not null default now(),
+              seq int not null default 0, input_log text not null default '');
+            create table if not exists assets.shell_out (
+              sid text not null references assets.shells(id) on delete cascade, seq int not null, at timestamptz not null default now(), data text not null, primary key (sid, seq));
+            create table if not exists assets.rc_log (
+              id bigserial primary key, agent_id text not null, at timestamptz not null default now(), level text not null default 'info', text text not null default '');
+            create index if not exists rc_log_agent on assets.rc_log (agent_id, id)"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -325,6 +335,7 @@ public sealed class AssetsModule : IPlatformModule
 
         AssetsDevice.Map(r, Key);
         AgentsApi.Map(r, Key);
+        ShellApi.Map(r, Key);
 
         // ---- types
         anyone(r.MapGet("/api/assets/types", async (ITenantContext t, CancellationToken ct) =>

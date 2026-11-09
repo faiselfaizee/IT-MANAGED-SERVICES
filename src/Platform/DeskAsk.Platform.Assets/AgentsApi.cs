@@ -42,6 +42,9 @@ public sealed class AssetsJanitorJob : IJobHandler
         async Task Sql(string sql) { await using var c = new NpgsqlCommand(sql, db); await c.ExecuteNonQueryAsync(ct); }
         await Sql("update assets.jobs set status = 'timeout', finished_at = now(), output = output || E'\\n[The agent did not pick this up in time.]' where status in ('queued','sent') and created_at < now() - interval '15 minutes'");
         await Sql("update assets.jobs set status = 'timeout', finished_at = now() where status = 'running' and started_at < now() - interval '3 hours'");
+        await Sql("update assets.shells set closed = true where not closed and last_in < now() - interval '30 minutes'");
+        await Sql("delete from assets.shell_out where at < now() - interval '2 days'");
+        await Sql("update assets.agents set rd_state = 'stalled' where rd_state = 'pending' and rd_at < now() - interval '15 minutes'");
         await Sql("delete from assets.agent_q where created_at < now() - interval '3 days'");
         await Sql("delete from assets.jobs where created_at < now() - interval '180 days'");
     }
@@ -53,16 +56,16 @@ public sealed class AssetsJanitorJob : IJobHandler
 /// </summary>
 public static class AgentsApi
 {
-    static IResult Bad(string error, string? detail = null) => Results.BadRequest(new { error, detail });
-    static string Actor(ClaimsPrincipal u) => u.FindFirstValue("email") ?? u.FindFirstValue("sub") ?? "unknown";
-    static async Task<NpgsqlConnection> Open(ITenantContext t, CancellationToken ct) { var db = new NpgsqlConnection(t.Require().ConnectionString); await db.OpenAsync(ct); return db; }
-    static void P(NpgsqlCommand c, string n, object? v) => c.Parameters.AddWithValue(n, v ?? DBNull.Value);
-    static string Hash(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s))).ToLowerInvariant();
-    static string Rand(int bytes) => Convert.ToBase64String(RandomNumberGenerator.GetBytes(bytes)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-    static JsonElement Clone(string json) => JsonDocument.Parse(json).RootElement.Clone();
-    static string? Str(JsonElement b, string n) => b.ValueKind == JsonValueKind.Object && b.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-    static string Clip(string? s, int max) { s ??= ""; return s.Length <= max ? s : s[..max]; }
-    static string Ip(HttpContext h) => h.Connection.RemoteIpAddress?.ToString() ?? "";
+    internal static IResult Bad(string error, string? detail = null) => Results.BadRequest(new { error, detail });
+    internal static string Actor(ClaimsPrincipal u) => u.FindFirstValue("email") ?? u.FindFirstValue("sub") ?? "unknown";
+    internal static async Task<NpgsqlConnection> Open(ITenantContext t, CancellationToken ct) { var db = new NpgsqlConnection(t.Require().ConnectionString); await db.OpenAsync(ct); return db; }
+    internal static void P(NpgsqlCommand c, string n, object? v) => c.Parameters.AddWithValue(n, v ?? DBNull.Value);
+    internal static string Hash(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s))).ToLowerInvariant();
+    internal static string Rand(int bytes) => Convert.ToBase64String(RandomNumberGenerator.GetBytes(bytes)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    internal static JsonElement Clone(string json) => JsonDocument.Parse(json).RootElement.Clone();
+    internal static string? Str(JsonElement b, string n) => b.ValueKind == JsonValueKind.Object && b.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+    internal static string Clip(string? s, int max) { s ??= ""; return s.Length <= max ? s : s[..max]; }
+    internal static string Ip(HttpContext h) => h.Connection.RemoteIpAddress?.ToString() ?? "";
 
     public static string PublicUrl(HttpContext h, IConfiguration cfg) => (cfg["Assets:PublicUrl"] ?? (h.Request.Scheme + "://" + h.Request.Host)).TrimEnd('/');
     static string AgentDir(IConfiguration cfg) => cfg["Assets:AgentDir"] ?? Path.Combine(AppContext.BaseDirectory, "agent-dist");
@@ -103,7 +106,7 @@ chmod 755 /opt/deskask-agent/deskask-agent
     };
 
     // ---------------------------------------------------------------- agent authentication and queue
-    static async Task<(string Id, long AssetId, int? Company, string Platform, string Version, bool Locked, bool ShellOk)?> AuthAgent(HttpContext http, NpgsqlConnection db, CancellationToken ct)
+    internal static async Task<(string Id, long AssetId, int? Company, string Platform, string Version, bool Locked, bool ShellOk)?> AuthAgent(HttpContext http, NpgsqlConnection db, CancellationToken ct)
     {
         var m = Regex.Match(http.Request.Headers.Authorization.ToString(), @"^Bearer\s+(dkag_[A-Za-z0-9_-]{20,})$");
         var id = http.Request.Headers["X-Agent-Id"].ToString();
@@ -176,9 +179,9 @@ chmod 755 /opt/deskask-agent/deskask-agent
         });
     }
 
-    sealed record Target(long AssetId, string AssetName, string AgentId, string Platform);
+    internal sealed record Target(long AssetId, string AssetName, string AgentId, string Platform);
     /// <summary>All the checks that stand between an engineer and a computer. Returns an error result or the target.</summary>
-    static async Task<(IResult? Error, Target? T)> Resolve(NpgsqlConnection db, long assetId, bool needOnline, int offlineSec, CancellationToken ct)
+    internal static async Task<(IResult? Error, Target? T)> Resolve(NpgsqlConnection db, long assetId, bool needOnline, int offlineSec, CancellationToken ct)
     {
         await using var c = new NpgsqlCommand(@"select a.name, a.agent_id, a.remote_ok, a.last_seen, g.platform, g.shell_ok, g.locked, a.company_id, coalesce(co.remote_allowed, true), coalesce(co.name, '')
             from assets.assets a left join assets.agents g on g.id = a.agent_id left join assets.companies co on co.id = a.company_id where a.id = @i", db); P(c, "i", assetId);
@@ -193,8 +196,8 @@ chmod 755 /opt/deskask-agent/deskask-agent
             return (Bad("agent_offline", "The agent on " + name + " is offline."), null);
         return (null, new Target(assetId, name, agent, r.GetString(4)));
     }
-    static int Offline(IConfiguration cfg) => int.TryParse(cfg["Assets:AgentOfflineSeconds"], out var s) && s > 0 ? s : 900;
-    static string ShellFor(string platform, string? shell)
+    internal static int Offline(IConfiguration cfg) => int.TryParse(cfg["Assets:AgentOfflineSeconds"], out var s) && s > 0 ? s : 900;
+    internal static string ShellFor(string platform, string? shell)
     {
         var w = platform == "windows";
         if (w && shell is not ("cmd" or "powershell")) throw new FormatException("Choose cmd or PowerShell for a Windows computer.");
