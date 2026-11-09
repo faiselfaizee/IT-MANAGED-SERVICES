@@ -138,6 +138,16 @@ func TestServiceThatWillNotStartIsRolledBack(t *testing.T) {
 	}
 }
 
+func TestRollbackThatDoesNotBecomeHealthyIsReportedAsFailed(t *testing.T) {
+	env, f, k := mk(t)
+	Apply(context.Background(), env, pack(t, k, "2.0.0", map[string]string{"app.dll": "good"}), pubs(k), Options{})
+	f.failHealth = func(string) bool { return true } // nothing is healthy any more, not even the old version
+	_, err := Apply(context.Background(), env, pack(t, k, "2.1.0", map[string]string{"app.dll": "bad"}), pubs(k), Options{})
+	if !errors.Is(err, ErrRollbackFailed) {
+		t.Fatalf("expected ErrRollbackFailed, got %v", err)
+	}
+}
+
 func TestFailedFirstInstallLeavesNothingBehind(t *testing.T) {
 	env, f, k := mk(t)
 	f.failHealth = func(string) bool { return true }
