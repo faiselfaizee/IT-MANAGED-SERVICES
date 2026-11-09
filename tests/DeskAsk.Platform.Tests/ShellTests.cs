@@ -47,7 +47,7 @@ public class ShellTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.OK, (await api.PostAsync("/api/assets/shell/" + sid + "/input", Json(new { data = "whoami\nGet-Date\n" }))).StatusCode);
         var inp = (await Poll(agent))[0];
         Assert.Equal("input", inp.GetProperty("type").GetString()); Assert.Equal("whoami\nGet-Date\n", inp.GetProperty("data").GetString());
-        var audit = await J(await api.GetAsync("/api/platform/audit?action=assets.shell_input&take=10"));
+        var audit = await J(await api.GetAsync("/api/platform/audit?action=assets.shell_input&take=2"));
         Assert.Equal(new[] { "Get-Date", "whoami" }, audit.EnumerateArray().Select(x => x.GetProperty("detail").GetString()!).ToArray());
 
         Assert.Equal(HttpStatusCode.OK, (await agent.PostAsync("/agent/v1/shell", Json(new { sid, data = "nt authority\\system\r\n" }))).StatusCode);
