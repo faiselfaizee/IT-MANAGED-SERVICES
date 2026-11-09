@@ -6,6 +6,7 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <ProjectReference Include="..\..\src\Platform\DeskAsk.Platform.Host\DeskAsk.Platform.Host.csproj" />
+    <ProjectReference Include="..\..\src\Platform\DeskAsk.Platform.Jobs\DeskAsk.Platform.Jobs.csproj" />
     <ProjectReference Include="..\..\src\Platform\DeskAsk.Platform.Licensing\DeskAsk.Platform.Licensing.csproj" />
     <ProjectReference Include="..\..\src\Platform\DeskAsk.Platform.Tenancy\DeskAsk.Platform.Tenancy.csproj" />
   </ItemGroup>

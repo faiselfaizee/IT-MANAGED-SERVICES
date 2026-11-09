@@ -17,6 +17,7 @@ public static class TestSupport
         b.UseSetting("Platform:DevTenantConnection", Environment.GetEnvironmentVariable("TEST_PG_CONNECTION") ?? "");
         b.UseSetting("Platform:BootstrapAdmin:Email", "admin@acme.test");
         b.UseSetting("Platform:BootstrapAdmin:Password", "Correct-Horse-9");
+        b.UseSetting("Platform:Roles", "web");   // no background worker unless a test asks for it
         b.UseSetting("Identity:AllowInsecureHttp", "true");
         b.UseSetting("Identity:Clients:0:Id", "web");
         b.UseSetting("Identity:Clients:0:RedirectUris:0", Redirect);
