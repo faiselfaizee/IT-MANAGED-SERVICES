@@ -1,0 +1,56 @@
+name: release
+# Tag vX.Y.Z (or vX.Y.Z-alpha.1) -> signed bundles + tools on a GitHub Release.
+# One-time: create the release key with `deskask-release keygen`, store release-private.pem as the repository secret RELEASE_SIGNING_KEY,
+# and give release-public.pem to every server (it is also attached to each release).
+on:
+  push: { tags: ["v*"] }
+permissions: { contents: write }
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { global-json-file: global.json }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: updater/go.mod }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - name: Check the signing key is there
+        env: { KEY: "${{ secrets.RELEASE_SIGNING_KEY }}" }
+        run: test -n "$KEY" || { echo "::error::Repository secret RELEASE_SIGNING_KEY is missing"; exit 1; }
+      - name: Test everything first
+        run: |
+          dotnet test DeskAsk.Platform.slnx -c Release
+          (cd agent && go vet ./... && go test ./...)
+          (cd updater && go vet ./... && go test ./...)
+          (cd web && npm ci && npm run build && npm test)
+        env: { TEST_PG_CONNECTION: "" }
+      - name: Build
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p out/bundles out/tools
+          dotnet publish src/Platform/DeskAsk.Platform.Host -c Release -r linux-x64 --self-contained false -p:Version=$VERSION -o out/host-linux-x64
+          dotnet publish src/Platform/DeskAsk.Platform.Host -c Release -r win-x64 --self-contained true -p:Version=$VERSION -o out/host-win-x64
+          for d in out/host-linux-x64 out/host-win-x64; do mkdir -p $d/wwwroot && cp -r web/dist/. $d/wwwroot/; done
+          (cd updater && go build -o ../out/dkr ./cmd/deskask-release)
+          for t in "linux amd64 " "windows amd64 .exe"; do set -- $t; \\
+            (cd updater && GOOS=$1 GOARCH=$2 go build -o ../out/tools/deskask-updater-$1-$2$3 ./cmd/deskask-updater); \\
+            (cd agent && GOOS=$1 GOARCH=$2 go build -o ../out/tools/deskask-agent-$1-$2$3 ./cmd/agent); done
+          echo "$VERSION" > out/version.txt
+      - name: Sign and pack
+        env: { RELEASE_SIGNING_KEY: "${{ secrets.RELEASE_SIGNING_KEY }}" }
+        run: |
+          VERSION=$(cat out/version.txt)
+          out/dkr pack -dir out/host-linux-x64 -component host-linux-x64 -version $VERSION -key - -out out/bundles/deskask-host-linux-x64-$VERSION.dkb
+          out/dkr pack -dir out/host-win-x64   -component host-win-x64   -version $VERSION -key - -out out/bundles/deskask-host-win-x64-$VERSION.dkb
+          printf '%s' "$RELEASE_SIGNING_KEY" > /tmp/k.pem
+          openssl pkey -in /tmp/k.pem -pubout -out out/release-public.pem && rm /tmp/k.pem
+          for b in out/bundles/*.dkb; do out/dkr verify -pub out/release-public.pem $b; done
+          (cd out && sha256sum bundles/* tools/* release-public.pem > SHA256SUMS.txt)
+      - name: Publish the release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          PRE=""; case "$GITHUB_REF_NAME" in *-*) PRE="--prerelease";; esac
+          gh release create "$GITHUB_REF_NAME" $PRE --title "DeskAsk Platform $GITHUB_REF_NAME" --generate-notes \\
+            out/bundles/* out/tools/* out/release-public.pem out/SHA256SUMS.txt

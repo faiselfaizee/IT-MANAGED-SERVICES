@@ -32,6 +32,11 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok", version = typeof(Pro
 app.MapGet("/api/platform/whoami", (ITenantContext t) => Results.Ok(new { tenant = t.Require().Id, name = t.Require().Name }));
 foreach (var m in modules) m.MapEndpoints(app);
 
+// The web app (web/dist) is shipped inside the bundle as wwwroot. Everything that is not an API or sign-in address falls back to it.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+app.MapFallbackToFile("/{*path:regex(^(?!api/|connect/|account/|\\.well-known/|health).*$)}", "index.html");
+
 app.Run();
 
 public partial class Program { }

@@ -82,3 +82,25 @@ jobs:
       - name: Platform log
         if: always()
         run: tail -n 80 out/host.log
+  updater:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: updater } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: updater/go.mod }
+      - run: go vet ./...
+      - run: go test ./...
+      - run: GOOS=windows go build ./cmd/deskask-updater ./cmd/deskask-release
+  release-check:
+    runs-on: ubuntu-latest
+    needs: [backend, updater]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { global-json-file: global.json }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: updater/go.mod }
+      - run: dotnet publish src/Platform/DeskAsk.Platform.Host -c Release -o out/host
+      - name: Release dry run (install, upgrade, tamper, rollback, inbox)
+        run: tools/release-check.sh out/host
