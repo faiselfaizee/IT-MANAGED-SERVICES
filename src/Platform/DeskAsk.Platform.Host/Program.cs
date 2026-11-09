@@ -8,6 +8,11 @@ using DeskAsk.Platform.Updates;
 using DeskAsk.Platform.Tenancy;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseWindowsService(o => o.ServiceName = "DeskAskPlatform");   // does nothing unless started by the Windows service manager
+
+// Settings and secrets of a server install live in one protected file (DESKASK_CONFIG), see docs/windows-install.md.
+var configFile = Environment.GetEnvironmentVariable("DESKASK_CONFIG");
+if (!string.IsNullOrWhiteSpace(configFile)) builder.Configuration.AddJsonFile(configFile, optional: false, reloadOnChange: false);
 
 // "DeskAsk.Platform.Host tenant create|list|enable|disable|migrate|init ..." manages customers and exits (docs/provisioning.md).
 if (args.Length > 0 && args[0] == "tenant") { Environment.ExitCode = await TenantCli.RunAsync(args[1..], builder); return; }

@@ -104,3 +104,63 @@ jobs:
       - run: dotnet publish src/Platform/DeskAsk.Platform.Host -c Release -o out/host
       - name: Release dry run (install, upgrade, tamper, rollback, inbox)
         run: tools/release-check.sh out/host
+  windows-install:
+    # The Windows installer, for real: a windows-latest machine gets the platform as a service (LocalService), the updater task,
+    # an upgrade by running the script again, and an uninstall.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { global-json-file: global.json }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: updater/go.mod }
+      - name: Build host, updater, release tool; make two signed bundles
+        shell: bash
+        run: |
+          mkdir -p out
+          dotnet publish src/Platform/DeskAsk.Platform.Host -c Release -r win-x64 --self-contained true -o out/host
+          (cd updater && go build -o ../out/dkr.exe ./cmd/deskask-release && go build -o ../out/deskask-updater.exe ./cmd/deskask-updater)
+          out/dkr.exe keygen -out out/keys
+          for v in 9.0.0-ci.1 9.0.0-ci.2; do out/dkr.exe pack -dir out/host -component host-win-x64 -version $v -key out/keys/release-private.pem -out out/b-$v.dkb; done
+      - name: Install
+        shell: powershell
+        run: |
+          .\deploy\windows\install-windows.ps1 -Root C:\DeskAsk -Bundle out\b-9.0.0-ci.1.dkb -Updater out\deskask-updater.exe -PublicKey out\keys\release-public.pem -Urls http://localhost:5090
+      - name: Check it runs as intended
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $svc = Get-CimInstance Win32_Service -Filter "Name='DeskAskPlatform'"
+          if ($svc.State -ne 'Running') { throw "service is $($svc.State)" }
+          if ($svc.StartName -ne 'NT AUTHORITY\LocalService') { throw "runs as $($svc.StartName)" }
+          $r = Invoke-WebRequest http://localhost:5090/health -UseBasicParsing
+          if ($r.StatusCode -ne 200) { throw "health $($r.StatusCode)" }
+          if ((Get-Content C:\DeskAsk\live\.deskask-version -Raw).Trim() -ne '9.0.0-ci.1') { throw 'wrong version' }
+          if ((Get-ScheduledTask -TaskName DeskAskUpdater).State -ne 'Running') { throw 'updater task not running' }
+          if (-not (Test-Path C:\DeskAsk\config\deskask.json)) { throw 'no config' }
+          & C:\DeskAsk\deskask-tenant.cmd list
+          if ($LASTEXITCODE -ne 2) { throw "tenant command exit code $LASTEXITCODE (expected 2: no catalog set)" }
+          Write-Host 'install OK'
+      - name: Upgrade by running the script again
+        shell: powershell
+        run: |
+          $secretBefore = (Get-Content C:\DeskAsk\config\deskask.json -Raw)
+          .\deploy\windows\install-windows.ps1 -Root C:\DeskAsk -Bundle out\b-9.0.0-ci.2.dkb -Updater out\deskask-updater.exe -PublicKey out\keys\release-public.pem -Urls http://localhost:5090
+          if ((Get-Content C:\DeskAsk\live\.deskask-version -Raw).Trim() -ne '9.0.0-ci.2') { throw 'not upgraded' }
+          if (-not (Test-Path C:\DeskAsk\previous)) { throw 'previous version not kept' }
+          if ((Get-Content C:\DeskAsk\config\deskask.json -Raw) -ne $secretBefore) { throw 'configuration changed by the upgrade' }
+          if ((Invoke-WebRequest http://localhost:5090/health -UseBasicParsing).StatusCode -ne 200) { throw 'not healthy after upgrade' }
+          Write-Host 'upgrade OK'
+      - name: Uninstall
+        shell: powershell
+        run: |
+          .\deploy\windows\install-windows.ps1 -Root C:\DeskAsk -Uninstall
+          if (Get-Service DeskAskPlatform -ErrorAction SilentlyContinue) { throw 'service still there' }
+          if (Get-ScheduledTask -TaskName DeskAskUpdater -ErrorAction SilentlyContinue) { throw 'task still there' }
+      - name: Logs (when something failed)
+        if: failure()
+        shell: powershell
+        run: |
+          Get-Content C:\DeskAsk\logs\updater.log -ErrorAction SilentlyContinue | Select-Object -Last 60
+          Get-WinEvent -LogName Application -MaxEvents 40 -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'DeskAsk|Host' } | Format-List TimeCreated, ProviderName, Message
+          Get-ChildItem C:\DeskAsk -Recurse -Depth 1 -ErrorAction SilentlyContinue | Select-Object -First 60 FullName
