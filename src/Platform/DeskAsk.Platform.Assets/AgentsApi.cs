@@ -464,15 +464,15 @@ chmod 755 /opt/deskask-agent/deskask-agent
             var risk = Str(b, "risk"); if (risk != null && risk is not ("safe" or "caution" or "disruptive")) return Bad("bad_input", "risk must be safe, caution or disruptive");
             if (os == "windows" && shell == "bash") return Bad("bad_input", "Windows commands run in cmd or PowerShell");
             if (os == "linux" && shell != null && shell != "bash") return Bad("bad_input", "Linux commands run in bash");
-            string? paramsJson = null;
+            string? paramsJson = null; var pnames = new HashSet<string>();
             if (b.TryGetProperty("params", out var pr))
             {
                 if (pr.ValueKind != JsonValueKind.Array || pr.GetArrayLength() > 6) return Bad("bad_input", "at most 6 parameters");
-                var list = new List<object>(); var pnames = new HashSet<string>();
+                var list = new List<object>();
                 foreach (var p in pr.EnumerateArray()) { var n = Regex.Replace(Clip(Str(p, "name"), 30), "[^A-Za-z0-9_]", ""); if (n != "") { pnames.Add(n); list.Add(new { name = n, label = Clip(Str(p, "label"), 60), @default = Clip(Str(p, "default"), 100) }); } }
                 paramsJson = JsonSerializer.Serialize(list);
-                foreach (Match m in Regex.Matches(body, @"\{\{(\w+)\}\}")) if (!pnames.Contains(m.Groups[1].Value)) return Bad("bad_input", "the text uses {{" + m.Groups[1].Value + "}} but there is no parameter with that name");
             }
+            if (id == null) foreach (Match m in Regex.Matches(body, @"\{\{(\w+)\}\}")) if (!pnames.Contains(m.Groups[1].Value)) return Bad("bad_input", "the text uses {{" + m.Groups[1].Value + "}} but there is no parameter with that name");
             int? timeout = b.TryGetProperty("timeout", out var to) && to.TryGetInt32(out var ti) ? Math.Clamp(ti, 10, 7200) : null;
             await using var db = await Open(t, ct);
             try
