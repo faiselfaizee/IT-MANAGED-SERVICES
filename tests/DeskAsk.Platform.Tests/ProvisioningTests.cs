@@ -70,8 +70,8 @@ public class ProvisioningTests
 
             Assert.Equal(1L, await Scalar<long>(Pg, $"select count(*) from pg_database where datname = '{dbName}'"));
             Assert.True(await Scalar<bool>(Pg, $"select active from platform.tenants where id = '{id}'"));
-            Assert.Equal(1L, await Scalar<long>(tenantConn, "select count(*) from identity.users where role = 'admin'"));
-            Assert.NotEqual(password, await Scalar<string>(tenantConn, "select password_hash from identity.users limit 1"));   // never stored as typed
+            Assert.Equal(1L, await Scalar<long>(tenantConn, "select count(*) from identity.users where \"Role\" = 'admin'"));
+            Assert.NotEqual(password, await Scalar<string>(tenantConn, "select \"PasswordHash\" from identity.users limit 1"));   // never stored as typed
             Assert.True(await Scalar<long>(tenantConn, "select count(*) from meta.migrations") >= 7);   // core, connect, jobs, identity x3 ...
             Assert.Equal(1L, await Scalar<long>(tenantConn, "select count(*) from information_schema.tables where table_schema = 'core' and table_name = 'audit'"));
 
