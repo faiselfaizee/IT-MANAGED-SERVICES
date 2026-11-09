@@ -46,6 +46,37 @@ public static class AuditHash
             prev, at.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'"), actor, action, target, detail, ip)))).ToLowerInvariant();
 }
 
+public static class AuditVerifier
+{
+    public static async Task<(bool Ok, long Count, long? BrokenAtId)> VerifyAsync(string connectionString, CancellationToken ct)
+    {
+        await using var db = new NpgsqlConnection(connectionString); await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("select id, at, actor, action, target, detail, ip, prev_hash, hash from core.audit order by id", db);
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        var prev = AuditHash.Genesis; long count = 0;
+        while (await rd.ReadAsync(ct))
+        {
+            var expected = AuditHash.Compute(prev, rd.GetDateTime(1), rd.GetString(2), rd.GetString(3), rd.GetString(4), rd.GetString(5), rd.GetString(6));
+            if (rd.GetString(7) != prev || rd.GetString(8) != expected) return (false, count, rd.GetInt64(0));
+            prev = rd.GetString(8); count++;
+        }
+        return (true, count, null);
+    }
+}
+
+/// <summary>Daily: walks the audit chain of every customer and writes "audit.verify_failed" to the log itself when it is broken.</summary>
+public sealed class AuditVerifyJob : IJobHandler
+{
+    public const string JobType = "core.audit_verify";
+    public string Type => JobType;
+    public async Task RunAsync(JobContext job, CancellationToken ct)
+    {
+        var v = await AuditVerifier.VerifyAsync(job.Tenant.ConnectionString, ct);
+        if (v.Ok) return;
+        await job.Services.GetRequiredService<IAuditLog>().WriteAsync("audit.verify_failed", v.BrokenAtId?.ToString() ?? "", $"chain broken after {v.Count} good rows", actor: "system", ct: ct);
+    }
+}
+
 public sealed class AuditLog : IAuditLog
 {
     readonly ITenantContext tenant; readonly IHttpContextAccessor http;
@@ -136,6 +167,8 @@ public sealed class CoreModule : IPlatformModule
         s.AddSingleton<ITenantSchema, CoreSchema>();
         s.AddScoped<IAuditLog, AuditLog>();
         s.AddScoped<ISettings, Settings>();
+        s.AddSingleton<IJobHandler, AuditVerifyJob>();
+        s.AddSingleton(new RecurringJob("core.audit_verify", AuditVerifyJob.JobType, TimeSpan.FromHours(24)));
     }
 
     public void MapEndpoints(IEndpointRouteBuilder r)
@@ -157,17 +190,8 @@ public sealed class CoreModule : IPlatformModule
         // walks the whole chain: every row must carry the hash of the one before it and match its own content
         r.MapGet("/api/platform/audit/verify", async (ITenantContext t, CancellationToken ct) =>
         {
-            await using var db = new NpgsqlConnection(t.Require().ConnectionString); await db.OpenAsync(ct);
-            await using var cmd = new NpgsqlCommand("select id, at, actor, action, target, detail, ip, prev_hash, hash from core.audit order by id", db);
-            await using var rd = await cmd.ExecuteReaderAsync(ct);
-            var prev = AuditHash.Genesis; long count = 0;
-            while (await rd.ReadAsync(ct))
-            {
-                var expected = AuditHash.Compute(prev, rd.GetDateTime(1), rd.GetString(2), rd.GetString(3), rd.GetString(4), rd.GetString(5), rd.GetString(6));
-                if (rd.GetString(7) != prev || rd.GetString(8) != expected) return Results.Ok(new { ok = false, count, brokenAtId = rd.GetInt64(0) });
-                prev = rd.GetString(8); count++;
-            }
-            return Results.Ok(new { ok = true, count, brokenAtId = (long?)null });
+            var v = await AuditVerifier.VerifyAsync(t.Require().ConnectionString, ct);
+            return Results.Ok(new { ok = v.Ok, count = v.Count, brokenAtId = v.BrokenAtId });
         }).RequireAuthorization(p => p.RequireRole("admin"));
 
         r.MapGet("/api/platform/settings", async (ISettings s, string? prefix, CancellationToken ct) =>

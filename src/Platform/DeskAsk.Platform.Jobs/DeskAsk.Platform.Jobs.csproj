@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\DeskAsk.Platform.Abstractions\DeskAsk.Platform.Abstractions.csproj" />
+    <ProjectReference Include="..\DeskAsk.Platform.Tenancy\DeskAsk.Platform.Tenancy.csproj" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+</Project>

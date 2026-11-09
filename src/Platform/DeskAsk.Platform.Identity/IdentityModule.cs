@@ -47,6 +47,8 @@ public sealed class IdentityModule : IPlatformModule
         s.AddDataProtection();
         s.AddSingleton<ITotpClock, SystemTotpClock>();
         s.AddScoped<TwoStepService>();
+        s.AddSingleton<IJobHandler, IdentityPruneJob>();
+        s.AddSingleton(new RecurringJob("identity.prune", IdentityPruneJob.JobType, TimeSpan.FromHours(24)));
         s.AddAntiforgery(o => { o.Cookie.Name = "dk.csrf"; o.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest; });
         s.AddAuthentication(OpenIddictValidationAspNetCoreDefaults.AuthenticationScheme)
             .AddCookie(CookieName, o =>
@@ -268,6 +270,19 @@ public sealed class IdentityModule : IPlatformModule
         if (res == PasswordVerificationResult.SuccessRehashNeeded) { user.PasswordHash = hasher.HashPassword(user, f["password"].ToString()); await db.SaveChangesAsync(http.RequestAborted); }
         await http.SignInAsync(CookieName, new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", user.Id.ToString()) }, CookieName)));
         return Results.Redirect(LocalOrRoot(returnUrl));
+    }
+}
+
+/// <summary>Daily: removes expired and used-up tokens and authorizations (two weeks after they ended) so the identity tables stay small.</summary>
+public sealed class IdentityPruneJob : IJobHandler
+{
+    public const string JobType = "identity.prune";
+    public string Type => JobType;
+    public async Task RunAsync(JobContext job, CancellationToken ct)
+    {
+        var threshold = DateTimeOffset.UtcNow.AddDays(-14);
+        await job.Services.GetRequiredService<IOpenIddictTokenManager>().PruneAsync(threshold, ct);
+        await job.Services.GetRequiredService<IOpenIddictAuthorizationManager>().PruneAsync(threshold, ct);
     }
 }
 

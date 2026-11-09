@@ -2,6 +2,7 @@ using DeskAsk.Platform;
 using DeskAsk.Platform.Connect;
 using DeskAsk.Platform.Core;
 using DeskAsk.Platform.Identity;
+using DeskAsk.Platform.Jobs;
 using DeskAsk.Platform.Licensing;
 using DeskAsk.Platform.Updates;
 using DeskAsk.Platform.Tenancy;
@@ -9,9 +10,7 @@ using DeskAsk.Platform.Tenancy;
 var builder = WebApplication.CreateBuilder(args);
 
 // One build, several roles (ADR 0004): Platform:Roles = "web,worker,connect" (default: all).
-var roles = PlatformRole.None;
-foreach (var r in (builder.Configuration["Platform:Roles"] ?? "all").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-    if (Enum.TryParse<PlatformRole>(r, true, out var one)) roles |= one;
+var roles = PlatformRoles.Parse(builder.Configuration);
 
 var catalogConn = builder.Configuration["Platform:CatalogConnection"];
 ITenantCatalog catalog = string.IsNullOrWhiteSpace(catalogConn)
@@ -20,7 +19,7 @@ ITenantCatalog catalog = string.IsNullOrWhiteSpace(catalogConn)
 builder.Services.AddTenancy(catalog);
 
 // Modules register here as they are built (Phase 1 onward).
-var modules = new List<IPlatformModule> { new CoreModule(), new IdentityModule(), new ConnectModule(), new LicensingModule(), new UpdatesModule() };
+var modules = new List<IPlatformModule> { new CoreModule(), new IdentityModule(), new ConnectModule(), new LicensingModule(), new UpdatesModule(), new JobsModule() };
 foreach (var m in modules) m.AddServices(builder.Services, builder.Configuration);
 
 var app = builder.Build();

@@ -14,11 +14,24 @@ public interface ITenantContext
 public interface ITenantCatalog
 {
     Task<TenantInfo?> FindByHostAsync(string host, CancellationToken ct = default);
+    /// <summary>All active customers: the worker walks them to run each one's background jobs.</summary>
+    Task<IReadOnlyList<TenantInfo>> ListActiveAsync(CancellationToken ct = default);
 }
 
 /// <summary>The process roles one build can take (ADR 0004). Set with Platform:Roles, for example "web,worker".</summary>
 [Flags]
 public enum PlatformRole { None = 0, Web = 1, Worker = 2, Connect = 4, All = Web | Worker | Connect }
+
+public static class PlatformRoles
+{
+    public static PlatformRole Parse(IConfiguration cfg)
+    {
+        var roles = PlatformRole.None;
+        foreach (var r in (cfg["Platform:Roles"] ?? "all").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (Enum.TryParse<PlatformRole>(r, true, out var one)) roles |= one;
+        return roles;
+    }
+}
 
 /// <summary>A product module (Service Desk, Assets, Vault ...). A module owns one schema and may not read another module's tables.</summary>
 public interface IPlatformModule
@@ -98,3 +111,22 @@ public static class EntitlementExtensions
         return l == null || currentCount < l;
     }
 }
+
+/// <summary>What a background job gets: the customer it runs for, its id, payload (JSON text), attempt number and a scope whose ITenantContext is set.</summary>
+public sealed record JobContext(TenantInfo Tenant, long Id, string Payload, int Attempt, IServiceProvider Services);
+
+/// <summary>Runs one kind of background job. Must be safe to run twice (a job is retried after a failure or a crash).</summary>
+public interface IJobHandler
+{
+    string Type { get; }
+    Task RunAsync(JobContext job, CancellationToken ct);
+}
+
+public interface IJobQueue
+{
+    /// <summary>Queues a job for the current customer. With a dedupeKey, a job with that key that is still waiting or running is returned instead of a second one.</summary>
+    Task<long> EnqueueAsync(string type, string payloadJson = "{}", DateTimeOffset? runAt = null, string? dedupeKey = null, CancellationToken ct = default);
+}
+
+/// <summary>A job every customer gets again and again: queued whenever its interval has passed.</summary>
+public sealed record RecurringJob(string Name, string Type, TimeSpan Every);
