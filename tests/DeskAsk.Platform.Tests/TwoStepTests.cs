@@ -266,7 +266,7 @@ public class TwoStepFlowTests : IClassFixture<WebApplicationFactory<Program>>
             Assert.True(list.GetProperty("installed").GetBoolean()); Assert.False(list.GetProperty("serviceAlive").GetBoolean());
             Assert.Equal(id, list.GetProperty("queued")[0].GetProperty("id").GetString());
 
-            await File.WriteAllTextAsync(Path.Combine(updatesDir, "state", "status.json"), "{"updated":" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + ","current":"2.0.0"}");
+            await File.WriteAllTextAsync(Path.Combine(updatesDir, "state", "status.json"), System.Text.Json.JsonSerializer.Serialize(new { updated = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), current = "2.0.0" }));
             Assert.True(Parse(await strong.GetStringAsync("/api/platform/updates")).GetProperty("serviceAlive").GetBoolean());
 
             Assert.Equal(HttpStatusCode.OK, (await strong.DeleteAsync("/api/platform/updates/" + id)).StatusCode);   // cancel before the updater starts
