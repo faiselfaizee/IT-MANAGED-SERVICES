@@ -1,3 +1,4 @@
+using DeskAsk.Platform.Assets;
 using DeskAsk.Platform.Connect;
 using DeskAsk.Platform.Core;
 using DeskAsk.Platform.Identity;
@@ -22,7 +23,7 @@ public static class PlatformSetup
         builder.Services.AddTenancy(catalog);
 
         // Modules register here as they are built (Phase 1 onward).
-        var modules = new List<IPlatformModule> { new CoreModule(), new IdentityModule(), new ConnectModule(), new LicensingModule(), new UpdatesModule(), new JobsModule() };
+        var modules = new List<IPlatformModule> { new CoreModule(), new IdentityModule(), new ConnectModule(), new LicensingModule(), new UpdatesModule(), new JobsModule(), new AssetsModule() };
         foreach (var m in modules) m.AddServices(builder.Services, builder.Configuration);
         return (roles, modules);
     }
