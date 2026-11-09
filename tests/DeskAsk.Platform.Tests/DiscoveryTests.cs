@@ -49,7 +49,7 @@ public class DiscoveryTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.OK, a.StatusCode);
         var id = (await J(a)).GetProperty("id").GetInt64();
         var dev = await J(await api.GetAsync($"/api/assets/{id}/device"));
-        Assert.Equal("Found server", (await J(await api.GetAsync($"/api/assets/{id}"))).GetProperty("name").GetString());
+        Assert.Equal("Found server", (await J(await api.GetAsync($"/api/assets/{id}"))).GetProperty("asset").GetProperty("name").GetString());
         Assert.Equal(JsonValueKind.Object, dev.ValueKind);
     }
 
@@ -181,7 +181,7 @@ public class DiscoveryTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync($"/api/assets/{id}/allocate", Json(new { to = "Someone else" }))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync($"/api/assets/{id}/handover", Json(new { condition = "broken" }))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/{id}/handover", Json(new { condition = "fair", notes = "scratched lid" }))).StatusCode);
-        Assert.Equal("", (await J(await api.GetAsync($"/api/assets/{id}"))).GetProperty("assignedTo").GetString());
+        Assert.Equal("", (await J(await api.GetAsync($"/api/assets/{id}"))).GetProperty("asset").GetProperty("assignedTo").GetString());
         var h = await J(await api.GetAsync($"/api/assets/{id}/handovers"));
         Assert.Equal(2, h.GetProperty("items").GetArrayLength()); Assert.Equal("handover", h.GetProperty("items")[0].GetProperty("kind").GetString());
 
