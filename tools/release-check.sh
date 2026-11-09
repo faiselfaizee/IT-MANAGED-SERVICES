@@ -9,8 +9,9 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d); ROOT=$WORK/root; mkdir -p "$ROOT"
 PORT=5081
 pass(){ echo "PASS  $1"; }
-fail(){ echo "FAIL  $1"; echo "---- host log ----"; tail -n 40 "$WORK/host.log" 2>/dev/null || true; pkill -f DeskAsk.Platform.Host.dll || true; exit 1; }
-cleanup(){ pkill -f DeskAsk.Platform.Host.dll 2>/dev/null || true; pkill -f "deskask-updater run" 2>/dev/null || true; }
+stop_host(){ [ -f "$WORK/host.pid" ] && kill "$(cat "$WORK/host.pid")" 2>/dev/null || true; }
+fail(){ echo "FAIL  $1"; echo "---- host log ----"; tail -n 40 "$WORK/host.log" 2>/dev/null || true; stop_host; exit 1; }
+cleanup(){ stop_host; jobs -p | xargs -r kill 2>/dev/null || true; }
 trap cleanup EXIT
 
 (cd "$HERE/updater" && go build -o "$WORK/dkr" ./cmd/deskask-release && go build -o "$WORK/dku" ./cmd/deskask-updater)
@@ -20,8 +21,8 @@ PRIV=$WORK/keys/release-private.pem; PUB=$WORK/keys/release-public.pem
 
 pack(){ "$WORK/dkr" pack -dir "$1" -component host-linux-x64 -version "$2" -key "${3:-$PRIV}" -out "$WORK/b-$2.dkb" >/dev/null; }
 export ASPNETCORE_URLS=http://localhost:$PORT
-STOP="pkill -f DeskAsk.Platform.Host.dll || true; sleep 1"
-START="cd $ROOT/live && nohup dotnet DeskAsk.Platform.Host.dll > $WORK/host.log 2>&1 < /dev/null &"
+STOP="if [ -f $WORK/host.pid ]; then kill \$(cat $WORK/host.pid) 2>/dev/null || true; rm -f $WORK/host.pid; fi; sleep 1"
+START="cd $ROOT/live && (nohup dotnet DeskAsk.Platform.Host.dll > $WORK/host.log 2>&1 < /dev/null & echo \$! > $WORK/host.pid)"
 upd(){ "$WORK/dku" "$@" -root "$ROOT" -pub "$PUB" -stop-cmd "$STOP" -start-cmd "$START" -health "http://localhost:$PORT/health" -health-timeout 25s; }
 ver(){ cat "$ROOT/live/.deskask-version" 2>/dev/null | tr -d '\n' || true; }
 healthy(){ curl -sf "http://localhost:$PORT/health" >/dev/null; }
