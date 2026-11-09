@@ -45,20 +45,20 @@ public static class AssetsDevice
         error = n + " must be a date like 2026-11-09"; return null;
     }
     static string D(DateOnly? d) => d?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "";
-    static async Task History(NpgsqlConnection db, long id, string actor, string action, string changes, CancellationToken ct)
+    public static async Task History(NpgsqlConnection db, long id, string actor, string action, string changes, CancellationToken ct, NpgsqlTransaction? tx = null)
     {
-        await using var h = new NpgsqlCommand("insert into assets.history (asset_id, actor, action, changes) values (@i, @a, @c, @x)", db);
+        await using var h = new NpgsqlCommand("insert into assets.history (asset_id, actor, action, changes) values (@i, @a, @c, @x)", db, tx);
         P(h, "i", id); P(h, "a", actor); P(h, "c", action); P(h, "x", changes);
         await h.ExecuteNonQueryAsync(ct);
     }
 
     /// <summary>Writes a normalised inventory into an asset. Fields the inventory does not know keep their value; a serial number that another asset already has is not copied.</summary>
-    public static async Task ApplyInventory(NpgsqlConnection db, long id, NormInv n, string source, string actor, CancellationToken ct)
+    public static async Task ApplyInventory(NpgsqlConnection db, long id, NormInv n, string source, string actor, CancellationToken ct, NpgsqlTransaction? tx = null)
     {
         string? serial = n.Serial;
         if (serial != null)
         {
-            await using var chk = new NpgsqlCommand("select 1 from assets.assets where lower(serial) = lower(@s) and id <> @i", db);
+            await using var chk = new NpgsqlCommand("select 1 from assets.assets where lower(serial) = lower(@s) and id <> @i", db, tx);
             P(chk, "s", serial); P(chk, "i", id);
             if (await chk.ExecuteScalarAsync(ct) != null) serial = null;
         }
@@ -75,7 +75,7 @@ public static class AssetsDevice
             ip_address = case when ip_address = '' then @ip else ip_address end,
             category = case when category = '' then 'IT hardware' else category end,
             source = @src, inventory_at = now(), updated_at = now(), updated_by = @actor
-            where id = @id", db);
+            where id = @id", db, tx);
         P(c, "make", n.Make); P(c, "model", n.Model); P(c, "serial", serial); P(c, "host", n.Hostname); P(c, "dns", n.DnsName);
         P(c, "fam", n.OsFamily); P(c, "osn", n.OsName); P(c, "osv", n.OsVersion); P(c, "cm", n.CpuMake); P(c, "cmo", n.CpuModel); P(c, "cs", n.CpuSocket);
         P(c, "tc", (int?)n.TotalCpu); P(c, "cc", (int?)n.CpuCores); P(c, "cpp", (int?)n.CoresPerCpu); P(c, "lp", (int?)n.Logical);
@@ -85,7 +85,7 @@ public static class AssetsDevice
         c.Parameters.Add(new NpgsqlParameter("patch", NpgsqlDbType.Date) { Value = patch.HasValue ? patch.Value : DBNull.Value });
         P(c, "ip", first); P(c, "src", source); P(c, "actor", actor); P(c, "id", id);
         await c.ExecuteNonQueryAsync(ct);
-        await History(db, id, actor, "inventory", JsonSerializer.Serialize(new { source, apps = n.Apps.Length > 2 ? 1 : 0 }), ct);
+        await History(db, id, actor, "inventory", JsonSerializer.Serialize(new { source }), ct, tx);
     }
 
     const string DeviceSql = @"select a.id, a.tag, a.name, a.status, a.category, a.company_id, c.name, a.manufacturer, a.model, a.serial, a.bios_version,

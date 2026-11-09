@@ -95,9 +95,39 @@ public sealed class AssetsSchema : ITenantSchema
             create table if not exists assets.rentals (
               id serial primary key, company_id int references assets.companies(id) on delete set null, title text not null,
               start_date date, end_date date, notes text not null default '', asset_ids jsonb not null default '[]', updated_at timestamptz not null default now())"),
+        new(3, "agents, enrolment tokens, remote commands", @"
+            create table if not exists assets.enroll_tokens (
+              id serial primary key, company_id int references assets.companies(id) on delete cascade, label text not null default '', token_hash text not null, prefix text not null,
+              token_enc text not null default '', created_at timestamptz not null default now(), expires_at timestamptz, uses int not null default 0, revoked boolean not null default false,
+              created_by text not null default '', asset_id bigint references assets.assets(id) on delete cascade, monitor_only boolean not null default false);
+            create index if not exists enroll_tokens_hash on assets.enroll_tokens (token_hash);
+            create table if not exists assets.agents (
+              id text primary key, company_id int references assets.companies(id) on delete set null, asset_id bigint references assets.assets(id) on delete cascade,
+              hostname text not null default '', platform text not null default '', version text not null default '', key_hash text not null,
+              last_seen timestamptz, ip text not null default '', created_at timestamptz not null default now(), shell_ok boolean not null default true, locked boolean not null default false,
+              rd_id text not null default '', rd_state text not null default '', rd_mode text not null default '', rd_pw text not null default '', rd_msg text not null default '', rd_at timestamptz);
+            create index if not exists agents_asset on assets.agents (asset_id);
+            create table if not exists assets.agent_q (
+              id bigserial primary key, agent_id text not null references assets.agents(id) on delete cascade, kind text not null, payload text not null,
+              created_at timestamptz not null default now(), delivered boolean not null default false);
+            create index if not exists agent_q_pending on assets.agent_q (agent_id) where not delivered;
+            create table if not exists assets.commands (
+              id serial primary key, title text not null, description text not null default '', category text not null default 'General',
+              os text not null default 'any' check (os in ('windows','linux','any')), shell text not null check (shell in ('cmd','powershell','bash')), body text not null,
+              risk text not null default 'safe' check (risk in ('safe','caution','disruptive')), params text not null default '[]', timeout_s int not null default 120,
+              builtin boolean not null default false, enabled boolean not null default true, pos int not null default 0);
+            create unique index if not exists commands_builtin on assets.commands (lower(title), os) where builtin;
+            create table if not exists assets.jobs (
+              id text primary key, asset_id bigint not null references assets.assets(id) on delete cascade, agent_id text not null, shell text not null, title text not null default '', body text not null,
+              status text not null default 'queued', by_name text not null default '', created_at timestamptz not null default now(), started_at timestamptz, finished_at timestamptz,
+              exit_code int, output text not null default '', command_id int, timeout_s int not null default 120);
+            create index if not exists jobs_asset on assets.jobs (asset_id, created_at desc)"),
     };
-    public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
-        SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
+    public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
+    {
+        await SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
+        await CommandLibrary.SeedAsync(tenant.ConnectionString, ct);
+    }
 }
 
 /// <summary>
@@ -115,7 +145,13 @@ public sealed class AssetsModule : IPlatformModule
     const string Cols = "a.id, a.tag, a.name, a.type_id, t.name, a.status, a.manufacturer, a.model, a.serial, a.location, a.assigned_to, a.purchase_date, a.purchase_cost, a.warranty_end, a.notes, a.custom, a.source, a.created_at, a.updated_at";
     const string From = "assets.assets a left join assets.types t on t.id = a.type_id";
 
-    public void AddServices(IServiceCollection s, IConfiguration cfg) => s.AddSingleton<ITenantSchema, AssetsSchema>();
+    public void AddServices(IServiceCollection s, IConfiguration cfg)
+    {
+        s.AddSingleton<ITenantSchema, AssetsSchema>();
+        s.AddSingleton<AgentHub>();
+        s.AddSingleton<IJobHandler, AssetsJanitorJob>();
+        s.AddSingleton(new RecurringJob("assets.janitor", AssetsJanitorJob.JobType, TimeSpan.FromMinutes(1)));
+    }
 
     sealed record FieldDef(string Key, string Label, string Kind, string[] Options);
 
@@ -288,6 +324,7 @@ public sealed class AssetsModule : IPlatformModule
         var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(Key);
 
         AssetsDevice.Map(r, Key);
+        AgentsApi.Map(r, Key);
 
         // ---- types
         anyone(r.MapGet("/api/assets/types", async (ITenantContext t, CancellationToken ct) =>

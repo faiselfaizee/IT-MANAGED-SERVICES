@@ -4,4 +4,7 @@
     <ProjectReference Include="..\DeskAsk.Platform.Abstractions\DeskAsk.Platform.Abstractions.csproj" />
     <PackageReference Include="Npgsql" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Data\library.json" LogicalName="library.json" />
+  </ItemGroup>
 </Project>
