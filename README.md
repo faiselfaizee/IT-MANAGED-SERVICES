@@ -24,6 +24,7 @@ Also done: signed release bundles, the `deskask-updater` service with rollback, 
 Also done: background jobs (per-customer queue, worker role, retries, recurring audit-verify / token-prune / cleanup jobs, admin API; ADR 0010).
 Also done: per-customer signing keys with rotation and a JWKS endpoint (ADR 0011).
 Phase 0 gate review: docs/phase0-gate.md (recommendation: pass).
+Phase 1 started: versioned migrations for every module and the `tenant` command line to create and manage customers (docs/provisioning.md, ADR 0012).
 
 Set `Platform:DataProtectionPath` to a persistent folder in production. Two-step notes: set `Identity:EncryptionSecret` in production (it seals the authenticator secrets); data-protection keys must be kept on persistent storage in production so the pending-code cookie survives restarts.
 

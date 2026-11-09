@@ -17,9 +17,9 @@ Question for the gate: is the foundation good enough to build the product module
 
 ## Not done yet (known, accepted for Phase 0)
 - **Windows Server install has not been run on a real server.** CI proves the Linux path and the bundles for both. An `install-windows.ps1` and a test on a clean Windows Server is the first job of Phase 1 or when you install.
-- **Database changes are create scripts, not migrations.** Fine while there is no production data. Before the first real customer: real migrations per module.
+- ~~Database changes are create scripts, not migrations.~~ Fixed in Phase 1 (ADR 0012).
 - **Web app is a shell** (sign-in, health, layout). No module screens yet.
-- **Customer provisioning** (creating a customer, its database, its first admin) is by hand/config. A provisioning tool/API is needed before SaaS onboarding.
+- ~~Customer provisioning by hand.~~ Fixed in Phase 1: `tenant create` (docs/provisioning.md). A web API for it waits for a platform-operator identity.
 - **Data-protection keys** go to disk only if `Platform:DataProtectionPath` is set. Set it in production.
 - **Production secrets** are yours to create: `RELEASE_SIGNING_KEY` (GitHub), `Identity:EncryptionSecret` (server). No test covers a wrong secret at start-up beyond the sealed-key check.
 - **No load or security test** beyond unit/integration tests. Plan one before go-live.
