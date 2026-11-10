@@ -69,6 +69,16 @@ select 'create database "$($s.dbName)" owner "$($s.dbUser)"' where not exists (s
     } finally { Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue; Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue }
 }
 
+function Http-Get([string]$url, [string]$hostHeader) {
+    $rq = [Net.HttpWebRequest]::Create($url); $rq.Timeout = 15000
+    if ($hostHeader) { $rq.Host = $hostHeader }
+    try { $resp = $rq.GetResponse() } catch [Net.WebException] { $resp = $_.Exception.Response; if (-not $resp) { return [pscustomobject]@{ code = 0; server = ''; body = $_.Exception.Message } } }
+    $text = (New-Object IO.StreamReader($resp.GetResponseStream())).ReadToEnd()
+    $srv = $resp.Headers['Server']; $code = [int]$resp.StatusCode; $resp.Close()
+    if ($text.Length -gt 200) { $text = $text.Substring(0, 200) }
+    return [pscustomobject]@{ code = $code; server = $srv; body = $text }
+}
+
 function Setup-Iis($s) {
     Step 'Setting up IIS as the front door'
     $inet = Join-Path $env:windir 'System32\inetsrv'
@@ -154,10 +164,18 @@ function Setup-Iis($s) {
     }
     Start-Website -Name $site
     Start-Sleep -Seconds 2
-    try {
-        $r = Invoke-WebRequest "http://localhost:$($s.httpPort)/health" -UseBasicParsing -TimeoutSec 15
-        Log "IIS answers and reaches the platform: HTTP $($r.StatusCode) $($r.Content)"
-    } catch { Log "IIS is set up, but the check through it failed: $($_.Exception.Message)"; throw 'The check through IIS failed.' }
+    $hh = $hosts[0]
+    $direct = Http-Get "$target/health" ''
+    Log "Platform directly ($target): HTTP $($direct.code) $($direct.body)"
+    $via = Http-Get "http://localhost:$($s.httpPort)/health" $hh
+    $who = if ($hh) { "host '$hh'" } else { 'any host' }
+    Log "Through IIS ($who): HTTP $($via.code), answered by '$($via.server)' $($via.body)"
+    if ($via.code -ne 200) {
+        if ($direct.code -ne 200) { Log 'The platform itself does not answer on its own address. Fix that first (Get-Service DeskAskPlatform, logs folder).' }
+        elseif ("$($via.server)" -match 'IIS') { Log 'IIS answered by itself and did not pass the request on. Check: (1) the ARR proxy is switched on (IIS Manager > server > Application Request Routing Cache > Server Proxy Settings > Enable proxy), (2) the URL Rewrite module is installed, (3) no other IIS site matches this address first.' }
+        else { Log 'The request reached the platform but it did not answer /health with 200.' }
+        throw 'The check through IIS failed.'
+    }
     Log 'Each customer now only needs a DNS record that points to this server. No IIS change per customer.'
 }
 
