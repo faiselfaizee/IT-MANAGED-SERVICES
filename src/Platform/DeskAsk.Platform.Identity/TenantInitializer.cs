@@ -41,7 +41,48 @@ public sealed class IdentitySchema : ITenantSchema
         await SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations(db), ct);
         var cfg = sp.GetRequiredService<IConfiguration>();
         await SeedAdminAsync(db, cfg, sp.GetRequiredService<IPasswordHasher<UserAccount>>(), ct);
-        await SeedClientsAsync(sp.GetRequiredService<IOpenIddictApplicationManager>(), cfg, ct);
+        var apps = sp.GetRequiredService<IOpenIddictApplicationManager>();
+        await SeedClientsAsync(apps, cfg, ct);
+        await EnsureWebClientAsync(apps, tenant.Host, ct);
+    }
+
+    /// <summary>
+    /// The web app signs in as client "web" and comes back to https://{this customer's address}/auth/callback.
+    /// Each customer has its own address, so that address is registered here, whatever Identity:Clients says.
+    /// </summary>
+    static async Task EnsureWebClientAsync(IOpenIddictApplicationManager apps, string host, CancellationToken ct)
+    {
+        var redirects = new List<Uri>(); var after = new List<Uri>();
+        foreach (var scheme in new[] { "https", "http" })
+            if (Uri.TryCreate(scheme + "://" + host + "/auth/callback", UriKind.Absolute, out var r))
+            { redirects.Add(r); after.Add(new Uri(scheme + "://" + host + "/")); }
+        if (redirects.Count == 0) return;
+
+        var app = await apps.FindByClientIdAsync("web", ct);
+        if (app == null)
+        {
+            var d = new OpenIddictApplicationDescriptor
+            {
+                ClientId = "web", DisplayName = "DeskAsk web", ClientType = ClientTypes.Public, ConsentType = ConsentTypes.Implicit,
+                Permissions =
+                {
+                    Permissions.Endpoints.Authorization, Permissions.Endpoints.Token, Permissions.Endpoints.EndSession,
+                    Permissions.GrantTypes.AuthorizationCode, Permissions.GrantTypes.RefreshToken, Permissions.ResponseTypes.Code,
+                    Permissions.Scopes.Email, Permissions.Scopes.Profile, Permissions.Scopes.Roles, Permissions.Prefixes.Scope + "deskask",
+                },
+                Requirements = { Requirements.Features.ProofKeyForCodeExchange },
+            };
+            foreach (var r in redirects) d.RedirectUris.Add(r);
+            foreach (var r in after) d.PostLogoutRedirectUris.Add(r);
+            await apps.CreateAsync(d, ct);
+            return;
+        }
+        var cur = new OpenIddictApplicationDescriptor();
+        await apps.PopulateAsync(cur, app, ct);
+        var changed = false;
+        foreach (var r in redirects) if (!cur.RedirectUris.Contains(r)) { cur.RedirectUris.Add(r); changed = true; }
+        foreach (var r in after) if (!cur.PostLogoutRedirectUris.Contains(r)) { cur.PostLogoutRedirectUris.Add(r); changed = true; }
+        if (changed) await apps.UpdateAsync(app, cur, ct);
     }
 
     static async Task SeedAdminAsync(IdentityDb db, IConfiguration cfg, IPasswordHasher<UserAccount> hasher, CancellationToken ct)

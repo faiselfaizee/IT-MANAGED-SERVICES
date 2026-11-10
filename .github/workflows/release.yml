@@ -44,7 +44,7 @@ jobs:
           for t in "linux amd64 " "windows amd64 .exe"; do set -- $t; \
             (cd updater && GOOS=$1 GOARCH=$2 go build -o ../out/tools/deskask-updater-$1-$2$3 ./cmd/deskask-updater); \
             (cd agent && GOOS=$1 GOARCH=$2 go build -o ../out/tools/deskask-agent-$1-$2$3 ./cmd/agent); done
-          cp deploy/windows/install-windows.ps1 out/tools/
+          cp deploy/windows/install-windows.ps1 deploy/windows/deskask-setup.ps1 out/tools/
           echo "$VERSION" > out/version.txt
       - name: Sign and pack
         env: { RELEASE_SIGNING_KEY: "${{ secrets.RELEASE_SIGNING_KEY }}" }

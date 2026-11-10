@@ -6,6 +6,7 @@ using DeskAsk.Platform.Jobs;
 using DeskAsk.Platform.Licensing;
 using DeskAsk.Platform.Updates;
 using DeskAsk.Platform.Tenancy;
+using Microsoft.AspNetCore.HttpOverrides;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService(o => o.ServiceName = "DeskAskPlatform");   // does nothing unless started by the Windows service manager
@@ -17,9 +18,22 @@ if (!string.IsNullOrWhiteSpace(configFile)) builder.Configuration.AddJsonFile(co
 // "DeskAsk.Platform.Host tenant create|list|enable|disable|migrate|init ..." manages customers and exits (docs/provisioning.md).
 if (args.Length > 0 && args[0] == "tenant") { Environment.ExitCode = await TenantCli.RunAsync(args[1..], builder); return; }
 
+// Behind a reverse proxy (IIS) the platform only sees plain http. When it listens on this machine only, the proxy in front of it is
+// the only thing that can reach it, so X-Forwarded-Proto / -For are believed (sign-in needs to know the outside address was https).
+// Platform:TrustProxyHeaders=true does the same for a platform that is reachable from elsewhere.
+var listenUrls = (builder.WebHost.GetSetting(WebHostDefaults.ServerUrlsKey) ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+var trustProxy = builder.Configuration.GetValue<bool>("Platform:TrustProxyHeaders")
+    || (listenUrls.Length > 0 && listenUrls.All(u => u.Contains("//localhost", StringComparison.OrdinalIgnoreCase) || u.Contains("//127.0.0.1") || u.Contains("//[::1]")));
+if (trustProxy) builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.KnownNetworks.Clear(); o.KnownProxies.Clear();
+});
+
 var (roles, modules) = PlatformSetup.Add(builder);
 
 var app = builder.Build();
+if (trustProxy) app.UseForwardedHeaders();
 app.UseTenancy();
 app.UseTenantSchemas();
 app.UseIdentity();

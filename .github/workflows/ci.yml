@@ -158,6 +158,69 @@ jobs:
           .\deploy\windows\install-windows.ps1 -Root C:\DeskAsk -Uninstall
           if (Get-Service DeskAskPlatform -ErrorAction SilentlyContinue) { throw 'service still there' }
           if (Get-ScheduledTask -TaskName DeskAskUpdater -ErrorAction SilentlyContinue) { throw 'task still there' }
+      - name: Setup page (install into another folder through the page, with its live log)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = if (Test-Path D:\) { 'D:\DeskAskWiz' } else { Join-Path $env:RUNNER_TEMP 'DeskAskWiz' }
+          $tok = 'citoken'; $base = 'http://127.0.0.1:8765'; $h = @{ 'X-Token' = $tok }
+          $wiz = Start-Process powershell -PassThru -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',(Resolve-Path deploy\windows\deskask-setup.ps1).Path,'-NoBrowser','-Port','8765','-Token',$tok
+          try {
+            $state = $null
+            for ($i = 0; $i -lt 40 -and -not $state; $i++) { try { $state = Invoke-RestMethod "$base/api/state" -Headers $h } catch { Start-Sleep -Milliseconds 750 } }
+            if (-not $state) { throw 'the setup page did not start' }
+            if ($state.install.installed) { throw 'should not be installed yet' }
+            if ((Invoke-WebRequest "$base/?t=$tok" -UseBasicParsing).Content -notmatch 'DeskAsk Setup') { throw 'page not served' }
+            foreach ($u in @("$base/", "$base/api/state")) { try { Invoke-WebRequest $u -UseBasicParsing | Out-Null; throw "answered without the token: $u" } catch { if ("$_" -like 'answered*') { throw } } }
+
+            function Post($path, $obj) { Invoke-RestMethod "$base/api/$path" -Method Post -Headers $h -ContentType 'application/json' -Body ($obj | ConvertTo-Json -Depth 6) }
+            function Expect-400($path, $obj, $text) {
+              try { Post $path $obj | Out-Null; throw "expected a refusal for $path" } catch {
+                if ("$_" -like 'expected*') { throw }
+                $msg = if ($_.ErrorDetails) { $_.ErrorDetails.Message } else { "$_" }
+                if ($msg -notmatch $text) { throw "wrong refusal: $msg" }
+              }
+            }
+            function Wait-Job2($id) {
+              $n = 0
+              for ($i = 0; $i -lt 400; $i++) {
+                $j = Invoke-RestMethod "$base/api/job?id=$id&from=$n" -Headers $h
+                $j.lines | ForEach-Object { Write-Host "   | $_" }
+                $n = $j.next
+                if ($j.done) { return $j }
+                Start-Sleep -Milliseconds 700
+              }
+              throw 'job did not finish'
+            }
+            $files = @{ bundle = (Resolve-Path out\b-9.0.0-ci.1.dkb).Path; updater = (Resolve-Path out\deskask-updater.exe).Path; publicKey = (Resolve-Path out\keys\release-public.pem).Path }
+            Expect-400 'install' @{ root = 'nonsense'; urls = 'http://localhost:5091' } 'full path'
+            Expect-400 'install' @{ root = $root; bundle = 'C:\nope.dkb'; updater = $files.updater; publicKey = $files.publicKey } 'Bundle'
+            Expect-400 'tenant' @{ action = 'list' } 'not installed'
+
+            $body = @{ root = $root; bundle = $files.bundle; updater = $files.updater; publicKey = $files.publicKey; urls = 'http://localhost:5091'
+                       db = @{ host = ''; port = '5432'; db = ''; user = ''; password = ''; raw = '' } }
+            $job = (Post 'install' $body).job
+            $done = Wait-Job2 $job
+            if ($done.exit -ne 0) { throw "install through the page failed (exit $($done.exit))" }
+            if ((Invoke-RestMethod http://localhost:5091/health).status -ne 'ok') { throw 'not healthy' }
+            if ((Get-Content "$root\live\.deskask-version" -Raw).Trim() -ne '9.0.0-ci.1') { throw 'wrong version' }
+            if (-not (Test-Path "$root\config\deskask.json")) { throw 'no config in the chosen folder' }
+            if (Test-Path C:\DeskAsk\live) { throw 'something was installed on the default folder' }
+            $st = Invoke-RestMethod "$base/api/state" -Headers $h
+            if (-not $st.install.installed -or $st.install.root -ne $root) { throw "state does not show the install: $($st.install.root)" }
+
+            Expect-400 'tenant' @{ action = 'create'; id = 'x' } 'Short id'
+            Expect-400 'tenant' @{ action = 'create'; id = 'acme'; host = 'acme.test'; email = 'nope' } 'email'
+            # a customer command without a database answers with a clear message
+            $t = Wait-Job2 ((Post 'tenant' @{ action = 'list' }).job)
+            if ($t.exit -eq 0) { throw 'list should fail without a catalog' }
+            Post 'shutdown' @{} | Out-Null
+            if (-not $wiz.WaitForExit(15000)) { throw 'the setup page did not close' }
+          } finally {
+            if (-not $wiz.HasExited) { $wiz.Kill() }
+          }
+          .\deploy\windows\install-windows.ps1 -Root $root -Uninstall -RemoveFiles
+          if (Get-Service DeskAskPlatform -ErrorAction SilentlyContinue) { throw 'service still there' }
       - name: Logs (when something failed)
         if: failure()
         shell: powershell

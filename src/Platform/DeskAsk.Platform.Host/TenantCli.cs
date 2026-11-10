@@ -1,6 +1,9 @@
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using DeskAsk.Platform.Identity;
 using DeskAsk.Platform.Tenancy;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
 namespace DeskAsk.Platform;
@@ -10,6 +13,7 @@ namespace DeskAsk.Platform;
 ///   tenant init                                   make the catalog tables
 ///   tenant create --id acme --host acme.deskask.in --admin-email a@acme.com [--name "Acme Ltd"] [--db deskask_acme] [--admin-password-env VAR]
 ///   tenant list | enable --id X | disable --id X
+///   tenant reset-admin --id acme [--email a@acme.com] [--password-env VAR]   new password for a customer's administrator
 ///   tenant migrate                                bring every active customer's database up to this version
 /// Needs Platform:CatalogConnection. "create" also needs a database login that may create databases (Platform:ProvisionConnection, default: the catalog login).
 /// </summary>
@@ -33,6 +37,7 @@ public static class TenantCli
                 "disable" => await SetActive(catalogConn, opt, false, o, ct),
                 "migrate" => await Migrate(builder, catalogConn, o, ct),
                 "create" => await Create(builder, catalogConn, opt, o, ct),
+                "reset-admin" => await ResetAdmin(builder, catalogConn, opt, o, ct),
                 _ => Unknown(cmd, o),
             };
         }
@@ -47,6 +52,7 @@ tenant create --id acme --host acme.deskask.in --admin-email admin@acme.com [--n
 tenant list
 tenant enable --id acme
 tenant disable --id acme
+tenant reset-admin --id acme [--email admin@acme.com] [--password-env VAR]
 tenant migrate");
 
     static Dictionary<string, string> Parse(string[] a)
@@ -197,6 +203,47 @@ tenant migrate");
         await o.WriteLineAsync($"Customer '{id}' created. Address: https://{host}  Database: {dbName}");
         await o.WriteLineAsync("First administrator: " + email);
         if (generated != null) await o.WriteLineAsync("Password: " + generated + "   (shown once; change it after the first sign-in)");
+        return 0;
+    }
+
+    /// <summary>Gives a customer's administrator a new password (the first one is shown only once, so it can be lost).</summary>
+    static async Task<int> ResetAdmin(WebApplicationBuilder builder, string catalogConn, Dictionary<string, string> opt, TextWriter o, CancellationToken ct)
+    {
+        var id = Need(opt, "id").ToLowerInvariant();
+        string? generated = null, password;
+        if (opt.TryGetValue("password-env", out var envName))
+        {
+            password = Environment.GetEnvironmentVariable(envName);
+            if (string.IsNullOrEmpty(password)) throw new ArgumentException("The environment variable " + envName + " is empty or missing.");
+        }
+        else password = generated = NewPassword();
+
+        await SchemaMigrator.RunAsync(catalogConn, "catalog", CatalogSchema.Migrations, ct);
+        TenantInfo? t = null;
+        await using (var db = new NpgsqlConnection(catalogConn))
+        {
+            await db.OpenAsync(ct);
+            await using var q = new NpgsqlCommand("select name, host, connection_string, active from platform.tenants where id = @i", db);
+            q.Parameters.AddWithValue("i", id);
+            await using var rd = await q.ExecuteReaderAsync(ct);
+            if (await rd.ReadAsync(ct)) t = new TenantInfo(id, rd.GetString(0), rd.GetString(1), rd.GetString(2), rd.GetBoolean(3));
+        }
+        if (t == null) { await o.WriteLineAsync("No customer '" + id + "'."); return 1; }
+
+        PlatformSetup.Add(builder);
+        await using var app = builder.Build();
+        await using var scope = app.Services.CreateAsyncScope();
+        scope.ServiceProvider.GetRequiredService<TenantContext>().Current = t;
+        var users = scope.ServiceProvider.GetRequiredService<IdentityDb>();
+        var email = opt.TryGetValue("email", out var e) ? e.Trim().ToLowerInvariant() : null;
+        var user = email != null
+            ? await users.Users.FirstOrDefaultAsync(u => u.Email == email, ct)
+            : await users.Users.Where(u => u.Role == "admin").OrderBy(u => u.CreatedAt).FirstOrDefaultAsync(ct);
+        if (user == null) { await o.WriteLineAsync(email != null ? "No user " + email + " in '" + id + "'." : "No administrator in '" + id + "'."); return 1; }
+        user.PasswordHash = scope.ServiceProvider.GetRequiredService<IPasswordHasher<UserAccount>>().HashPassword(user, password);
+        await users.SaveChangesAsync(ct);
+        await o.WriteLineAsync("New password set for " + user.Email + " in '" + id + "'.");
+        if (generated != null) await o.WriteLineAsync("Password: " + generated + "   (shown once; change it after sign-in)");
         return 0;
     }
 

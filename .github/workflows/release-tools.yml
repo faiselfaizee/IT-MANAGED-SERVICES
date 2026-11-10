@@ -15,10 +15,10 @@ jobs:
         run: |
           mkdir -p out
           (cd updater && GOOS=windows GOARCH=amd64 go build -o ../out/deskask-release-windows-amd64.exe ./cmd/deskask-release && GOOS=linux GOARCH=amd64 go build -o ../out/deskask-release-linux-amd64 ./cmd/deskask-release)
-          cp deploy/windows/install-windows.ps1 out/
+          cp deploy/windows/install-windows.ps1 deploy/windows/deskask-setup.ps1 out/
       - name: Publish
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
           gh release delete tools --yes --cleanup-tag 2>/dev/null || true
           gh release create tools --prerelease --target "$GITHUB_SHA" --title "Tools (release key maker, Windows installer)" \
-            --notes "deskask-release makes the release signing key (keygen). It holds no secrets. install-windows.ps1 is also attached to every release." out/*
+            --notes "deskask-release makes the release signing key (keygen). It holds no secrets. install-windows.ps1 and deskask-setup.ps1 (the setup page) are also attached to every release." out/*

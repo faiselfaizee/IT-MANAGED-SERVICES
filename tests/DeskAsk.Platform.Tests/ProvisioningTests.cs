@@ -75,6 +75,16 @@ public class ProvisioningTests
             Assert.True(await Scalar<long>(tenantConn, "select count(*) from meta.migrations") >= 6);   // core, connect, jobs, identity x3
             Assert.Equal(1L, await Scalar<long>(tenantConn, "select count(*) from information_schema.tables where table_schema = 'core' and table_name = 'audit'"));
 
+            // the web app can sign in at this customer's own address
+            Assert.Equal(1L, await Scalar<long>(tenantConn, $"select count(*) from identity.\"OpenIddictApplications\" where \"ClientId\" = 'web' and \"RedirectUris\" like '%{host}/auth/callback%'"));
+
+            var oldHash = await Scalar<string>(tenantConn, "select \"PasswordHash\" from identity.users limit 1");
+            var reset = await Cli("reset-admin", "--id", id);
+            Assert.True(reset.Code == 0, reset.Out);
+            Assert.True(Regex.Match(reset.Out, "Password: (\\S+)").Groups[1].Value.Length >= 16, reset.Out);
+            Assert.NotEqual(oldHash, await Scalar<string>(tenantConn, "select \"PasswordHash\" from identity.users limit 1"));
+            Assert.NotEqual(0, (await Cli("reset-admin", "--id", "nobody" + id)).Code);
+
             var again = await Cli("create", "--id", id, "--host", host, "--admin-email", "boss@" + id + ".test");
             Assert.NotEqual(0, again.Code);
             Assert.Contains("already exists", again.Out);
