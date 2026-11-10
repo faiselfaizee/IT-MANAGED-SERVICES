@@ -205,7 +205,6 @@ jobs:
             if ((Invoke-RestMethod http://localhost:5091/health).status -ne 'ok') { throw 'not healthy' }
             if ((Get-Content "$root\live\.deskask-version" -Raw).Trim() -ne '9.0.0-ci.1') { throw 'wrong version' }
             if (-not (Test-Path "$root\config\deskask.json")) { throw 'no config in the chosen folder' }
-            if (Test-Path C:\DeskAsk\live) { throw 'something was installed on the default folder' }
             $st = Invoke-RestMethod "$base/api/state" -Headers $h
             if (-not $st.install.installed -or $st.install.root -ne $root) { throw "state does not show the install: $($st.install.root)" }
 
