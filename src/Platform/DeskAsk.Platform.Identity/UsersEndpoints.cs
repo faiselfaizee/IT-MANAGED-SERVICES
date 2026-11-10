@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using DeskAsk.Platform.Abstractions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
