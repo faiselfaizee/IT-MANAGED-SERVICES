@@ -75,8 +75,25 @@ function Http-Get([string]$url, [string]$hostHeader) {
     try { $resp = $rq.GetResponse() } catch [Net.WebException] { $resp = $_.Exception.Response; if (-not $resp) { return [pscustomobject]@{ code = 0; server = ''; body = $_.Exception.Message } } }
     $text = (New-Object IO.StreamReader($resp.GetResponseStream())).ReadToEnd()
     $srv = $resp.Headers['Server']; $code = [int]$resp.StatusCode; $resp.Close()
-    if ($text.Length -gt 200) { $text = $text.Substring(0, 200) }
+    if ($text.Length -gt 30000) { $text = $text.Substring(0, 30000) }
     return [pscustomobject]@{ code = $code; server = $srv; body = $text }
+}
+
+# the short version of an IIS error page: its title and the fields that say what is wrong
+function Explain-Html([string]$html) {
+    $t = [regex]::Replace($html, '<[^>]+>', "`n"); $t = [regex]::Replace($t, '[ \t]+', ' ')
+    $lines = @($t -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $out = @()
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^HTTP Error \d' -or $lines[$i] -match '^(Module|Notification|Handler|Error Code|Config Error|Config File|Requested URL|Physical Path)$') {
+            $v = if ($lines[$i] -match '^HTTP Error') { if ($i + 1 -lt $lines.Count) { $lines[$i] + ' ' + $lines[$i + 1] } else { $lines[$i] } } elseif ($i + 1 -lt $lines.Count) { $lines[$i] + ': ' + $lines[$i + 1] } else { $lines[$i] }
+            $out += $v
+        }
+        if ($lines[$i] -match '^Most likely causes' -and $i + 1 -lt $lines.Count) { $out += 'Likely cause: ' + $lines[$i + 1] }
+    }
+    if ($out.Count -eq 0) { return ($t.Trim() -replace '\s+', ' ').Substring(0, [math]::Min(200, $t.Trim().Length)) }
+    return ($out -join "`n    ")
+
 }
 
 function Setup-Iis($s) {
@@ -103,9 +120,11 @@ function Setup-Iis($s) {
     Set-WebConfigurationProperty -PSPath $apphost -Filter 'system.webServer/proxy' -Name 'enabled' -Value $true
     Set-WebConfigurationProperty -PSPath $apphost -Filter 'system.webServer/proxy' -Name 'preserveHostHeader' -Value $true
     Set-WebConfigurationProperty -PSPath $apphost -Filter 'system.webServer/proxy' -Name 'timeout' -Value '00:10:00'
-    if (-not (Get-WebConfiguration -PSPath $apphost -Filter "system.webServer/rewrite/allowedServerVariables/add[@name='HTTP_X_FORWARDED_PROTO']")) {
+    $have = @(Get-WebConfigurationProperty -PSPath $apphost -Filter 'system.webServer/rewrite/allowedServerVariables' -Name '.' -ErrorAction SilentlyContinue | ForEach-Object { $_.Collection } | Where-Object { $_.name -eq 'HTTP_X_FORWARDED_PROTO' })
+    if ($have.Count -eq 0) {
         Add-WebConfigurationProperty -PSPath $apphost -Filter 'system.webServer/rewrite/allowedServerVariables' -Name '.' -Value @{ name = 'HTTP_X_FORWARDED_PROTO' }
-    }
+        Log 'Allowed the server variable HTTP_X_FORWARDED_PROTO'
+    } else { Log 'The server variable HTTP_X_FORWARDED_PROTO is already allowed' }
 
     $cfg = @"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -166,10 +185,12 @@ function Setup-Iis($s) {
     Start-Sleep -Seconds 2
     $hh = $hosts[0]
     $direct = Http-Get "$target/health" ''
-    Log "Platform directly ($target): HTTP $($direct.code) $($direct.body)"
+    Log "Platform directly ($target): HTTP $($direct.code) $($direct.body.Substring(0, [math]::Min(120, $direct.body.Length)))"
     $via = Http-Get "http://localhost:$($s.httpPort)/health" $hh
     $who = if ($hh) { "host '$hh'" } else { 'any host' }
-    Log "Through IIS ($who): HTTP $($via.code), answered by '$($via.server)' $($via.body)"
+    $bodyText = if ($via.body -match '<html|<!DOCTYPE') { Explain-Html $via.body } else { $via.body.Substring(0, [math]::Min(200, $via.body.Length)) }
+    Log "Through IIS ($who): HTTP $($via.code), answered by '$($via.server)'"
+    Log "    $bodyText"
     if ($via.code -ne 200) {
         if ($direct.code -ne 200) { Log 'The platform itself does not answer on its own address. Fix that first (Get-Service DeskAskPlatform, logs folder).' }
         elseif ("$($via.server)" -match 'IIS') { Log 'IIS answered by itself and did not pass the request on. Check: (1) the ARR proxy is switched on (IIS Manager > server > Application Request Routing Cache > Server Proxy Settings > Enable proxy), (2) the URL Rewrite module is installed, (3) no other IIS site matches this address first.' }
