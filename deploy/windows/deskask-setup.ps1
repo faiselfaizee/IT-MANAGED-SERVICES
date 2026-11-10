@@ -419,7 +419,7 @@ function follow(key,id,onDone,resume){
   const tick=async()=>{
     try{
       const j=await api('job?id='+id+'&from='+v.from);
-      paint(v,j.lines);v.from=j.next;
+      const ls=Array.isArray(j.lines)?j.lines:(j.lines?[String(j.lines)]:[]);paint(v,ls);v.from=j.next;
       const s=Math.round((Date.now()-v.start)/1000);v.timeEl.textContent=(j.done?'took ':'')+Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
       if(j.done){clearInterval(v.timer);v.pill.className='pill '+(j.exit===0?'ok':'bad');v.pill.textContent=j.exit===0?'Done':'Failed';onDone&&onDone(j.exit,v.lines);refresh();}
     }catch(e){clearInterval(v.timer);v.pill.className='pill bad';v.pill.textContent='Lost';paint(v,['The setup page stopped answering: '+e.message]);}
@@ -641,12 +641,12 @@ function Route($ctx) {
                 $all = @(Read-JobLog $job 0)
                 $done = $job.proc.HasExited
                 if ($done) { Start-Sleep -Milliseconds 150; $all = @(Read-JobLog $job 0) }     # the last lines are written just before the process ends
-                $new = if ($from -lt $all.Count) { @($all[$from..($all.Count - 1)]) } else { @() }
+                $new = @(if ($from -lt $all.Count) { $all[$from..($all.Count - 1)] })
                 if ($done -and $job.group -eq 'install' -and -not $job.saved -and $job.root -and (Test-Path (Join-Path $job.root 'logs'))) {
                     $job.saved = $true
                     Set-Content -Path (Join-Path $job.root ('logs\setup-install-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')) -Value $all -Encoding UTF8
                 }
-                Send-Json $ctx 200 @{ lines = $new; next = $all.Count; done = $done; exit = $(if ($done) { $job.proc.ExitCode } else { $null }) }
+                Send-Json $ctx 200 @{ lines = [string[]]$new; next = $all.Count; done = $done; exit = $(if ($done) { $job.proc.ExitCode } else { $null }) }
             }
             '/api/shutdown' { $script:Stop = $true; Send-Json $ctx 200 @{ ok = $true } }
             default { Send-Json $ctx 404 @{ error = 'Not found.' } }
