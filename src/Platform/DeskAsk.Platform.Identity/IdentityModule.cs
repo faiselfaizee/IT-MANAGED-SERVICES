@@ -244,9 +244,21 @@ public sealed class IdentityModule : IPlatformModule
 
     // ---------------------------------------------------------------- sign-in page
 
-    internal static string Html(string body) => "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Sign in</title>"
-        + "<style>body{font-family:system-ui,sans-serif;background:#f4f5f7;display:flex;justify-content:center;padding-top:10vh}form{background:#fff;padding:28px;border-radius:10px;width:320px;box-shadow:0 2px 12px #0002}"
-        + "input,button{width:100%;box-sizing:border-box;padding:10px;margin:6px 0;font-size:16px}button{background:#14213d;color:#fff;border:0;border-radius:6px}.e{color:#b00020}</style></head><body>" + body + "</body></html>";
+    // The sign-in pages share the look of the web app: frosted glass over a soft aurora, dark or light as the system prefers.
+    const string PageCss =
+        ":root{--ink:#eaf1fb;--muted:#a8b7cc;--base:#0a1322;--glass:rgba(255,255,255,.08);--edge:rgba(255,255,255,.18);--line:rgba(255,255,255,.22);--field:rgba(6,12,24,.4);--bad:#ff8a8a;--a:rgba(47,224,207,.55);--b:rgba(91,107,255,.62);--c:rgba(255,138,194,.36);color-scheme:dark}"
+        + "@media(prefers-color-scheme:light){:root{--ink:#0f1b2d;--muted:#4c5d75;--base:#e8f0fb;--glass:rgba(255,255,255,.62);--edge:rgba(255,255,255,.9);--line:rgba(30,60,120,.22);--field:rgba(255,255,255,.75);--bad:#b3261e;--a:rgba(47,224,207,.42);--b:rgba(120,130,255,.38);--c:rgba(255,150,200,.32);color-scheme:light}}"
+        + "*{box-sizing:border-box}html{background:var(--base)}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;color:var(--ink);font:15px/1.5 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif}"
+        + "body::before{content:'';position:fixed;inset:-15%;z-index:-1;background:radial-gradient(40% 40% at 14% 12%,var(--a),transparent 70%),radial-gradient(44% 44% at 88% 10%,var(--b),transparent 70%),radial-gradient(42% 42% at 74% 90%,var(--c),transparent 70%),radial-gradient(38% 38% at 30% 70%,var(--b),transparent 72%)}"
+        + "form{width:min(380px,100%);padding:30px 28px;border-radius:24px;background:var(--glass);border:1px solid var(--edge);box-shadow:0 22px 60px -20px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.35);-webkit-backdrop-filter:blur(24px) saturate(1.5);backdrop-filter:blur(24px) saturate(1.5)}"
+        + "h2{margin:0 0 16px;font:600 24px 'Segoe UI Variable Display','Segoe UI',system-ui,sans-serif;letter-spacing:-.02em}"
+        + "input,button{width:100%;padding:11px 14px;margin:6px 0;font:inherit;border-radius:12px}input{color:inherit;background:var(--field);border:1px solid var(--line)}input::placeholder{color:var(--muted)}"
+        + "input:focus{outline:none;border-color:#2fe0cf;box-shadow:0 0 0 3px rgba(47,224,207,.3)}"
+        + "button{margin-top:14px;border:0;cursor:pointer;font-weight:600;color:#04201d;background:linear-gradient(135deg,#2fe0cf,#7a9bff);box-shadow:0 10px 26px -8px rgba(47,224,207,.7),inset 0 1px 0 rgba(255,255,255,.5)}button:hover{filter:brightness(1.07)}"
+        + ".e{color:var(--bad);margin:0 0 8px}.m{display:flex;align-items:center;gap:10px;margin:0 0 18px;color:var(--muted);font-weight:600}.m i{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#2fe0cf,#5b6bff)}";
+
+    internal static string Html(string body) => "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"dark light\"><title>Sign in</title>"
+        + "<style>" + PageCss + "</style></head><body>" + body + "</body></html>";
 
     internal static string LocalOrRoot(string? url) =>
         !string.IsNullOrEmpty(url) && url[0] == '/' && !url.StartsWith("//") && !url.StartsWith("/\\") ? url : "/";
@@ -254,7 +266,7 @@ public sealed class IdentityModule : IPlatformModule
     static IResult Page(HttpContext http, IAntiforgery af, string? returnUrl, string error = "", int status = 200)
     {
         var t = af.GetAndStoreTokens(http);
-        var body = "<form method=\"post\" action=\"/account/login\"><h2>Sign in</h2>"
+        var body = "<form method=\"post\" action=\"/account/login\"><div class=\"m\"><i></i>DeskAsk</div><h2>Sign in</h2>"
             + (error == "" ? "" : "<p class=\"e\" role=\"alert\">" + WebUtility.HtmlEncode(error) + "</p>")
             + "<input type=\"hidden\" name=\"" + t.FormFieldName + "\" value=\"" + WebUtility.HtmlEncode(t.RequestToken) + "\">"
             + "<input type=\"hidden\" name=\"returnUrl\" value=\"" + WebUtility.HtmlEncode(LocalOrRoot(returnUrl)) + "\">"

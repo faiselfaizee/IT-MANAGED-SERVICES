@@ -1,3 +1,5 @@
+import '@fontsource-variable/sora';
+import '@fontsource-variable/figtree';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { ensureSignedIn } from './auth';
