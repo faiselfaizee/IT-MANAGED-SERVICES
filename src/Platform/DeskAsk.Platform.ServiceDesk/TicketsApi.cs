@@ -331,7 +331,7 @@ public static class TicketsApi
             await Note(db, id, w, "system", $"Status: {prev} → {to}.", ct);
             if (note != "") await Note(db, id, w, internalNote ? "internal" : "public", note, ct);
             await Event(db, id, "ticket.status", new { @from = prev, to }, ct);
-            await audit.WriteAsync("servicedesk.ticket_status", number, from + " → " + to, ct: ct);
+            await audit.WriteAsync("servicedesk.ticket_status", number, prev + " → " + to, ct: ct);
             return Results.Ok(new { ok = true, changed = true });
         }));
 
