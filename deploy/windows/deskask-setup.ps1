@@ -29,9 +29,9 @@ $script:Stop = $false
 
 # ---------------------------------------------------------------- what runs in the background (one child process per job)
 $JobScript = @'
-param([string]$Spec, [string]$Log)
+param([string]$SpecFile, [string]$Log)
 $ErrorActionPreference = 'Stop'
-$spec = Get-Content -Raw -Encoding UTF8 $Spec | ConvertFrom-Json
+$spec = Get-Content -Raw -Encoding UTF8 $SpecFile | ConvertFrom-Json
 function Log([string]$m) { Add-Content -Path $Log -Value $m -Encoding UTF8 }
 function Step([string]$m) { Log "==> $m" }
 
@@ -48,7 +48,7 @@ function Prepare-Database($s) {
     $psql = Find-Psql
     if (-not $psql) { throw 'psql.exe was not found (PostgreSQL client). Add its bin folder to PATH, or create the login and database yourself and untick this option.' }
     $pw = $env:WIZ_DBPW.Replace("'", "''")
-    $sqlFile = Join-Path (Split-Path $Spec) 'prepare-db.sql'
+    $sqlFile = Join-Path (Split-Path $SpecFile) 'prepare-db.sql'
     $sql = @"
 do `$`$ begin
   if not exists (select from pg_roles where rolname = '$($s.dbUser)') then create role "$($s.dbUser)" login password '$pw' createdb;
@@ -262,8 +262,9 @@ function Start-SetupJob([string]$group, [hashtable]$spec, [hashtable]$envVars, [
     ($spec | ConvertTo-Json -Depth 6) | Set-Content -Path $specFile -Encoding UTF8
     foreach ($k in $envVars.Keys) { [Environment]::SetEnvironmentVariable($k, [string]$envVars[$k], 'Process') }
     try {
-        $p = Start-Process -FilePath 'powershell.exe' -PassThru -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + (Join-Path $Work 'job.ps1') + '"'), '-Spec', ('"' + $specFile + '"'), '-Log', ('"' + $log + '"'))
+        $p = Start-Process -FilePath 'powershell.exe' -PassThru -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + (Join-Path $Work 'job.ps1') + '"'), '-SpecFile', ('"' + $specFile + '"'), '-Log', ('"' + $log + '"'))
     } finally { foreach ($k in $envVars.Keys) { [Environment]::SetEnvironmentVariable($k, $null, 'Process') } }
+    $null = $p.Handle     # without this, ExitCode can come back empty once the process has ended
     $script:Jobs[$id] = [pscustomobject]@{ id = $id; group = $group; log = $log; proc = $p; secrets = @($secrets | Where-Object { $_ }); started = Get-Date; saved = $false; root = $spec.root }
     return $id
 }
