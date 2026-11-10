@@ -26,7 +26,10 @@ public static class TestSupport
     static string B64u(byte[] b) => Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     /// <summary>Signs in as the administrator (code flow with PKCE) and returns a client that sends the access token.</summary>
-    public static async Task<HttpClient> AdminClient(WebApplicationFactory<Program> factory)
+    public static Task<HttpClient> AdminClient(WebApplicationFactory<Program> factory) => ClientFor(factory, "admin@acme.test", "Correct-Horse-9");
+
+    /// <summary>The same sign-in for any account.</summary>
+    public static async Task<HttpClient> ClientFor(WebApplicationFactory<Program> factory, string email, string password)
     {
         var c = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = true });
         var verifier = B64u(RandomNumberGenerator.GetBytes(48));
@@ -36,7 +39,7 @@ public static class TestSupport
         var page = await (await c.GetAsync("/account/login?ReturnUrl=" + Uri.EscapeDataString(url))).Content.ReadAsStringAsync();
         var token = Regex.Match(page, "name=\"__RequestVerificationToken\" value=\"([^\"]+)\"").Groups[1].Value;
         var login = await c.PostAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string>
-        { ["__RequestVerificationToken"] = token, ["returnUrl"] = url, ["email"] = "admin@acme.test", ["password"] = "Correct-Horse-9" }));
+        { ["__RequestVerificationToken"] = token, ["returnUrl"] = url, ["email"] = email, ["password"] = password }));
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
         var back = await c.GetAsync(url);
         var code = System.Web.HttpUtility.ParseQueryString(new Uri(back.Headers.Location!.ToString()).Query)["code"]!;

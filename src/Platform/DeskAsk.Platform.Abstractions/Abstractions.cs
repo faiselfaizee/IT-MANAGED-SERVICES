@@ -130,3 +130,28 @@ public interface IJobQueue
 
 /// <summary>A job every customer gets again and again: queued whenever its interval has passed.</summary>
 public sealed record RecurringJob(string Name, string Type, TimeSpan Every);
+
+/// <summary>A customer company as other modules may see it. The Assets module owns the companies.</summary>
+public sealed record CompanyRef(int Id, string Name, string Code, bool Active);
+/// <summary>An asset as other modules may see it (read only).</summary>
+public sealed record AssetRef(long Id, string Tag, string Name, int? CompanyId);
+
+public interface ICompanyDirectory
+{
+    Task<CompanyRef?> GetAsync(int id, CancellationToken ct = default);
+    Task<IReadOnlyList<CompanyRef>> ListAsync(CancellationToken ct = default);
+}
+
+public interface IAssetDirectory
+{
+    Task<AssetRef?> GetAsync(long id, CancellationToken ct = default);
+}
+
+/// <summary>A person who can sign in, as other modules may see them. The Identity module owns the accounts.</summary>
+public sealed record UserRef(Guid Id, string Name, string Email, string Role, bool Active);
+
+public interface IUserDirectory
+{
+    Task<UserRef?> GetAsync(Guid id, CancellationToken ct = default);
+    Task<IReadOnlyList<UserRef>> ListAsync(CancellationToken ct = default);
+}

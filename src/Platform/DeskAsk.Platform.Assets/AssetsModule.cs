@@ -208,6 +208,9 @@ public sealed class AssetsModule : IPlatformModule
     {
         s.AddSingleton<ITenantSchema, AssetsSchema>();
         s.AddSingleton<AgentHub>();
+        s.AddScoped<AssetsDirectory>();
+        s.AddScoped<ICompanyDirectory>(sp => sp.GetRequiredService<AssetsDirectory>());
+        s.AddScoped<IAssetDirectory>(sp => sp.GetRequiredService<AssetsDirectory>());
         s.AddSingleton<IJobHandler, AssetsJanitorJob>();
         s.AddSingleton(new RecurringJob("assets.janitor", AssetsJanitorJob.JobType, TimeSpan.FromMinutes(1)));
     }

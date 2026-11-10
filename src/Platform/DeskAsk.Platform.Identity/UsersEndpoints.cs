@@ -111,3 +111,14 @@ public static class UsersEndpoints
     static Task<bool> LastAdmin(IdentityDb db, UserAccount u, CancellationToken ct) =>
         db.Users.AllAsync(x => x.Id == u.Id || x.Role != "admin" || !x.Active, ct);
 }
+
+/// <summary>Lets other modules look up people (names for assignees, requesters) without reading the identity tables.</summary>
+public sealed class UserDirectory : IUserDirectory
+{
+    readonly IdentityDb db;
+    public UserDirectory(IdentityDb db) => this.db = db;
+    public async Task<UserRef?> GetAsync(Guid id, CancellationToken ct = default) =>
+        await db.Users.AsNoTracking().Where(x => x.Id == id).Select(u => new UserRef(u.Id, u.Name, u.Email, u.Role, u.Active)).FirstOrDefaultAsync(ct);
+    public async Task<IReadOnlyList<UserRef>> ListAsync(CancellationToken ct = default) =>
+        await db.Users.AsNoTracking().OrderBy(x => x.Name).Select(u => new UserRef(u.Id, u.Name, u.Email, u.Role, u.Active)).ToListAsync(ct);
+}
