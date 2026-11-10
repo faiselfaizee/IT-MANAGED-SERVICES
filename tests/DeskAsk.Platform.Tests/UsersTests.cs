@@ -19,7 +19,7 @@ public class UsersTests : IClassFixture<WebApplicationFactory<Program>>
     async Task<HttpClient> Start()
     {
         var api = await TestSupport.AdminClient(factory);
-        await Sql("delete from identity.users where email <> 'admin@acme.test'");
+        await Sql("delete from identity.users where \"Email\" <> 'admin@acme.test'");
         return api;
     }
 
