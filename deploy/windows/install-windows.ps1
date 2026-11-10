@@ -128,8 +128,11 @@ Set-Content -Encoding ASCII -Path (Join-Path $Root 'deskask-tenant.cmd') -Value 
 # --- install or update the platform itself
 Step 'Applying the bundle (checks the signature, swaps the version, starts the service, waits for /health)'
 $applyArgs = @('apply', '-root', $Root, '-pub', (Join-Path $Root 'release-public.pem'), '-bundle', $Bundle, '-stop-cmd', $stopCmd, '-start-cmd', $startCmd, '-health', $health, '-health-timeout', '120s')
-& $updaterExe @applyArgs
+# The updater logs progress on stderr; Windows PowerShell turns that into an error under 'Stop'. Only its exit code decides.
+$prevEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+& $updaterExe @applyArgs 2>&1 | ForEach-Object { Write-Host "$_" }
 $applyCode = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
 if ($applyCode -ne 0) {
     $installed = Join-Path $Root 'live\.deskask-version'
     if (Test-Path $installed) { Write-Warning "The updater did not apply this bundle (see above). Version installed stays: $((Get-Content $installed -Raw).Trim())" }
