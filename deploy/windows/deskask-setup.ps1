@@ -70,7 +70,7 @@ select 'create database "$($s.dbName)" owner "$($s.dbUser)"' where not exists (s
 }
 
 function Http-Get([string]$url, [string]$hostHeader) {
-    $rq = [Net.HttpWebRequest]::Create($url); $rq.Timeout = 15000
+    $rq = [Net.HttpWebRequest]::Create($url); $rq.Timeout = 15000; $rq.Proxy = $null
     if ($hostHeader) { $rq.Host = $hostHeader }
     try { $resp = $rq.GetResponse() } catch [Net.WebException] { $resp = $_.Exception.Response; if (-not $resp) { return [pscustomobject]@{ code = 0; server = ''; body = $_.Exception.Message } } }
     $text = (New-Object IO.StreamReader($resp.GetResponseStream())).ReadToEnd()
@@ -239,7 +239,7 @@ function Get-Prop($o, [string]$name, $default = '') {
 function Q([string]$v) { if ($v -match '[;="'' ]') { '"' + $v.Replace('"', '""') + '"' } else { $v } }
 
 function Get-Install {
-    $r = [ordered]@{ installed = $false; service = ''; root = ''; config = ''; urls = ''; hostExe = ''; health = $null }
+    $r = [ordered]@{ installed = $false; service = ''; root = ''; config = ''; urls = ''; hostExe = ''; health = $null; healthError = '' }
     $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     if (-not $svc) { return $r }
     $r.installed = $true; $r.service = "$($svc.Status)"
@@ -256,7 +256,11 @@ function Get-Install {
     if ($r.urls -and $svc.Status -eq 'Running') {
         $u = ($r.urls -split ';')[0] -replace '//(\+|\*|0\.0\.0\.0)', '//localhost'
         if ($u -like 'http://*') {
-            try { $r.health = (Invoke-WebRequest "$u/health" -UseBasicParsing -TimeoutSec 3).Content | ConvertFrom-Json } catch { }
+            try {
+                $rq = [Net.HttpWebRequest]::Create("$u/health"); $rq.Timeout = 5000; $rq.Proxy = $null     # straight to this machine, never through a proxy
+                $resp = $rq.GetResponse(); $txt = (New-Object IO.StreamReader($resp.GetResponseStream())).ReadToEnd(); $resp.Close()
+                $r.health = $txt | ConvertFrom-Json
+            } catch { $r.healthError = $_.Exception.Message }
         }
     }
     return $r
@@ -482,7 +486,7 @@ async function refresh(){
   if(i.installed){
     const h=i.health?('answering, version '+esc(i.health.version||'?')):(i.service==='Running'?'running, not answering yet':'service '+esc(i.service));
     note($('instStatus'),i.health?'ok':'warn','<b>Installed</b> in <code>'+esc(i.root)+'</code> · '+h+'. Running this page again with a newer bundle updates it and keeps the settings.');
-    note($('tenStatus'),i.health?'ok':'warn',i.health?'Platform is installed and answering. Customers can be created.':'The platform is installed but is not answering. Check the service first.');
+    note($('tenStatus'),i.health?'ok':'warn',i.health?'Platform is installed and answering. Customers can be created.':'The platform is installed but is not answering'+(i.healthError?' ('+esc(i.healthError)+')':'')+'. Check the service first.');
   }else{
     note($('instStatus'),'warn','<b>Not installed yet.</b> Fill in the three blocks below and press Install.');
     note($('tenStatus'),'bad','The platform is not installed. Do tab 1 first.');
