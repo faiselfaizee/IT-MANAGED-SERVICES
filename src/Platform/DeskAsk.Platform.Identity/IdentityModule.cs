@@ -127,6 +127,7 @@ public sealed class IdentityModule : IPlatformModule
         r.MapGet("/account/login", LoginPage).AllowAnonymous();
         r.MapPost("/account/login", LoginPost).AllowAnonymous();
         TwoStepEndpoints.Map(r);
+        UsersEndpoints.Map(r);
         r.MapPost("/api/platform/identity/keys/rotate", async (ITenantContext t, TenantKeys keys, IAuditLog audit, CancellationToken ct) =>
         {
             if (keys.Shared) return Results.Conflict(new { error = "This server uses one fixed key (Identity:SigningKeyPem); rotate it in the configuration." });

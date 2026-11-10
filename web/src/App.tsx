@@ -13,6 +13,7 @@ const ABOUT: Record<string, string> = {
   Backup: 'Jobs, schedules and restores',
 };
 const AssetsApp = lazy(() => import('./assets/AssetsApp'));
+const Users = lazy(() => import('./Users'));
 
 function Home({ who, live }: { who: WhoAmI | null; live: boolean }) {
   const sum = useLoad<Rec>(live ? '/api/assets/summary' : null);
@@ -49,21 +50,26 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const [err, setErr] = useState('');
   const parts = useHash();
   useEffect(() => { whoAmI(fetcher).then(setWho, (e: Error) => setErr(e.message)); }, [fetcher]);
+  const me = useLoad<Rec>(fetcher ? null : '/api/platform/me');
+  const isAdmin = me.data?.role === 'admin';
   const inAssets = parts[0] === 'assets';
+  const inUsers = parts[0] === 'users' && isAdmin;
   return (
     <div className="shell">
       <nav aria-label="Modules" className="side">
         <a className="brand" href="#/" aria-label="DeskAsk Platform home"><Logo /><strong>DeskAsk</strong></a>
-        <a href="#/" className={!inAssets ? 'on' : ''}><Icon name="home" />Home</a>
+        <a href="#/" className={!inAssets && !inUsers ? 'on' : ''}><Icon name="home" />Home</a>
         {MODULES.map((m) => m === 'Assets'
           ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
           : <span key={m} title="Not built yet"><Icon name={m} />{m}<em>Soon</em></span>)}
+        {isAdmin ? <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a> : null}
         {fetcher ? null : <a className="out" href="#/" onClick={(e) => { e.preventDefault(); signOut(); }}><Icon name="signout" />Sign out</a>}
       </nav>
       <main className="main">
         {err ? <p role="alert" className="err">{err}</p> : null}
         {inAssets
           ? <Suspense fallback={<p className="muted">Loading…</p>}><AssetsApp /></Suspense>
+          : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><Users meId={me.data?.sub} /></Suspense>
           : !err ? <Home who={who} live={!fetcher} /> : null}
       </main>
     </div>
