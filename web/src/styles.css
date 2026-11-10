@@ -158,3 +158,12 @@ pre.term { background: rgba(3, 8, 16, .82); color: #d7e6f5; padding: 12px 14px; 
   .main { padding: 4px 2px 30px; } .kv { grid-template-columns: 110px 1fr; }
   table { display: block; overflow-x: auto; }
 }
+
+/* ---- Service Desk: conversation timeline and file list */
+.timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.timeline li { padding: 10px 14px; border-radius: 14px; background: var(--field); border: 1px solid var(--line); }
+.timeline li.internal { border-color: color-mix(in srgb, #f5b84b 55%, transparent); background: color-mix(in srgb, #f5b84b 12%, var(--field)); }
+.timeline li.system { background: none; border-style: dashed; padding: 6px 12px; font-size: .88em; color: var(--muted, inherit); }
+.timeline .who { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.timeline .said { white-space: pre-wrap; overflow-wrap: anywhere; }
+.files { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }

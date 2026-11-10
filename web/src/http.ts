@@ -70,3 +70,22 @@ export function useHash(): string[] {
   return parts;
 }
 export const go = (path: string) => { location.hash = '#/' + path.replace(/^\/+/, ''); };
+
+/** Sends a file as the raw request body (the Service Desk takes attachments this way). */
+export async function upload(path: string, file: File): Promise<Rec> {
+  const headers: Record<string, string> = { 'content-type': file.type || 'application/octet-stream' };
+  const t = accessToken(); if (t) headers.authorization = 'Bearer ' + t;
+  const r = await fetch(path, { method: 'POST', headers, body: file });
+  if (r.status === 401) { void signIn(); throw new ApiError(401, 'Signing in again…'); }
+  const text = await r.text(); let j: Rec | undefined; try { j = text ? JSON.parse(text) : undefined; } catch { j = undefined; }
+  if (!r.ok) throw new ApiError(r.status, j?.detail ? String(j.detail) : j?.error ? String(j.error).replace(/_/g, ' ') : `The server answered ${r.status}.`, j);
+  return j ?? {};
+}
+/** Saves a file the server returned; the request needs the token, so it is fetched here. */
+export async function saveFile(path: string, name: string) {
+  const t = accessToken();
+  const r = await fetch(path, { headers: t ? { authorization: 'Bearer ' + t } : {} });
+  if (!r.ok) throw new ApiError(r.status, r.status === 404 ? 'Not found.' : `The server answered ${r.status}.`);
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement('a'); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
+}

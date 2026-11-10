@@ -14,10 +14,12 @@ const ABOUT: Record<string, string> = {
 };
 const AssetsApp = lazy(() => import('./assets/AssetsApp'));
 const Users = lazy(() => import('./Users'));
+const ServiceDeskApp = lazy(() => import('./servicedesk/ServiceDeskApp'));
 
 function Home({ who, live }: { who: WhoAmI | null; live: boolean }) {
   const sum = useLoad<Rec>(live ? '/api/assets/summary' : null);
   const s = sum.data;
+  const desk = useLoad<Rec>(live ? '/api/servicedesk/summary' : null);
   return <>
     <header className="hero">
       {who ? <h1>Welcome, {who.name}</h1> : <h1>&nbsp;</h1>}
@@ -35,7 +37,18 @@ function Home({ who, live }: { who: WhoAmI | null; live: boolean }) {
         </dl> : null}
         <span className="open">Open Assets</span>
       </a>
-      {MODULES.filter((m) => m !== 'Assets').map((m) => <div key={m} className="tile tile-soon" aria-disabled="true">
+      <a className="tile tile-main" href="#/servicedesk">
+        <span className="chip"><Icon name="Service Desk" size={22} /></span>
+        <h2>Service Desk</h2>
+        <p className="muted">Tickets with service levels, customer sign-in and a full conversation history.</p>
+        {desk.data ? <dl className="stats">
+          <div><dt>Open</dt><dd>{(desk.data.open ?? 0) + (desk.data.progress ?? 0)}</dd></div>
+          <div><dt>Unassigned</dt><dd>{desk.data.unassigned ?? 0}</dd></div>
+          <div><dt>Overdue</dt><dd>{desk.data.overdue ?? 0}</dd></div>
+        </dl> : null}
+        <span className="open">Open Service Desk</span>
+      </a>
+      {MODULES.filter((m) => m !== 'Assets' && m !== 'Service Desk').map((m) => <div key={m} className="tile tile-soon" aria-disabled="true">
         <span className="chip"><Icon name={m} size={22} /></span>
         <h2>{m}</h2>
         <p className="muted">{ABOUT[m]}</p>
@@ -53,15 +66,18 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const me = useLoad<Rec>(fetcher ? null : '/api/platform/me');
   const isAdmin = me.data?.role === 'admin';
   const inAssets = parts[0] === 'assets';
+  const inDesk = parts[0] === 'servicedesk';
   const inUsers = parts[0] === 'users' && isAdmin;
   return (
     <div className="shell">
       <nav aria-label="Modules" className="side">
         <a className="brand" href="#/" aria-label="DeskAsk Platform home"><Logo /><strong>DeskAsk</strong></a>
-        <a href="#/" className={!inAssets && !inUsers ? 'on' : ''}><Icon name="home" />Home</a>
+        <a href="#/" className={!inAssets && !inDesk && !inUsers ? 'on' : ''}><Icon name="home" />Home</a>
         {MODULES.map((m) => m === 'Assets'
           ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
-          : <span key={m} title="Not built yet"><Icon name={m} />{m}<em>Soon</em></span>)}
+          : m === 'Service Desk'
+            ? <a key={m} href="#/servicedesk" className={inDesk ? 'on' : ''}><Icon name={m} />{m}</a>
+            : <span key={m} title="Not built yet"><Icon name={m} />{m}<em>Soon</em></span>)}
         {isAdmin ? <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a> : null}
         {fetcher ? null : <a className="out" href="#/" onClick={(e) => { e.preventDefault(); signOut(); }}><Icon name="signout" />Sign out</a>}
       </nav>
@@ -69,6 +85,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
         {err ? <p role="alert" className="err">{err}</p> : null}
         {inAssets
           ? <Suspense fallback={<p className="muted">Loading…</p>}><AssetsApp /></Suspense>
+          : inDesk ? <Suspense fallback={<p className="muted">Loading…</p>}><ServiceDeskApp /></Suspense>
           : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><Users meId={me.data?.sub} /></Suspense>
           : !err ? <Home who={who} live={!fetcher} /> : null}
       </main>
