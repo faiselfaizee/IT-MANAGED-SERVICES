@@ -120,11 +120,13 @@ function Setup-Iis($s) {
     Set-WebConfigurationProperty -PSPath $apphost -Filter 'system.webServer/proxy' -Name 'enabled' -Value $true
     Set-WebConfigurationProperty -PSPath $apphost -Filter 'system.webServer/proxy' -Name 'preserveHostHeader' -Value $true
     Set-WebConfigurationProperty -PSPath $apphost -Filter 'system.webServer/proxy' -Name 'timeout' -Value '00:10:00'
-    $have = @(Get-WebConfigurationProperty -PSPath $apphost -Filter 'system.webServer/rewrite/allowedServerVariables' -Name '.' -ErrorAction SilentlyContinue | ForEach-Object { $_.Collection } | Where-Object { $_.name -eq 'HTTP_X_FORWARDED_PROTO' })
-    if ($have.Count -eq 0) {
-        Add-WebConfigurationProperty -PSPath $apphost -Filter 'system.webServer/rewrite/allowedServerVariables' -Name '.' -Value @{ name = 'HTTP_X_FORWARDED_PROTO' }
-        Log 'Allowed the server variable HTTP_X_FORWARDED_PROTO'
-    } else { Log 'The server variable HTTP_X_FORWARDED_PROTO is already allowed' }
+    foreach ($var in @('HTTP_X_FORWARDED_PROTO', 'HTTP_X_FORWARDED_HOST')) {
+        $have = @(Get-WebConfigurationProperty -PSPath $apphost -Filter 'system.webServer/rewrite/allowedServerVariables' -Name '.' -ErrorAction SilentlyContinue | ForEach-Object { $_.Collection } | Where-Object { $_.name -eq $var })
+        if ($have.Count -eq 0) {
+            Add-WebConfigurationProperty -PSPath $apphost -Filter 'system.webServer/rewrite/allowedServerVariables' -Name '.' -Value @{ name = $var }
+            Log "Allowed the server variable $var"
+        } else { Log "The server variable $var is already allowed" }
+    }
 
     $cfg = @"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -135,12 +137,12 @@ function Setup-Iis($s) {
         <rule name="DeskAsk https" stopProcessing="true">
           <match url="(.*)" />
           <conditions><add input="{HTTPS}" pattern="on" /></conditions>
-          <serverVariables><set name="HTTP_X_FORWARDED_PROTO" value="https" /></serverVariables>
+          <serverVariables><set name="HTTP_X_FORWARDED_PROTO" value="https" /><set name="HTTP_X_FORWARDED_HOST" value="{HTTP_HOST}" /></serverVariables>
           <action type="Rewrite" url="$target/{R:1}" appendQueryString="true" />
         </rule>
         <rule name="DeskAsk http" stopProcessing="true">
           <match url="(.*)" />
-          <serverVariables><set name="HTTP_X_FORWARDED_PROTO" value="http" /></serverVariables>
+          <serverVariables><set name="HTTP_X_FORWARDED_PROTO" value="http" /><set name="HTTP_X_FORWARDED_HOST" value="{HTTP_HOST}" /></serverVariables>
           <action type="Rewrite" url="$target/{R:1}" appendQueryString="true" />
         </rule>
       </rules>
@@ -195,6 +197,14 @@ function Setup-Iis($s) {
     $bodyText = if ($via.body -match '<html|<!DOCTYPE') { Explain-Html $via.body } else { $via.body.Substring(0, [math]::Min(200, $via.body.Length)) }
     Log "Through IIS ($who): HTTP $($via.code), answered by '$($via.server)'"
     Log "    $bodyText"
+    if ($via.code -eq 200) {
+        $seen = ''; try { $seen = ($via.body | ConvertFrom-Json).host } catch { }
+        $want = if ($hh) { $hh } else { 'localhost' }
+        if ($seen) {
+            Log "The platform saw the address '$seen' (sent: '$want')"
+            if ($seen -ne $want) { Log 'The platform does not get the customer address. Customers would be reported as unknown.'; throw 'IIS does not pass the address on.' }
+        } else { Log 'This platform version does not report the address it saw; update it to get this check.' }
+    }
     if ($via.code -ne 200) {
         if ($direct.code -ne 200) { Log 'The platform itself does not answer on its own address. Fix that first (Get-Service DeskAskPlatform, logs folder).' }
         elseif ("$($via.server)" -match 'IIS') { Log 'IIS answered by itself and did not pass the request on. Check: (1) the ARR proxy is switched on (IIS Manager > server > Application Request Routing Cache > Server Proxy Settings > Enable proxy), (2) the URL Rewrite module is installed, (3) no other IIS site matches this address first.' }
