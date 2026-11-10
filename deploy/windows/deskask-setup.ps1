@@ -150,6 +150,10 @@ function Setup-Iis($s) {
 </configuration>
 "@
     Set-Content -Path (Join-Path $dir 'web.config') -Value $cfg -Encoding UTF8
+    # the install folder is locked down; IIS (its site identity belongs to IIS_IUSRS, S-1-5-32-568) may only read this one small folder
+    & icacls.exe $dir /grant '*S-1-5-32-568:(OI)(CI)RX' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not give IIS read access to $dir (icacls exit code $LASTEXITCODE)." }
+    Log "IIS may read $dir (and nothing else of the install folder)"
 
     $hosts = @($s.iisHosts | Where-Object { $_ })
     if ($hosts.Count -eq 0) { $hosts = @('') }
