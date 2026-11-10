@@ -46,7 +46,9 @@ foreach (var m in modules) m.MapEndpoints(app);
 // The web app (web/dist) is shipped inside the bundle as wwwroot. Everything that is not an API or sign-in address falls back to it.
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.MapFallbackToFile("/{*path:regex(^(?!api/|connect/|account/|\\.well-known/|health).*$)}", "index.html");
+// Not for addresses that end in a file name (.js, .css, .ico, ...): once an endpoint matches, the static file middleware steps aside,
+// so a script request would be answered with the page instead of the script.
+app.MapFallbackToFile("/{*path:regex(^(?!api/|connect/|account/|\\.well-known/|health)(?!.*\\.[A-Za-z0-9]+$).*$)}", "index.html");
 
 app.Run();
 
