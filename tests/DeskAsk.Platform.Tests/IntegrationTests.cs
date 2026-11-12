@@ -13,7 +13,7 @@ public class IntegrationTests : IClassFixture<WebApplicationFactory<Program>>
     static readonly string Pg = Environment.GetEnvironmentVariable("TEST_PG_CONNECTION") ?? "";
     const string Pw = "Long-Enough-1";
     readonly WebApplicationFactory<Program> factory;
-    public IntegrationTests(WebApplicationFactory<Program> f) => factory = f.WithWebHostBuilder(b => { TestSupport.Configure(b); b.UseSetting("Licensing:AllowUnlicensed", "true"); });
+    public IntegrationTests(WebApplicationFactory<Program> f) => factory = f.WithWebHostBuilder(b => { TestSupport.Configure(b); b.UseSetting("Licensing:AllowUnlicensed", "true"); b.UseSetting("Platform:Roles", "all"); b.UseSetting("Jobs:PollSeconds", "1"); });
 
     static StringContent Json(object o) => new(JsonSerializer.Serialize(o), Encoding.UTF8, "application/json");
     static async Task<JsonElement> J(HttpResponseMessage r) => JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement.Clone();
@@ -156,6 +156,33 @@ public class IntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         });
         Assert.Equal("pending", first.GetProperty("status").GetString());
         Assert.NotEqual("", first.GetProperty("error").GetString());
+    }
+
+    [PgFact]
+    public async Task TheAssistantFindsSimilarTicketsAndDraftsAReplyFromTheirAnswer()
+    {
+        var admin = await Admin();
+        await Sql("delete from identity.users where \"Email\" like '%@int.test'");
+        Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "cust@int.test", name = "cust", role = "customer", password = Pw }))).StatusCode);
+        var cust = await TestSupport.ClientFor(factory, "cust@int.test", Pw);
+        static async Task<long> Make(HttpClient c, object b) => (await J(await c.PostAsync("/api/servicedesk/tickets", Json(b)))).GetProperty("id").GetInt64();
+        var old = await Make(admin, new { subject = "VPN cannot connect from home", description = "The VPN client fails to connect from the home network", category = "Network", priority = "medium", requesterName = "Sam Lee" });
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/servicedesk/tickets/{old}/comments", Json(new { body = "Reset the VPN profile and sign in again." }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/servicedesk/tickets/{old}/status", Json(new { status = "resolved" }))).StatusCode);
+        await Make(admin, new { subject = "Printer toner", description = "Out of toner on the second floor", category = "Hardware" });
+        var fresh = await Make(admin, new { subject = "VPN not connecting from home laptop", description = "VPN client fails from home, cannot work", requesterName = "Pat Doe" });
+
+        var a = await J(await admin.GetAsync($"/api/servicedesk/tickets/{fresh}/assist"));
+        var similar = a.GetProperty("similar");
+        Assert.Equal(1, similar.GetArrayLength());
+        Assert.Equal(old, similar[0].GetProperty("id").GetInt64());
+        Assert.Contains("Reset the VPN profile", similar[0].GetProperty("answer").GetString());
+        Assert.Equal("Network", a.GetProperty("suggestedCategory").GetString());
+        Assert.Equal("high", a.GetProperty("suggestedPriority").GetString());
+        var draft = a.GetProperty("replyDraft").GetString()!;
+        Assert.StartsWith("Hello Pat,", draft); Assert.Contains("Reset the VPN profile", draft);
+        Assert.Equal(HttpStatusCode.Forbidden, (await cust.GetAsync($"/api/servicedesk/tickets/{fresh}/assist")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/api/servicedesk/tickets/999999/assist")).StatusCode);
     }
 
     static Task Until(Func<bool> ok) => Until(() => Task.FromResult(ok()));

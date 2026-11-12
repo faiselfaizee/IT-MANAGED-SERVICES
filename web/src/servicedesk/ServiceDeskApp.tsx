@@ -3,6 +3,7 @@ import Detail from './Detail';
 import List from './List';
 import NewTicket from './NewTicket';
 import { People, Settings } from './Admin';
+import Integrations from './Integrations';
 import { ChangeDetail, ChangeList, NewChange } from './Changes';
 import { NewProblem, ProblemDetail, ProblemList } from './Problems';
 
@@ -18,9 +19,10 @@ export default function ServiceDeskApp() {
   else if (a === 'problems' && sees) page = b === 'new' && staff ? <NewProblem /> : /^\d+$/.test(b ?? '') ? <ProblemDetail id={b} staff={staff} /> : <ProblemList staff={staff} />;
   else if (a === 'new') page = <NewTicket me={m} />;
   else if (a === 'settings' && admin) page = <Settings />;
+  else if (a === 'connections' && admin) page = <Integrations />;
   else if (a === 'people' && admin) page = <People />;
   else page = <List me={m} />;
-  const nav: [string, string, boolean][] = [['', 'Tickets', true], ['new', 'New ticket', !!m?.canRaise], ['changes', 'Changes', sees], ['problems', 'Problems', sees], ['people', 'Customer users', admin], ['settings', 'Settings', admin]];
+  const nav: [string, string, boolean][] = [['', 'Tickets', true], ['new', 'New ticket', !!m?.canRaise], ['changes', 'Changes', sees], ['problems', 'Problems', sees], ['people', 'Customer users', admin], ['connections', 'Connections', admin], ['settings', 'Settings', admin]];
   const section = isId ? '' : a ?? '';
   return <>
     <nav className="sub" aria-label="Service Desk">{nav.filter(([, , show]) => show).map(([k, l]) => <a key={k} href={'#/servicedesk' + (k ? '/' + k : '')} className={section === k ? 'on' : ''}>{l}</a>)}</nav>
