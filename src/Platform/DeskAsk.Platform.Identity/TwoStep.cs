@@ -280,8 +280,10 @@ public static class TwoStepEndpoints
             var setup = await svc.BeginSetupAsync(id, ct);
             if (setup == null) return Results.Redirect("/account/login");
             return Results.Content(SecurityPage(http, af,
-                "<h2>Switch on two-step sign-in</h2><p>Add this key to an authenticator app (Microsoft Authenticator, Google Authenticator, Authy ...):</p><p><code>" + setup.Value.secret + "</code></p>"
-                + "<p><a href=\"" + WebUtility.HtmlEncode(setup.Value.uri) + "\">Open in the app</a></p><p>Then enter the 6-digit code it shows:</p>"
+                "<h2>Switch on two-step sign-in</h2><p>Scan this code with an authenticator app (Microsoft Authenticator, Google Authenticator, Authy ...):</p>"
+                + "<div>" + Qr.Svg(Qr.Encode(setup.Value.uri, 'M'), 4, 55) + "</div>"
+                + "<p>Cannot scan it? Type this key into the app instead:</p><p><code>" + setup.Value.secret + "</code></p>"
+                + "<p><a href=\"" + WebUtility.HtmlEncode(setup.Value.uri) + "\">Open in the app</a> (on a phone)</p><p>Then enter the 6-digit code it shows:</p>"
                 + Field(af, http) + "<input type=\"hidden\" name=\"returnUrl\" value=\"" + WebUtility.HtmlEncode(back) + "\"><input name=\"code\" inputmode=\"numeric\" autocomplete=\"one-time-code\" required><button type=\"submit\">Switch on</button>"),
                 "text/html; charset=utf-8");
         }).AllowAnonymous();

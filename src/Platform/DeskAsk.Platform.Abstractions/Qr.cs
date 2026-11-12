@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace DeskAsk.Platform.Assets;
+namespace DeskAsk.Platform;
 
 public sealed class QrCode { public int Size, Version, Mask; public bool[][] Modules = Array.Empty<bool[]>(); }
 
