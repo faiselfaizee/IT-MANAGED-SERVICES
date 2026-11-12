@@ -62,27 +62,29 @@ public sealed class ReportMailJob : IJobHandler
         var end = first.AddMonths(1); var month = first.ToString("yyyy-MM", CultureInfo.InvariantCulture);
         await using var db = new NpgsqlConnection(job.Tenant.ConnectionString); await db.OpenAsync(ct);
 
-        async Task<bool> Sent(string scope, string to)
+        // A report is claimed (recorded) before it is queued, so two runs at the same moment cannot both send it; a failed queueing gives the claim back.
+        async Task<bool> Claim(string scope, string to)
         {
-            await using var c = new NpgsqlCommand("select 1 from servicedesk.report_sent where month = @m and scope = @s and recipient = @r", db);
+            await using var c = new NpgsqlCommand("insert into servicedesk.report_sent (month, scope, recipient) values (@m,@s,@r) on conflict (month, scope, recipient) do " + (force ? "update set at = now()" : "nothing"), db);
             c.Parameters.AddWithValue("m", month); c.Parameters.AddWithValue("s", scope); c.Parameters.AddWithValue("r", to.ToLowerInvariant());
-            return await c.ExecuteScalarAsync(ct) != null;
+            return await c.ExecuteNonQueryAsync(ct) == 1;
         }
-        async Task Record(string scope, string to)
+        async Task Release(string scope, string to)
         {
-            await using var c = new NpgsqlCommand("insert into servicedesk.report_sent (month, scope, recipient) values (@m,@s,@r) on conflict do nothing", db);
+            await using var c = new NpgsqlCommand("delete from servicedesk.report_sent where month = @m and scope = @s and recipient = @r", db);
             c.Parameters.AddWithValue("m", month); c.Parameters.AddWithValue("s", scope); c.Parameters.AddWithValue("r", to.ToLowerInvariant()); await c.ExecuteNonQueryAsync(ct);
+        }
+        async Task Deliver(string scope, string to, string subject, string body)
+        {
+            if (!await Claim(scope, to)) return;
+            if (!await mail!.EnqueueAsync(to, subject, body, "report", ct)) await Release(scope, to);
         }
 
         var internalTo = cfg.To.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries).Where(a => a.Contains('@')).ToList();
         if (internalTo.Count > 0)
         {
-            var todo = new List<string>(); foreach (var a in internalTo) if (force || !await Sent("all", a)) todo.Add(a);
-            if (todo.Count > 0)
-            {
-                var body = Render("All companies", month, await ReportsApi.Build(db, first, end, null, true, ct));
-                foreach (var a in todo) if (await mail.EnqueueAsync(a, "Service report " + month, body, "report", ct)) await Record("all", a);
-            }
+            var body = Render("All companies", month, await ReportsApi.Build(db, first, end, null, true, ct));
+            foreach (var a in internalTo) await Deliver("all", a, "Service report " + month, body);
         }
         var users = job.Services.GetService<IUserDirectory>(); var companies = job.Services.GetService<ICompanyDirectory>();
         if (cfg.CompanyAdmins && users != null && companies != null)
@@ -94,13 +96,12 @@ public sealed class ReportMailJob : IJobHandler
             {
                 var admins = new List<UserRef>();
                 foreach (var l in g) { var u = await users.GetAsync(l.user, ct); if (u is { Active: true, Role: "cadmin" } && u.Email.Contains('@')) admins.Add(u); }
-                var todo = admins.Where(a => true).ToList(); var pending = new List<UserRef>(); foreach (var a in todo) if (force || !await Sent("co:" + g.Key, a.Email)) pending.Add(a);
-                if (pending.Count == 0) continue;
+                if (admins.Count == 0) continue;
                 var co = await companies.GetAsync(g.Key, ct); if (co == null) continue;
                 var data = await ReportsApi.Build(db, first, end, g.Key, false, ct);
                 if (data.Opened == 0 && data.BacklogEnd == 0) continue;
                 var body = Render(co.Name, month, data);
-                foreach (var a in pending) if (await mail.EnqueueAsync(a.Email, "Service report " + month + " - " + co.Name, body, "report", ct)) await Record("co:" + g.Key, a.Email);
+                foreach (var a in admins) await Deliver("co:" + g.Key, a.Email, "Service report " + month + " - " + co.Name, body);
             }
         }
     }
