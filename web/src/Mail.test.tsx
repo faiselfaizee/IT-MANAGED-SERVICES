@@ -55,3 +55,25 @@ test('a message in the inbox can be opened as a ticket with a company', async ()
   fireEvent.click(screen.getByText('Open as ticket'));
   await waitFor(() => expect(calls.some((c) => c[1] === '/api/platform/mail/inbox/9/convert' && c[2].includes('"companyId":4'))).toBe(true));
 });
+
+test('templates can be previewed and saved, and a typo error is shown', async () => {
+  const calls: [string, string, string][] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, o?: RequestInit) => {
+    calls.push([o?.method ?? 'GET', String(url), String(o?.body ?? '')]);
+    const u = String(url);
+    if (u === '/api/platform/mail/templates') return new Response(JSON.stringify({ items: [{ key: 'ticket_reply', name: 'Reply from the support team', when: 'Sent to the requester.', values: ['number', 'requester', 'link'], subject: '[{{number}}] Reply', body: 'Hi {{requester}}', custom: false }] }), { status: 200 });
+    if (u.endsWith('/preview')) return new Response(JSON.stringify({ subject: '[TKT-000123] Reply', text: 'Hi Pat', html: '<p>Hi Pat</p>' }), { status: 200 });
+    if (u === '/api/platform/mail/templates/ticket_reply' && o?.method === 'PUT') return new Response(JSON.stringify({ error: 'unknown_value', detail: 'These names are not available in this message: {{requestor}}.' }), { status: 400 });
+    if (u.startsWith('/api/platform/mail/config')) return new Response(JSON.stringify(cfg), { status: 200 });
+    if (u.startsWith('/api/platform/mail/inbox')) return new Response(JSON.stringify({ items: [] }), { status: 200 });
+    if (u.startsWith('/api/platform/mail/inbound')) return new Response(JSON.stringify({ provider: 'none', host: '', port: 993, security: 'ssl', user: '', hasPassword: false, folder: '', mailbox: '', autoCreate: false, on: false }), { status: 200 });
+    return new Response('{}', { status: 200 });
+  }));
+  render(<Mail />);
+  await waitFor(() => expect(screen.getByDisplayValue('Hi {{requester}}')).toBeTruthy());
+  fireEvent.click(screen.getByText('Preview'));
+  await waitFor(() => expect(screen.getByText('[TKT-000123] Reply')).toBeTruthy());
+  fireEvent.change(screen.getByDisplayValue('Hi {{requester}}'), { target: { value: 'Hi {{requestor}}' } });
+  fireEvent.click(screen.getByText('Save wording'));
+  await waitFor(() => expect(screen.getByText(/not available in this message/)).toBeTruthy());
+});

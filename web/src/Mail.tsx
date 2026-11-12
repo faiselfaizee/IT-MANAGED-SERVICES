@@ -56,12 +56,46 @@ function Inbox() {
     {data && (items.length === 0 ? <Empty>No mail is waiting.</Empty> : items.map((m) => <div key={m.id} className="mailrow" style={{ borderTop: '1px solid var(--line, #0001)', padding: '10px 0' }}>
       <strong>{m.subject || '(no subject)'}</strong> <span className="muted">from {m.name ? `${m.name} <${m.from}>` : m.from} · {fmtDate(m.receivedAt)}</span>
       <p style={{ whiteSpace: 'pre-wrap', margin: '6px 0' }}>{String(m.body).slice(0, 400)}{String(m.body).length > 400 ? '…' : ''}</p>
+      {m.files > 0 && <p className="muted">{m.files} file{m.files === 1 ? '' : 's'} attached; they go onto the ticket.</p>}
       <div className="row">
         <select aria-label={`Company for ${m.subject}`} value={pick[m.id] ?? ''} onChange={(e) => setPick({ ...pick, [m.id]: e.target.value })}><option value="">No company</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         <Act label="Open as ticket" primary run={() => run(async () => { await api(`/api/platform/mail/inbox/${m.id}/convert`, { body: pick[m.id] ? { companyId: Number(pick[m.id]) } : {} }); })} />
         <Act label="Dismiss" confirm="Dismiss this message? It will not become a ticket." run={() => run(() => api(`/api/platform/mail/inbox/${m.id}/reject`, { method: 'POST', body: {} }))} />
       </div></div>))}
     <div className="actions"><button onClick={() => run(async () => { await api('/api/platform/mail/inbound/fetch', { body: {} }); })}>Check mail now</button><button onClick={reload}>Refresh</button></div>
+  </Card>;
+}
+
+function Templates() {
+  const { data, error, loading, reload } = useLoad<Rec>('/api/platform/mail/templates');
+  const items = (data?.items ?? []) as Rec[];
+  const [key, setKey] = useState(''); const [edit, setEdit] = useState<Rec | null>(null); const [prev, setPrev] = useState<Rec | null>(null);
+  const [msg, setMsg] = useState(''); const [to, setTo] = useState(''); const save = useSubmit(() => { setMsg('Saved.'); setEdit(null); reload(); }); const test = useSubmit(() => undefined);
+  const cur = items.find((t) => t.key === (key || items[0]?.key));
+  if (!cur) return <Card title="Message templates"><Loading loading={loading} error={error} /></Card>;
+  const v = edit && edit.key === cur.key ? edit : { key: cur.key, subject: cur.subject, body: cur.body };
+  const show = async () => { try { setPrev(await api<Rec>(`/api/platform/mail/templates/${cur.key}/preview`, { body: { subject: v.subject, body: v.body } })); } catch (e) { setMsg((e as Error).message); } };
+  return <Card title="Message templates">
+    <p className="muted">The wording of the mails DeskAsk sends by itself. Put values in double braces, for example {'{{number}}'}. The preview uses an example ticket.</p>
+    <div className="form">
+      <Field label="Message"><select value={cur.key} onChange={(e) => { setKey(e.target.value); setEdit(null); setPrev(null); setMsg(''); }}>{items.map((t) => <option key={t.key} value={t.key}>{t.name}{t.custom ? ' (edited)' : ''}</option>)}</select></Field>
+      <p className="muted">{cur.when}</p>
+      <Field label="Subject"><input value={v.subject} onChange={(e) => { setEdit({ ...v, subject: e.target.value }); setMsg(''); }} maxLength={200} /></Field>
+      <Field label="Message"><textarea rows={11} value={v.body} onChange={(e) => { setEdit({ ...v, body: e.target.value }); setMsg(''); }} /></Field>
+      <p className="muted">You can use: {(cur.values as string[]).map((x) => <code key={x} style={{ marginRight: 6 }}>{`{{${x}}}`}</code>)}</p>
+      <Err text={save.err} />{msg && <p role="status">{msg}</p>}
+      <div className="actions">
+        <Act label="Back to the original wording" disabled={!cur.custom} confirm="Replace your wording with the original?" run={async () => { await api(`/api/platform/mail/templates/${cur.key}`, { method: 'DELETE' }); setEdit(null); setPrev(null); setMsg('Original wording restored.'); reload(); }} />
+        <button onClick={show}>Preview</button>
+        <button className="primary" disabled={save.busy || !edit} onClick={() => save.submit(() => api(`/api/platform/mail/templates/${cur.key}`, { method: 'PUT', body: { subject: v.subject, body: v.body } }))}>Save wording</button>
+      </div>
+      {prev && <div><p><strong>{prev.subject}</strong></p><iframe title="Mail preview" sandbox="" srcDoc={prev.html} style={{ width: '100%', height: 360, border: '1px solid var(--line, #0002)', borderRadius: 8, background: '#fff' }} /></div>}
+      <div className="row">
+        <Field label="Send an example to"><input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="you@yourcompany.com" /></Field>
+        <button disabled={test.busy || !to.includes('@') || !!edit} title={edit ? 'Save your changes first' : ''} onClick={() => test.submit(async () => { await api(`/api/platform/mail/templates/${cur.key}/test`, { body: { to } }); setMsg('Example sent.'); })}>Send example</button>
+      </div>
+      <Err text={test.err} />
+    </div>
   </Card>;
 }
 
@@ -76,7 +110,7 @@ export default function Mail() {
   const set = (k: string, x: unknown) => { setMsg(''); setV({ ...v, [k]: x }); };
   const items = (outbox.data?.items ?? []) as Rec[];
   const body = () => {
-    const b: Rec = { provider: v.provider, from: v.from, fromName: v.fromName, host: v.host, port: Number(v.port) || 587, security: v.security, user: v.user, tenantId: v.tenantId, clientId: v.clientId };
+    const b: Rec = { provider: v.provider, from: v.from, fromName: v.fromName, host: v.host, port: Number(v.port) || 587, security: v.security, user: v.user, tenantId: v.tenantId, clientId: v.clientId, publicUrl: v.publicUrl ?? '' };
     if (v.password) b.password = v.password; if (v.secret) b.secret = v.secret;   // left empty = keep the saved one
     return b;
   };
@@ -109,6 +143,7 @@ export default function Mail() {
           </div>
           <Field label={cfg.data?.hasSecret ? 'Client secret (saved; type to replace)' : 'Client secret'}><input type="password" value={v.secret} onChange={(e) => set('secret', e.target.value)} autoComplete="new-password" /></Field>
         </>}
+        {v.provider !== 'none' && <Field label="Public address of DeskAsk (used for links in mails)"><input value={v.publicUrl ?? ''} onChange={(e) => set('publicUrl', e.target.value)} placeholder="https://support.yourcompany.com" /></Field>}
         <Err text={save.err} />{msg && <p role="status">{msg}</p>}
         <div className="actions"><button className="primary" disabled={save.busy} onClick={() => save.submit(() => api('/api/platform/mail/config', { method: 'PUT', body: body() }))}>Save settings</button></div>
       </div>
@@ -121,6 +156,7 @@ export default function Mail() {
       <Err text={test.err} />{tested && <p role="status">{tested}</p>}
       <p className="muted">Test only uses the saved settings. Save first if you changed something.</p>
     </Card>}
+    <Templates />
     <Incoming />
     <Inbox />
     <Card title="Recent messages">
