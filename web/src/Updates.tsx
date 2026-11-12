@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { accessToken } from './auth';
+import { accessToken, signIn } from './auth';
 import { useLoad, type Rec } from './http';
 import { Badge, Card, Err, Loading } from './ui';
 
@@ -22,6 +22,7 @@ function sendPiece(url: string, body: Blob): Promise<{ status: number; json: Rec
 
 /** Sends the file in pieces with progress; the server only drops it in the inbox and the updater service does the rest. */
 async function upload(file: File, onProgress: (pct: number) => void): Promise<Rec> {
+  if (!accessToken()) { void signIn(); throw new Error('Your sign-in has ended. Signing in again; choose the file once more afterwards.'); }
   const id = hex(); let at = 0; let failures = 0;
   const base = `/api/platform/updates/part?upload=${id}`;
   for (;;) {
@@ -31,6 +32,7 @@ async function upload(file: File, onProgress: (pct: number) => void): Promise<Re
     try { r = await sendPiece(q, body); } catch (e) { if (++failures > 5) throw e; await new Promise((ok) => setTimeout(ok, 2000)); continue; }
     if (r.status === 409 && r.json.error === 'out_of_order' && at > 0 && ++failures <= 5) { at = Number(r.json.have) || 0; continue; }   // the server has a different amount: carry on from there
     if (r.status >= 500 && ++failures <= 5) { await new Promise((ok) => setTimeout(ok, 2000)); continue; }
+    if (r.status === 401) { void signIn(); throw new Error('Your sign-in has ended. Signing in again; choose the file once more afterwards.'); }
     if (r.status >= 300) throw new Error(String(r.json.reason ?? r.json.error ?? `The server answered ${r.status}.`));
     failures = 0;
     if (last) { onProgress(100); return r.json; }
