@@ -92,7 +92,7 @@ internal static class ReportsApi
             }
             if (withChanges)
             {
-                await using var c = Cmd($"select count(*) filter (where status = 'completed'), count(*) filter (where status = 'failed') from servicedesk.changes where {scope} and status in ('completed','failed') and updated_at >= @s and updated_at < @e");
+                await using var c = Cmd($"select count(*) filter (where status = 'completed' or (status = 'closed' and closure_code in ('successful','successful_with_issues'))), count(*) filter (where status = 'failed' or (status = 'closed' and closure_code in ('unsuccessful','rolled_back'))) from servicedesk.changes where {scope} and status in ('completed','failed','closed') and updated_at >= @s and updated_at < @e");
                 await using var rd = await c.ExecuteReaderAsync(ct); await rd.ReadAsync(ct); d.Changes = new { completed = rd.GetInt64(0), failed = rd.GetInt64(1) };
             }
         return d;

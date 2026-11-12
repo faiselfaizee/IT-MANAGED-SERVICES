@@ -17,8 +17,15 @@ public static class ChangesApi
     static readonly string[] Types = { "normal", "standard", "emergency" };
     static readonly string[] Levels = { "low", "medium", "high" };
     static readonly string[] Prios = { "critical", "high", "medium", "low" };
+    static readonly string[] ClosureCodes = { "successful", "successful_with_issues", "unsuccessful", "rolled_back", "cancelled" };
+    /// <summary>The six stages a change moves through, as in ServiceDesk Plus. The status says where it is inside a stage.</summary>
+    internal static string StageOf(string status) => status switch
+    {
+        "draft" or "rejected" => "planning", "review" => "approval", "approved" or "scheduled" or "implementing" => "implementation",
+        "completed" or "failed" => "review", _ => "close",
+    };
     static readonly string[] PStatuses = { "open", "investigating", "known_error", "resolved", "closed" };
-    const string CCols = "c.id, c.number, c.title, c.description, c.type, c.status, c.risk, c.impact, c.reason, c.plan, c.rollback, c.outcome, c.company_id, c.company_name, c.owner_id, c.owner_name, c.start_at, c.end_at, c.quorum, c.created_at, c.updated_at, c.created_by";
+    const string CCols = "c.id, c.number, c.title, c.description, c.type, c.status, c.risk, c.impact, c.reason, c.plan, c.rollback, c.outcome, c.company_id, c.company_name, c.owner_id, c.owner_name, c.start_at, c.end_at, c.quorum, c.created_at, c.updated_at, c.created_by, c.impact_analysis, c.review_notes, c.closure_code, c.closed_at";
     const string PCols = "p.id, p.number, p.title, p.description, p.status, p.priority, p.category, p.root_cause, p.workaround, p.resolution, p.owner_id, p.owner_name, p.created_at, p.updated_at, p.created_by";
 
     static object Change(NpgsqlDataReader r) => new
@@ -28,6 +35,8 @@ public static class ChangesApi
         companyId = r.IsDBNull(12) ? (int?)null : r.GetInt32(12), companyName = r.GetString(13), ownerId = r.IsDBNull(14) ? (Guid?)null : r.GetGuid(14), ownerName = r.GetString(15),
         startAt = r.IsDBNull(16) ? (DateTime?)null : r.GetDateTime(16), endAt = r.IsDBNull(17) ? (DateTime?)null : r.GetDateTime(17), quorum = r.GetInt32(18),
         createdAt = r.GetDateTime(19), updatedAt = r.GetDateTime(20), createdBy = r.GetString(21),
+        impactAnalysis = r.GetString(22), reviewNotes = r.GetString(23), closureCode = r.GetString(24), closedAt = r.IsDBNull(25) ? (DateTime?)null : r.GetDateTime(25),
+        stage = StageOf(r.GetString(5)),
     };
 
     static object Problem(NpgsqlDataReader r) => new
@@ -109,6 +118,16 @@ public static class ChangesApi
         await a.ExecuteNonQueryAsync(ct);
     }
 
+    internal static async Task<List<object>> Tasks(NpgsqlConnection db, long id, CancellationToken ct)
+    {
+        var l = new List<object>();
+        await using var c = new NpgsqlCommand("select id, stage, title, assignee_id, assignee_name, done, done_at, done_by from servicedesk.change_tasks where change_id = @i order by stage, position, id", db);
+        ServiceDeskModule.P(c, "i", id);
+        await using var r = await c.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct)) l.Add(new { id = r.GetInt64(0), stage = r.GetString(1), title = r.GetString(2), assigneeId = r.IsDBNull(3) ? (Guid?)null : r.GetGuid(3), assignee = r.GetString(4), done = r.GetBoolean(5), doneAt = r.IsDBNull(6) ? (DateTime?)null : r.GetDateTime(6), doneBy = r.GetString(7) });
+        return l;
+    }
+
     static IResult Forbidden(string why) => Results.Json(new { error = "forbidden", detail = why }, statusCode: 403);
     static IResult NotFound() => Results.NotFound(new { error = "not_found" });
 
@@ -125,14 +144,14 @@ public static class ChangesApi
             var q = http.Request.Query;
             await using var c = new NpgsqlCommand { Connection = db };
             var where = new List<string> { "true" };
-            if (q["status"].ToString() == "open") where.Add("c.status not in ('completed','failed','cancelled','rejected')");
+            if (q["status"].ToString() == "open") where.Add("c.status not in ('closed','cancelled','rejected')");
             else if (q["status"].ToString() is { Length: > 0 } st) { ServiceDeskModule.P(c, "st", st.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)); where.Add("c.status = any(@st)"); }
             if (q["type"].ToString() is { Length: > 0 } ty) { ServiceDeskModule.P(c, "ty", ty); where.Add("c.type = @ty"); }
             if (q["q"].ToString().Trim() is { Length: > 0 } text) { ServiceDeskModule.P(c, "q", "%" + text.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%"); where.Add("(c.number ilike @q or c.title ilike @q or c.company_name ilike @q)"); }
             c.CommandText = $"select {CCols}, (select count(*) from servicedesk.change_votes v where v.change_id = c.id and v.decision = 'approve') from servicedesk.changes c where {string.Join(" and ", where)} order by coalesce(c.start_at, c.updated_at) desc, c.id desc limit 200";
             var items = new List<object>();
             await using var rd = await c.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) { var o = Change(rd); items.Add(new { change = o, approvals = rd.GetInt64(22) }); }
+            while (await rd.ReadAsync(ct)) { var o = Change(rd); items.Add(new { change = o, approvals = rd.GetInt64(26) }); }
             return Results.Ok(new { items = items.Select(x => x).ToList() });
         }));
 
@@ -163,7 +182,7 @@ public static class ChangesApi
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 while (await rd.ReadAsync(ct)) problems.Add(new { id = rd.GetInt64(0), number = rd.GetString(1), title = rd.GetString(2), status = rd.GetString(3) });
             }
-            return Results.Ok(new { change, votes, notes = await Notes(db, "change", id, ct), tickets = await TicketLinks(db, "change_tickets", "change_id", id, ct), problems });
+            return Results.Ok(new { change, votes, notes = await Notes(db, "change", id, ct), tickets = await TicketLinks(db, "change_tickets", "change_id", id, ct), problems, tasks = await Tasks(db, id, ct) });
         }));
 
         read(r.MapPost("/api/servicedesk/changes", async (JsonElement b, ClaimsPrincipal u, ITenantContext t, ISettings s, ICompanyDirectory companies, IAuditLog audit, CancellationToken ct) =>
@@ -222,9 +241,10 @@ public static class ChangesApi
                 var sets = new List<string>(); await using var u2 = new NpgsqlCommand { Connection = db }; ServiceDeskModule.P(u2, "i", id);
                 var planning = status is "draft" or "rejected" or "review";
                 void Set(string col, string prm, object? v) { sets.Add(col + " = @" + prm); ServiceDeskModule.P(u2, prm, v); }
-                foreach (var (name, col, max) in new[] { ("title", "title", 200), ("description", "description", 8000), ("reason", "reason", 4000), ("plan", "plan", 8000), ("rollback", "rollback", 8000) })
+                foreach (var (name, col, max) in new[] { ("title", "title", 200), ("description", "description", 8000), ("reason", "reason", 4000), ("plan", "plan", 8000), ("rollback", "rollback", 8000), ("impactAnalysis", "impact_analysis", 8000), ("reviewNotes", "review_notes", 8000) })
                 {
                     var v = Text(b, name, max, out var has); if (!has) continue;
+                    if (name == "reviewNotes") { if (status is not ("completed" or "failed" or "closed")) return ServiceDeskModule.Bad("locked", "Review notes are written after the change has been carried out."); if (status == "closed") return ServiceDeskModule.Bad("locked", "A closed change cannot be edited."); Set(col, col, v); continue; }
                     if (!planning && name != "description") return ServiceDeskModule.Bad("locked", "A change that is " + status + " can no longer have its plan edited.");
                     if (name == "title" && v == "") return ServiceDeskModule.Bad("title_required");
                     Set(col, col, v);
@@ -336,7 +356,7 @@ public static class ChangesApi
             {
                 "draft" => new[] { "cancelled" }, "review" => new[] { "cancelled" }, "rejected" => new[] { "cancelled" },
                 "approved" => new[] { "scheduled", "implementing", "cancelled" }, "scheduled" => new[] { "implementing", "cancelled" },
-                "implementing" => new[] { "completed", "failed" }, _ => Array.Empty<string>(),
+                "implementing" => new[] { "completed", "failed" }, "completed" => new[] { "closed" }, "failed" => new[] { "closed" }, _ => Array.Empty<string>(),
             };
             if (!allowed.Contains(to)) return ServiceDeskModule.Bad("bad_status", $"A change that is {status} cannot become {(to == "" ? "that" : to)}.");
             if (to == "scheduled" && (start == null || end == null)) return ServiceDeskModule.Bad("window_required", "Set the start and end of the change window first.");
@@ -347,12 +367,95 @@ public static class ChangesApi
                 if (outcome == "") return ServiceDeskModule.Bad("outcome_required", "Record the outcome: what happened and whether the rollback was used.");
                 if (outcome.Length > 8000) return ServiceDeskModule.Bad("bad_request", "outcome is too long");
             }
-            await using (var c = new NpgsqlCommand("update servicedesk.changes set status = @s, outcome = coalesce(@o, outcome), updated_at = now() where id = @i", db))
-            { ServiceDeskModule.P(c, "s", to); ServiceDeskModule.P(c, "o", outcome); ServiceDeskModule.P(c, "i", id); await c.ExecuteNonQueryAsync(ct); }
+            if (to == "completed")
+            {
+                await using var open = new NpgsqlCommand("select count(*) from servicedesk.change_tasks where change_id = @i and stage = 'implementation' and not done", db); ServiceDeskModule.P(open, "i", id);
+                var left = (long)(await open.ExecuteScalarAsync(ct))!;
+                if (left > 0) return ServiceDeskModule.Bad("tasks_open", left + " implementation task" + (left == 1 ? " is" : "s are") + " not done yet. Finish them, or record the change as failed.");
+            }
+            string? closure = null, review = null;
+            if (to == "closed")
+            {
+                closure = b.TryGetProperty("closureCode", out var cc) && cc.ValueKind == JsonValueKind.String ? cc.GetString()!.Trim() : "";
+                if (!ClosureCodes.Contains(closure) || closure == "cancelled") return ServiceDeskModule.Bad("closure_required", "Choose how the change ended: " + string.Join(", ", ClosureCodes.Where(x => x != "cancelled")) + ".");
+                review = b.TryGetProperty("reviewNotes", out var rv) && rv.ValueKind == JsonValueKind.String ? rv.GetString()!.Trim() : null;
+                await using var have = new NpgsqlCommand("select review_notes from servicedesk.changes where id = @i", db); ServiceDeskModule.P(have, "i", id);
+                if (string.IsNullOrEmpty(review) && string.IsNullOrWhiteSpace((string?)await have.ExecuteScalarAsync(ct))) return ServiceDeskModule.Bad("review_required", "Write the review notes: what went well, what did not, and what to do differently next time.");
+                if (review != null && review.Length > 8000) return ServiceDeskModule.Bad("bad_request", "reviewNotes is too long");
+            }
+            if (to == "cancelled") closure = "cancelled";
+            await using (var c = new NpgsqlCommand("update servicedesk.changes set status = @s, outcome = coalesce(@o, outcome), closure_code = coalesce(@cc, closure_code), review_notes = coalesce(@rv, review_notes), closed_at = case when @s in ('closed','cancelled') then now() else closed_at end, updated_at = now() where id = @i", db))
+            { ServiceDeskModule.P(c, "s", to); ServiceDeskModule.P(c, "o", outcome); ServiceDeskModule.P(c, "cc", closure); ServiceDeskModule.P(c, "rv", review); ServiceDeskModule.P(c, "i", id); await c.ExecuteNonQueryAsync(ct); }
             await Note(db, "change", id, w.Name, $"Status: {status} → {to}", ct);
             await ServiceDeskModule.Event(db, id, "change." + to, new { number }, ct);
             await audit.WriteAsync("servicedesk.change_status", number, status + " → " + to, ct: ct);
             return Results.Ok(new { status = to });
+        }));
+
+        // ---- tasks: the planning checklist and the implementation tasks of a change
+        read(r.MapPost("/api/servicedesk/changes/{id:long}/tasks", async (long id, JsonElement b, ClaimsPrincipal u, ITenantContext t, IUserDirectory users, IAuditLog audit, CancellationToken ct) =>
+        {
+            await using var db = await ServiceDeskModule.Open(t, ct);
+            var w = await ServiceDeskModule.WhoAsync(u, db, ct);
+            if (!w.Staff) return Forbidden("Only the support team can edit tasks.");
+            string status, number;
+            await using (var c = new NpgsqlCommand("select status, number from servicedesk.changes where id = @i", db)) { ServiceDeskModule.P(c, "i", id); await using var rd = await c.ExecuteReaderAsync(ct); if (!await rd.ReadAsync(ct)) return NotFound(); status = rd.GetString(0); number = rd.GetString(1); }
+            if (status is "closed" or "cancelled" or "completed" or "failed") return ServiceDeskModule.Bad("locked", "A change that is " + status + " cannot get new tasks.");
+            try
+            {
+                var title = Text(b, "title", 300, out _) ?? ""; if (title == "") return ServiceDeskModule.Bad("title_required", "Describe the task.");
+                var stage = Text(b, "stage", 20, out _) is { Length: > 0 } sg ? sg : "implementation";
+                if (stage is not ("planning" or "implementation")) return ServiceDeskModule.Bad("bad_stage", "stage must be planning or implementation");
+                if (stage == "planning" && StageOf(status) != "planning") return ServiceDeskModule.Bad("locked", "The planning checklist can only change while the change is being planned.");
+                Guid? who = null; var name = "";
+                if (b.TryGetProperty("assigneeId", out var av) && av.ValueKind == JsonValueKind.String && Guid.TryParse(av.GetString(), out var ag)) { var uu = await users.GetAsync(ag, ct); if (uu == null) return ServiceDeskModule.Bad("bad_assignee", "That person does not exist."); who = ag; name = uu.Name; }
+                await using var ins = new NpgsqlCommand("insert into servicedesk.change_tasks (change_id, stage, title, assignee_id, assignee_name, position) values (@c,@s,@t,@a,@n, coalesce((select max(position) + 1 from servicedesk.change_tasks where change_id = @c and stage = @s), 0)) returning id", db);
+                ServiceDeskModule.P(ins, "c", id); ServiceDeskModule.P(ins, "s", stage); ServiceDeskModule.P(ins, "t", title); ServiceDeskModule.P(ins, "a", who); ServiceDeskModule.P(ins, "n", name);
+                var tid = (long)(await ins.ExecuteScalarAsync(ct))!;
+                await audit.WriteAsync("servicedesk.change_task_added", number, title, ct: ct);
+                return Results.Ok(new { id = tid });
+            }
+            catch (FormatException e) { return ServiceDeskModule.Bad("bad_request", e.Message); }
+        }));
+        read(r.MapMethods("/api/servicedesk/changes/{id:long}/tasks/{tid:long}", new[] { "PATCH" }, async (long id, long tid, JsonElement b, ClaimsPrincipal u, ITenantContext t, IUserDirectory users, IAuditLog audit, CancellationToken ct) =>
+        {
+            await using var db = await ServiceDeskModule.Open(t, ct);
+            var w = await ServiceDeskModule.WhoAsync(u, db, ct);
+            if (!w.Staff) return Forbidden("Only the support team can edit tasks.");
+            string status, number;
+            await using (var c = new NpgsqlCommand("select status, number from servicedesk.changes where id = @i", db)) { ServiceDeskModule.P(c, "i", id); await using var rd = await c.ExecuteReaderAsync(ct); if (!await rd.ReadAsync(ct)) return NotFound(); status = rd.GetString(0); number = rd.GetString(1); }
+            if (status is "closed" or "cancelled") return ServiceDeskModule.Bad("locked", "A change that is " + status + " cannot be edited.");
+            try
+            {
+                var sets = new List<string>(); await using var up = new NpgsqlCommand { Connection = db }; ServiceDeskModule.P(up, "t", tid); ServiceDeskModule.P(up, "c", id);
+                var title = Text(b, "title", 300, out var ht); if (ht) { if (title == "") return ServiceDeskModule.Bad("title_required"); sets.Add("title = @ti"); ServiceDeskModule.P(up, "ti", title); }
+                if (b.TryGetProperty("done", out var dv) && dv.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                {
+                    var d = dv.ValueKind == JsonValueKind.True; sets.Add("done = @d"); sets.Add(d ? "done_at = now()" : "done_at = null"); sets.Add("done_by = @db"); ServiceDeskModule.P(up, "d", d); ServiceDeskModule.P(up, "db", d ? w.Name : "");
+                }
+                if (b.TryGetProperty("assigneeId", out var av))
+                {
+                    if (av.ValueKind == JsonValueKind.Null) { sets.Add("assignee_id = null"); sets.Add("assignee_name = ''"); }
+                    else if (av.ValueKind == JsonValueKind.String && Guid.TryParse(av.GetString(), out var ag)) { var uu = await users.GetAsync(ag, ct); if (uu == null) return ServiceDeskModule.Bad("bad_assignee", "That person does not exist."); sets.Add("assignee_id = @ai"); sets.Add("assignee_name = @an"); ServiceDeskModule.P(up, "ai", ag); ServiceDeskModule.P(up, "an", uu.Name); }
+                }
+                if (sets.Count == 0) return ServiceDeskModule.Bad("nothing_to_change");
+                up.CommandText = "update servicedesk.change_tasks set " + string.Join(", ", sets) + " where id = @t and change_id = @c";
+                if (await up.ExecuteNonQueryAsync(ct) == 0) return NotFound();
+                await audit.WriteAsync("servicedesk.change_task_updated", number, tid.ToString(), ct: ct);
+                return Results.Ok(new { ok = true });
+            }
+            catch (FormatException e) { return ServiceDeskModule.Bad("bad_request", e.Message); }
+        }));
+        read(r.MapDelete("/api/servicedesk/changes/{id:long}/tasks/{tid:long}", async (long id, long tid, ClaimsPrincipal u, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        {
+            await using var db = await ServiceDeskModule.Open(t, ct);
+            var w = await ServiceDeskModule.WhoAsync(u, db, ct);
+            if (!w.Staff) return Forbidden("Only the support team can edit tasks.");
+            await using var c = new NpgsqlCommand("delete from servicedesk.change_tasks where id = @t and change_id = @c and exists (select 1 from servicedesk.changes where id = @c and status not in ('closed','cancelled','completed','failed'))", db);
+            ServiceDeskModule.P(c, "t", tid); ServiceDeskModule.P(c, "c", id);
+            if (await c.ExecuteNonQueryAsync(ct) == 0) return NotFound();
+            await audit.WriteAsync("servicedesk.change_task_removed", id.ToString(), tid.ToString(), ct: ct);
+            return Results.NoContent();
         }));
 
         read(r.MapPost("/api/servicedesk/changes/{id:long}/notes", (long id, JsonElement b, ClaimsPrincipal u, ITenantContext t, CancellationToken ct) => AddNote("change", id, b, u, t, ct)));

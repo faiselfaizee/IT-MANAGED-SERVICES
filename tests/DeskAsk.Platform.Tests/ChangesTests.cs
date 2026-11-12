@@ -116,6 +116,54 @@ public class ChangesTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [PgFact]
+    public async Task AChangeMovesThroughPlanningApprovalImplementationReviewAndClose()
+    {
+        var x = await Start();
+        var id = await NewChange(x.Eng, Planned);
+        string Url(string s) => $"/api/servicedesk/changes/{id}/{s}";
+        Task<JsonElement> Detail() => x.Eng.GetAsync($"/api/servicedesk/changes/{id}").ContinueWith(t => J(t.Result)).Unwrap();
+        Assert.Equal("planning", (await Detail()).GetProperty("change").GetProperty("stage").GetString());
+
+        // Planning: impact analysis and a checklist
+        Assert.Equal(HttpStatusCode.OK, (await Patch(x.Eng, $"/api/servicedesk/changes/{id}", new { impactAnalysis = "File server unavailable for 20 minutes" })).StatusCode);
+        var check = await J(await x.Eng.PostAsync(Url("tasks"), Json(new { stage = "planning", title = "Backup taken" })));
+        Assert.Equal(HttpStatusCode.OK, (await Patch(x.Eng, Url("tasks/" + check.GetProperty("id").GetInt64()), new { done = true })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await x.Eng.PostAsync(Url("tasks"), Json(new { stage = "bogus", title = "x" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await x.Eng.PostAsync(Url("tasks"), Json(new { title = "" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await x.Viewer.PostAsync(Url("tasks"), Json(new { title = "x" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await x.Cust.PostAsync(Url("tasks"), Json(new { title = "x" }))).StatusCode);
+
+        // Approval
+        var step = await J(await x.Eng.PostAsync(Url("tasks"), Json(new { stage = "implementation", title = "Install the update" })));
+        var stepId = step.GetProperty("id").GetInt64();
+        Assert.Equal(HttpStatusCode.OK, (await x.Eng.PostAsync(Url("submit"), null)).StatusCode);
+        Assert.Equal("approval", (await Detail()).GetProperty("change").GetProperty("stage").GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, (await x.Eng.PostAsync(Url("tasks"), Json(new { stage = "planning", title = "late" }))).StatusCode);   // checklist is closed once planning ends
+        await Vote(x.Eng2, id, "approve"); await Vote(x.Admin, id, "approve");
+
+        // Implementation: the change cannot be completed while a task is open
+        await Patch(x.Eng, $"/api/servicedesk/changes/{id}", new { startAt = "2030-01-01T22:00:00Z", endAt = "2030-01-01T23:00:00Z" });
+        Assert.Equal(HttpStatusCode.OK, (await x.Eng.PostAsync(Url("status"), Json(new { status = "scheduled" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await x.Eng.PostAsync(Url("status"), Json(new { status = "implementing" }))).StatusCode);
+        Assert.Equal("implementation", (await Detail()).GetProperty("change").GetProperty("stage").GetString());
+        var open = await x.Eng.PostAsync(Url("status"), Json(new { status = "completed", outcome = "Done" }));
+        Assert.Equal(HttpStatusCode.BadRequest, open.StatusCode); Assert.Contains("tasks_open", await open.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, (await Patch(x.Eng, Url("tasks/" + stepId), new { done = true })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await x.Eng.PostAsync(Url("status"), Json(new { status = "completed", outcome = "Done" }))).StatusCode);
+
+        // Review, then close
+        Assert.Equal("review", (await Detail()).GetProperty("change").GetProperty("stage").GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, (await x.Eng.PostAsync(Url("status"), Json(new { status = "closed" }))).StatusCode);   // needs a closure code
+        Assert.Equal(HttpStatusCode.BadRequest, (await x.Eng.PostAsync(Url("status"), Json(new { status = "closed", closureCode = "successful" }))).StatusCode);   // and review notes
+        Assert.Equal(HttpStatusCode.OK, (await Patch(x.Eng, $"/api/servicedesk/changes/{id}", new { reviewNotes = "Went to plan. Start the backup earlier next time." })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await x.Eng.PostAsync(Url("status"), Json(new { status = "closed", closureCode = "successful" }))).StatusCode);
+        var d = (await Detail()).GetProperty("change");
+        Assert.Equal("close", d.GetProperty("stage").GetString()); Assert.Equal("successful", d.GetProperty("closureCode").GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, (await Patch(x.Eng, $"/api/servicedesk/changes/{id}", new { reviewNotes = "again" })).StatusCode);
+        Assert.Equal(2, (await Detail()).GetProperty("tasks").GetArrayLength());
+    }
+
+    [PgFact]
     public async Task ProblemsNeedAWorkaroundToBeAKnownErrorAndLinkToTickets()
     {
         var x = await Start();

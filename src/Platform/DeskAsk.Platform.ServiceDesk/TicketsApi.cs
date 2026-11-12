@@ -17,7 +17,7 @@ public static class TicketsApi
     const int MaxAttachment = 10 * 1024 * 1024;
 
     const string Cols = @"t.id, t.number, t.subject, t.description, t.status, t.priority, t.category, t.company_id, t.company_name, t.requester_id, t.requester_name, t.requester_email,
-        t.assignee_id, t.assignee_name, t.asset_id, t.asset_name, t.source, t.created_at, t.updated_at, t.first_response_at, t.resolved_at, t.closed_at, t.respond_due, t.resolve_due, t.paused_at, t.paused_s, t.created_by";
+        t.assignee_id, t.assignee_name, t.asset_id, t.asset_name, t.source, t.created_at, t.updated_at, t.first_response_at, t.resolved_at, t.closed_at, t.respond_due, t.resolve_due, t.paused_at, t.paused_s, t.created_by, t.custom::text";
 
     static DateTime? Dt(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetDateTime(i);
 
@@ -35,6 +35,7 @@ public static class TicketsApi
             assetId = r.IsDBNull(14) ? (long?)null : r.GetInt64(14), asset = r.GetString(15), source = r.GetString(16),
             createdAt = created, updatedAt = r.GetDateTime(18), firstResponseAt = Dt(r, 19), resolvedAt = resolved, closedAt = Dt(r, 21),
             respondDue = Dt(r, 22), resolveDue = due, paused = paused != null, sla = state, respond = respondState,
+            custom = full ? JsonDocument.Parse(r.GetString(27)).RootElement.Clone() : (JsonElement?)null,
         };
     }
 
@@ -206,18 +207,26 @@ public static class TicketsApi
                 }
             }
             catch (FormatException e) { return Bad("bad_request", e.Message); }
+            Dictionary<string, object?> custom;
+            try
+            {
+                var defs = await CustomFields.LoadAsync(db, true, ct);
+                custom = b.TryGetProperty("custom", out var cuv) ? CustomFields.Check(cuv, defs, w.Staff) : new();
+                CustomFields.RequireAll(custom, defs, w.Staff);
+            }
+            catch (FormatException e) { return Bad("bad_custom", e.Message); }
             if (category != "" && !(await SlaConfig.CategoriesAsync(s, ct)).Contains(category, StringComparer.OrdinalIgnoreCase)) return Bad("bad_category", "Choose one of the listed categories.");
             string companyName = "";
             if (company is int ci) { var co = await companies.GetAsync(ci, ct); if (co == null) return Bad("bad_company", "That company does not exist."); companyName = co.Name; }
 
             var sla = await SlaConfig.LoadAsync(s, ct);
             await using var c = new NpgsqlCommand(@"insert into servicedesk.tickets
-                (subject, description, priority, category, company_id, company_name, requester_id, requester_name, requester_email, asset_id, asset_name, source, created_by, respond_due, resolve_due)
-                values (@s, @d, @p, @cat, @co, @con, @ri, @rn, @re, @ai, @an, 'web', @by, now() + make_interval(secs => @rp * 3600), now() + make_interval(secs => @rs * 3600))
+                (subject, description, priority, category, company_id, company_name, requester_id, requester_name, requester_email, asset_id, asset_name, source, created_by, custom, respond_due, resolve_due)
+                values (@s, @d, @p, @cat, @co, @con, @ri, @rn, @re, @ai, @an, 'web', @by, @cu::jsonb, now() + make_interval(secs => @rp * 3600), now() + make_interval(secs => @rs * 3600))
                 returning id, number", db);
             P(c, "s", subject); P(c, "d", description); P(c, "p", priority); P(c, "cat", category); P(c, "co", company); P(c, "con", companyName);
             P(c, "ri", requesterId); P(c, "rn", rName); P(c, "re", rEmail); P(c, "ai", assetId); P(c, "an", assetName); P(c, "by", w.Email);
-            P(c, "rp", sla.Respond[priority]); P(c, "rs", sla.Resolve[priority]);
+            P(c, "rp", sla.Respond[priority]); P(c, "rs", sla.Resolve[priority]); P(c, "cu", CustomFields.ToJson(custom));
             long id; string number;
             await using (var rd = await c.ExecuteReaderAsync(ct)) { await rd.ReadAsync(ct); id = rd.GetInt64(0); number = rd.GetString(1); }
             await Event(db, id, "ticket.created", new { number, priority, company }, ct);
@@ -278,6 +287,18 @@ public static class TicketsApi
                         sets.Add("asset_id = @asset, asset_name = @assetName"); P(c, "asset", aid); P(c, "assetName", asset.Tag + " " + asset.Name); notes.Add("asset: " + asset.Tag);
                     }
                     else throw new FormatException("assetId must be a number or null");
+                }
+                if (b.TryGetProperty("custom", out var cuv))
+                {
+                    var defs = await CustomFields.LoadAsync(db, true, ct);
+                    var changes = CustomFields.Check(cuv, defs, true);
+                    if (changes.Count > 0)
+                    {
+                        await using var cur = new NpgsqlCommand("select custom::text from servicedesk.tickets where id = @id", db); P(cur, "id", id);
+                        var have = CustomFields.Parse((string?)await cur.ExecuteScalarAsync(ct));
+                        foreach (var kv in changes) { have[kv.Key] = kv.Value; notes.Add("field " + (defs.First(x => x.Key == kv.Key).Label) + (kv.Value == null ? " cleared" : " changed")); }
+                        sets.Add("custom = @custom::jsonb"); P(c, "custom", CustomFields.ToJson(have));
+                    }
                 }
             }
             catch (FormatException e) { return Bad("bad_request", e.Message); }

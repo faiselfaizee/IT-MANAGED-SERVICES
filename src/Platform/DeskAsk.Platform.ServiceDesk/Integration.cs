@@ -152,13 +152,14 @@ internal static class IntegrationApi
         }));
 
         // ================================================================ /api/v1 (API key)
-        const string cols = "id, number, subject, description, status, priority, category, company_id, company_name, requester_name, requester_email, assignee_name, asset_id, asset_name, source, created_at, updated_at, resolved_at, closed_at";
+        const string cols = "id, number, subject, description, status, priority, category, company_id, company_name, requester_name, requester_email, assignee_name, asset_id, asset_name, source, created_at, updated_at, resolved_at, closed_at, custom::text";
         static object Row(NpgsqlDataReader r, bool full) => new
         {
             id = r.GetInt64(0), number = r.GetString(1), subject = r.GetString(2), description = full ? r.GetString(3) : null, status = r.GetString(4), priority = r.GetString(5), category = r.GetString(6),
             companyId = r.IsDBNull(7) ? (int?)null : r.GetInt32(7), company = r.GetString(8), requester = r.GetString(9), requesterEmail = r.GetString(10), assignee = r.GetString(11),
             assetId = r.IsDBNull(12) ? (long?)null : r.GetInt64(12), asset = r.GetString(13), source = r.GetString(14),
             createdAt = r.GetDateTime(15), updatedAt = r.GetDateTime(16), resolvedAt = r.IsDBNull(17) ? (DateTime?)null : r.GetDateTime(17), closedAt = r.IsDBNull(18) ? (DateTime?)null : r.GetDateTime(18),
+            custom = System.Text.Json.JsonDocument.Parse(r.GetString(19)).RootElement.Clone(),
         };
         static void Match(NpgsqlCommand c, string idOrNumber)
         {
@@ -211,12 +212,20 @@ internal static class IntegrationApi
             }
             var sla = await SlaConfig.LoadAsync(s, ct); var by = "API: " + (h.Items["apikey"] as string ?? "key");
             await using var db = await ServiceDeskModule.Open(t, ct);
+            Dictionary<string, object?> custom;
+            try
+            {
+                var defs = await CustomFields.LoadAsync(db, true, ct);
+                custom = b.TryGetProperty("custom", out var cuv) ? CustomFields.Check(cuv, defs, true) : new();
+                CustomFields.RequireAll(custom, defs, true);
+            }
+            catch (FormatException e) { return ServiceDeskModule.Bad("bad_custom", e.Message); }
             await using var c = new NpgsqlCommand(@"insert into servicedesk.tickets
-                (subject, description, priority, category, company_id, company_name, requester_name, requester_email, asset_id, asset_name, source, created_by, respond_due, resolve_due)
-                values (@s,@d,@p,@cat,@co,@con,@rn,@re,@ai,@an,'api',@by, now() + make_interval(secs => @rp * 3600), now() + make_interval(secs => @rs * 3600)) returning id, number", db);
+                (subject, description, priority, category, company_id, company_name, requester_name, requester_email, asset_id, asset_name, source, created_by, custom, respond_due, resolve_due)
+                values (@s,@d,@p,@cat,@co,@con,@rn,@re,@ai,@an,'api',@by,@cu::jsonb, now() + make_interval(secs => @rp * 3600), now() + make_interval(secs => @rs * 3600)) returning id, number", db);
             ServiceDeskModule.P(c, "s", subject); ServiceDeskModule.P(c, "d", Str(b, "description", 20000) ?? ""); ServiceDeskModule.P(c, "p", priority); ServiceDeskModule.P(c, "cat", Str(b, "category", 60) ?? "");
             ServiceDeskModule.P(c, "co", company); ServiceDeskModule.P(c, "con", companyName); ServiceDeskModule.P(c, "rn", Str(b, "requesterName", 200) ?? ""); ServiceDeskModule.P(c, "re", Str(b, "requesterEmail", 320) ?? "");
-            ServiceDeskModule.P(c, "ai", assetId); ServiceDeskModule.P(c, "an", assetName); ServiceDeskModule.P(c, "by", by); ServiceDeskModule.P(c, "rp", sla.Respond[priority]); ServiceDeskModule.P(c, "rs", sla.Resolve[priority]);
+            ServiceDeskModule.P(c, "ai", assetId); ServiceDeskModule.P(c, "an", assetName); ServiceDeskModule.P(c, "by", by); ServiceDeskModule.P(c, "rp", sla.Respond[priority]); ServiceDeskModule.P(c, "rs", sla.Resolve[priority]); ServiceDeskModule.P(c, "cu", CustomFields.ToJson(custom));
             long id; string number;
             await using (var rd = await c.ExecuteReaderAsync(ct)) { await rd.ReadAsync(ct); id = rd.GetInt64(0); number = rd.GetString(1); }
             await ServiceDeskModule.Event(db, id, "ticket.created", new { number, priority, company, api = true }, ct);

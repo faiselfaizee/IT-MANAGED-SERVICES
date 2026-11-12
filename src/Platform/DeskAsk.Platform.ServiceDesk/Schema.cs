@@ -104,6 +104,26 @@ public sealed class ServiceDeskSchema : ITenantSchema
         new(4, "monthly report mail", @"
             create table if not exists servicedesk.report_sent (
               month text not null, scope text not null, recipient text not null, at timestamptz not null default now(), primary key (month, scope, recipient))"),
+        new(5, "change stages", @"
+            alter table servicedesk.changes drop constraint if exists changes_status_check;
+            alter table servicedesk.changes add constraint changes_status_check check (status in ('draft','review','approved','rejected','scheduled','implementing','completed','failed','cancelled','closed'));
+            alter table servicedesk.changes add column if not exists impact_analysis text not null default '';
+            alter table servicedesk.changes add column if not exists review_notes text not null default '';
+            alter table servicedesk.changes add column if not exists closure_code text not null default '';
+            alter table servicedesk.changes add column if not exists closed_at timestamptz;
+            create table if not exists servicedesk.change_tasks (
+              id bigserial primary key, change_id bigint not null references servicedesk.changes(id) on delete cascade,
+              stage text not null check (stage in ('planning','implementation')), title text not null,
+              assignee_id uuid, assignee_name text not null default '', done boolean not null default false, done_at timestamptz, done_by text not null default '',
+              position int not null default 0, created_at timestamptz not null default now());
+            create index if not exists change_tasks_change on servicedesk.change_tasks (change_id, stage, position, id)"),
+        new(6, "custom fields", @"
+            create table if not exists servicedesk.custom_fields (
+              id serial primary key, key text not null unique, label text not null,
+              kind text not null check (kind in ('text','longtext','number','date','choice','checkbox')), options text not null default '',
+              required boolean not null default false, staff_only boolean not null default false, active boolean not null default true,
+              position int not null default 0, created_at timestamptz not null default now());
+            alter table servicedesk.tickets add column if not exists custom jsonb not null default '{}'::jsonb"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
         SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
