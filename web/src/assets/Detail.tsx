@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { usePerms } from '../perms';
 import { api, openPage, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Empty, Err, Field, Loading, Meter, Modal, ago, fmtBytes, fmtDate, fmtDay, fmtUptime, useSubmit } from '../ui';
 import { Checks, Commands, Ise, RemoteControl, Shell, Tickets } from './DetailOps';
@@ -10,6 +11,7 @@ const TABS = [
 
 export default function Detail({ id, tab }: { id: string; tab: string }) {
   const { data: d, error, loading, reload } = useLoad<Rec>(`/api/assets/${id}/device`);
+  const perms = usePerms('assets');
   const [modal, setModal] = useState<'' | 'ownership' | 'handover' | 'qr'>('');
   if (!d) return <Loading loading={loading} error={error} />;
   const online = d.agent.online as boolean, hasAgent = !!d.agent.id;
@@ -17,10 +19,10 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
     <p><a href="#/assets">← All assets</a></p>
     <h1>{d.name} <span className="muted mono">{d.tag}</span> {hasAgent && <Badge tone={online ? 'ok' : 'bad'}>{online ? 'Online' : 'Offline'}</Badge>} {d.ownership.underAmc && <Badge tone="ok">AMC</Badge>} {d.ownership.rented && <Badge>Rented</Badge>}</h1>
     <div className="tools">
-      <button onClick={() => setModal('ownership')}>Customer &amp; category</button>
-      <button onClick={() => setModal('handover')}>{d.ownership.assignedTo ? 'Hand over' : 'Allocate'}</button>
+      {perms.admin && <button onClick={() => setModal('ownership')}>Customer &amp; category</button>}
+      {perms.admin && <button onClick={() => setModal('handover')}>{d.ownership.assignedTo ? 'Hand over' : 'Allocate'}</button>}
       <button onClick={() => setModal('qr')}>QR label</button>
-      {hasAgent && <Act label="Refresh inventory" run={async () => { await api(`/api/assets/${id}/refresh`, { method: 'POST', body: {} }); reload(); }} />}
+      {perms.admin && hasAgent && <Act label="Refresh inventory" run={async () => { await api(`/api/assets/${id}/refresh`, { method: 'POST', body: {} }); reload(); }} />}
     </div>
     <nav className="sub" aria-label="Asset tabs">{TABS.map(([k, label]) => <a key={k} href={`#/assets/${id}/${k}`} className={tab === k ? 'on' : ''}>{label}</a>)}</nav>
     {tab === 'overview' && <Overview id={id} d={d} reload={reload} />}

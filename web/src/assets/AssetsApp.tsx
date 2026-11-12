@@ -1,4 +1,5 @@
 import { useHash } from '../http';
+import { usePerms } from '../perms';
 import Companies from './Companies';
 import Contracts from './Contracts';
 import Detail from './Detail';
@@ -15,7 +16,9 @@ const NAV: [string, string][] = [
 
 /** The Assets module: routes inside the #/assets address. */
 export default function AssetsApp() {
-  const parts = useHash(); const [, a, b] = parts; const section = /^\d+$/.test(a ?? '') ? '' : a ?? '';
+  const perms = usePerms('assets'); const parts = useHash(); const [, a, b] = parts;
+  // administrators see every page; other people see the pages they may read (a customer administrator sees only assets and companies)
+  const nav = NAV.filter(([k]) => perms.admin || ['', 'companies'].includes(k) || (perms.readAll && ['software', 'amc', 'rentals'].includes(k))); const section = /^\d+$/.test(a ?? '') ? '' : a ?? '';
   let page;
   if (/^\d+$/.test(a ?? '')) page = <Detail id={a} tab={b ?? 'overview'} />;
   else switch (a) {
@@ -31,7 +34,7 @@ export default function AssetsApp() {
     default: page = <List />;
   }
   return <>
-    <nav className="sub" aria-label="Assets">{NAV.map(([k, l]) => <a key={k} href={'#/assets' + (k ? '/' + k : '')} className={section === k ? 'on' : ''}>{l}</a>)}</nav>
+    <nav className="sub" aria-label="Assets">{nav.map(([k, l]) => <a key={k} href={'#/assets' + (k ? '/' + k : '')} className={section === k ? 'on' : ''}>{l}</a>)}</nav>
     {page}
   </>;
 }

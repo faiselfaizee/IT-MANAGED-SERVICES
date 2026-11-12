@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { api, download, go, openPage, useLoad, type Rec } from '../http';
+import { usePerms } from '../perms';
 import { Badge, Card, Empty, Err, Field, Loading, Modal, fmtDay, useSubmit } from '../ui';
 
 const STATUSES = ['stock', 'in_use', 'repair', 'retired', 'lost'];
 const label = (s: string) => s.replace('_', ' ');
 
 export default function List() {
-  const [search, setSearch] = useState(''); const [status, setStatus] = useState(''); const [skip, setSkip] = useState(0); const take = 50;
+  const perms = usePerms('assets'); const [search, setSearch] = useState(''); const [status, setStatus] = useState(''); const [skip, setSkip] = useState(0); const take = 50;
   const [sel, setSel] = useState<Set<number>>(new Set()); const [add, setAdd] = useState(false); const [print, setPrint] = useState(false);
   const q = `/api/assets?search=${encodeURIComponent(search)}&status=${status}&skip=${skip}&take=${take}`;
   const { data, error, loading, reload } = useLoad<Rec>(q);
@@ -22,7 +23,7 @@ export default function List() {
     <div className="tools">
       <input placeholder="Search name, tag, serial, model, person…" value={search} onChange={(e) => { setSearch(e.target.value); setSkip(0); }} style={{ minWidth: 260 }} />
       <select value={status} onChange={(e) => { setStatus(e.target.value); setSkip(0); }} aria-label="Status"><option value="">Any status</option>{STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}</select>
-      <button className="primary" onClick={() => setAdd(true)}>Add asset</button>
+      {perms.add && <button className="primary" onClick={() => setAdd(true)}>Add asset</button>}
       <button disabled={sel.size === 0} onClick={() => setPrint(true)}>QR labels ({sel.size})</button>
       <button onClick={() => download('/api/assets/export.csv', 'assets.csv')}>Export CSV</button>
     </div>
