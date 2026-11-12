@@ -18,6 +18,7 @@ const Users = lazy(() => import('./Users'));
 const Access = lazy(() => import('./Access'));
 const Licence = lazy(() => import('./Licence'));
 const Mail = lazy(() => import('./Mail'));
+const Updates = lazy(() => import('./Updates'));
 const ServiceDeskApp = lazy(() => import('./servicedesk/ServiceDeskApp'));
 
 function Home({ who, live, assets }: { who: WhoAmI | null; live: boolean; assets: boolean }) {
@@ -78,11 +79,12 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const inAccess = parts[0] === 'access' && isAdmin;
   const inLicence = parts[0] === 'licence' && isAdmin;
   const inMail = parts[0] === 'mail' && isAdmin;
+  const inUpdates = parts[0] === 'updates' && isAdmin;
   return (
     <div className="shell">
       <nav aria-label="Modules" className="side">
         <a className="brand" href="#/" aria-label="DeskAsk Platform home"><Logo /><strong>DeskAsk</strong></a>
-        <a href="#/" className={!inAssets && !inDesk && !inUsers && !inAccess && !inLicence && !inMail ? 'on' : ''}><Icon name="home" />Home</a>
+        <a href="#/" className={!inAssets && !inDesk && !inUsers && !inAccess && !inLicence && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
         {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
           ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
           : m === 'Service Desk'
@@ -91,6 +93,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
         {isAdmin ? <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a> : null}
         {isAdmin ? <a href="#/access" className={inAccess ? 'on' : ''}><Icon name="access" />Access</a> : null}
         {isAdmin ? <a href="#/mail" className={inMail ? 'on' : ''}><Icon name="mail" />Mail</a> : null}
+        {isAdmin ? <a href="#/updates" className={inUpdates ? 'on' : ''}><Icon name="access" />Updates</a> : null}
         {isAdmin ? <a href="#/licence" className={inLicence ? 'on' : ''}><Icon name="access" />Licence</a> : null}
         <label className="look-pick">Appearance<select value={look} onChange={(e) => { setLook(e.target.value); setLookState(e.target.value); }}>{LOOKS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></label>
         {fetcher ? null : <a className="out" href="#/" onClick={(e) => { e.preventDefault(); signOut(); }}><Icon name="signout" />Sign out</a>}
@@ -100,6 +103,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
         {inAssets
           ? <Suspense fallback={<p className="muted">Loading…</p>}><AssetsApp /></Suspense>
           : inDesk ? <Suspense fallback={<p className="muted">Loading…</p>}><ServiceDeskApp /></Suspense>
+          : inUpdates ? <Suspense fallback={<p className="muted">Loading…</p>}><Updates /></Suspense>
           : inMail ? <Suspense fallback={<p className="muted">Loading…</p>}><Mail /></Suspense>
           : inLicence ? <Suspense fallback={<p className="muted">Loading…</p>}><Licence /></Suspense>
           : inAccess ? <Suspense fallback={<p className="muted">Loading…</p>}><Access /></Suspense>
