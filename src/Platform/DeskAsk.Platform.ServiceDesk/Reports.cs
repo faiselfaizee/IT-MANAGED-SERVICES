@@ -25,6 +25,23 @@ internal static class ReportsApi
             string companyName = "All companies";
             if (co is int ci) { var c0 = await companies.GetAsync(ci, ct); if (c0 == null) return ServiceDeskModule.Bad("bad_company", "That company does not exist."); companyName = c0.Name; }
 
+            var d = await Build(db, start, end, co, w.Staff || w.Role == "viewer", ct);
+            var totals = new { opened = d.Opened, resolved = d.Resolved, backlogStart = d.BacklogStart, backlogEnd = d.BacklogEnd, avgFirstResponseHours = d.AvgFirst, avgResolutionHours = d.AvgSolve, respondMetPercent = d.RespondPct, resolveMetPercent = d.ResolvePct };
+            return Results.Ok(new { month = m, from = start, to = end, companyId = co, company = companyName, totals, byPriority = d.ByPriority, byCategory = d.ByCategory, bySource = d.BySource, byRequester = d.ByRequester, byAsset = d.ByAsset, byCompany = d.ByCompany, tickets = d.Tickets, truncated = d.Tickets.Count >= 300, changes = d.Changes });
+        }).RequireAuthorization().RequireModule(key);
+    }
+
+    internal sealed record Counted(string Name, long Count);
+    internal sealed class ReportData
+    {
+        public long Opened, Resolved, BacklogStart, BacklogEnd; public double? AvgFirst, AvgSolve, RespondPct, ResolvePct;
+        public List<Counted> ByPriority = new(), ByCategory = new(), BySource = new(), ByRequester = new(), ByAsset = new(), ByCompany = new();
+        public List<object> Tickets = new(); public object? Changes;
+    }
+
+    internal static async Task<ReportData> Build(NpgsqlConnection db, DateTime start, DateTime end, int? co, bool withChanges, CancellationToken ct)
+    {
+        var d = new ReportData();
             NpgsqlCommand Cmd(string sql)
             {
                 var c = new NpgsqlCommand(sql, db);
@@ -35,7 +52,6 @@ internal static class ReportsApi
             const string scope = "(@co::int is null or company_id = @co)";
             const string done = "coalesce(resolved_at, closed_at)";
 
-            object totals;
             await using (var c = Cmd($@"select
                 count(*) filter (where created_at >= @s and created_at < @e),
                 count(*) filter (where {done} >= @s and {done} < @e),
@@ -52,35 +68,33 @@ internal static class ReportsApi
                 await using var rd = await c.ExecuteReaderAsync(ct); await rd.ReadAsync(ct);
                 double? D(int i) => rd.IsDBNull(i) ? null : Math.Round(rd.GetDouble(i), 1);
                 double? Pct(int met, int total) => rd.GetInt64(total) == 0 ? null : Math.Round(100.0 * rd.GetInt64(met) / rd.GetInt64(total), 0);
-                totals = new { opened = rd.GetInt64(0), resolved = rd.GetInt64(1), backlogStart = rd.GetInt64(2), backlogEnd = rd.GetInt64(3), avgFirstResponseHours = D(4), avgResolutionHours = D(5), respondMetPercent = Pct(6, 7), resolveMetPercent = Pct(8, 9) };
+                d.Opened = rd.GetInt64(0); d.Resolved = rd.GetInt64(1); d.BacklogStart = rd.GetInt64(2); d.BacklogEnd = rd.GetInt64(3); d.AvgFirst = D(4); d.AvgSolve = D(5); d.RespondPct = Pct(6, 7); d.ResolvePct = Pct(8, 9);
             }
 
-            async Task<List<object>> Group(string expr, string extraWhere = "", int take = 10)
+            async Task<List<Counted>> Group(string expr, string extraWhere = "", int take = 10)
             {
-                var o = new List<object>();
+                var o = new List<Counted>();
                 await using var c = Cmd($"select {expr} as k, count(*) from servicedesk.tickets where {scope} and created_at >= @s and created_at < @e {extraWhere} group by 1 order by 2 desc, 1 limit {take}");
                 await using var rd = await c.ExecuteReaderAsync(ct);
-                while (await rd.ReadAsync(ct)) o.Add(new { name = rd.GetString(0), count = rd.GetInt64(1) });
+                while (await rd.ReadAsync(ct)) o.Add(new Counted(rd.GetString(0), rd.GetInt64(1)));
                 return o;
             }
-            var byPriority = await Group("priority"); var byCategory = await Group("case when category = '' then '(none)' else category end");
-            var bySource = await Group("source"); var byRequester = await Group("case when requester_name = '' then requester_email else requester_name end", "and (requester_name <> '' or requester_email <> '')", 5);
-            var byAsset = await Group("asset_name", "and asset_name <> ''", 5);
-            var byCompany = co == null ? await Group("case when company_name = '' then '(no company)' else company_name end", "", 10) : new List<object>();
+            d.ByPriority = await Group("priority"); d.ByCategory = await Group("case when category = '' then '(none)' else category end");
+            d.BySource = await Group("source"); d.ByRequester = await Group("case when requester_name = '' then requester_email else requester_name end", "and (requester_name <> '' or requester_email <> '')", 5);
+            d.ByAsset = await Group("asset_name", "and asset_name <> ''", 5);
+            if (co == null) d.ByCompany = await Group("case when company_name = '' then '(no company)' else company_name end", "", 10);
 
-            var tickets = new List<object>();
+            var tickets = d.Tickets;
             await using (var c = Cmd($"select id, number, subject, status, priority, category, requester_name, created_at, {done} from servicedesk.tickets where {scope} and created_at >= @s and created_at < @e order by id limit 300"))
             {
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 while (await rd.ReadAsync(ct)) tickets.Add(new { id = rd.GetInt64(0), number = rd.GetString(1), subject = rd.GetString(2), status = rd.GetString(3), priority = rd.GetString(4), category = rd.GetString(5), requester = rd.GetString(6), createdAt = rd.GetDateTime(7), doneAt = rd.IsDBNull(8) ? (DateTime?)null : rd.GetDateTime(8) });
             }
-            var cmp = new List<object>();
-            if (w.Staff || w.Role == "viewer")
+            if (withChanges)
             {
                 await using var c = Cmd($"select count(*) filter (where status = 'completed'), count(*) filter (where status = 'failed') from servicedesk.changes where {scope} and status in ('completed','failed') and updated_at >= @s and updated_at < @e");
-                await using var rd = await c.ExecuteReaderAsync(ct); await rd.ReadAsync(ct); cmp.Add(new { completed = rd.GetInt64(0), failed = rd.GetInt64(1) });
+                await using var rd = await c.ExecuteReaderAsync(ct); await rd.ReadAsync(ct); d.Changes = new { completed = rd.GetInt64(0), failed = rd.GetInt64(1) };
             }
-            return Results.Ok(new { month = m, from = start, to = end, companyId = co, company = companyName, totals, byPriority, byCategory, bySource, byRequester, byAsset, byCompany, tickets, truncated = tickets.Count >= 300, changes = cmp.FirstOrDefault() });
-        }).RequireAuthorization().RequireModule(key);
+        return d;
     }
 }

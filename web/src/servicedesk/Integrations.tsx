@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Copy, Empty, Err, Field, Loading, Modal, ago, fmtDate, useSubmit } from '../ui';
 
@@ -28,6 +28,7 @@ export default function Integrations() {
           <td className="actions"><button onClick={() => setHook(h)}>Edit</button><Act label="Send test" run={async () => { await api(`/api/servicedesk/integration/webhooks/${h.id}/test`, { method: 'POST', body: {} }); }} />
             <button onClick={async () => setLog({ hook: h, items: (await api<Rec>(`/api/servicedesk/integration/webhooks/${h.id}/deliveries`)).items })}>Messages</button></td></tr>)}</tbody></table>)}
     </Card>
+    <ReportMail />
     {newKey && <KeyForm onClose={(k) => { setNewKey(false); if (k) { setShown(k); keys.reload(); } }} />}
     {hook !== undefined && <HookForm init={hook} events={(hooks.data?.events ?? []) as string[]} onClose={(r) => { setHook(undefined); if (r) { if (r.secret) setShown({ key: r.secret }); hooks.reload(); } }} />}
     {log && <Modal title={'Messages to ' + log.hook.url} onClose={() => setLog(null)}>{log.items.length === 0 ? <Empty>Nothing sent yet.</Empty> : <table><thead><tr><th>Event</th><th>Result</th><th>When</th><th /></tr></thead><tbody>
@@ -56,4 +57,26 @@ function HookForm({ init, events, onClose }: { init: Rec | null; events: string[
     {init && <label><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Switched on</label>}
     <Err text={f.err} /><div className="actions"><button onClick={() => onClose(null)}>Cancel</button>
       <button className="primary" disabled={f.busy || !url.trim()} onClick={() => f.submit(async () => { out.current = await api<Rec>(init ? `/api/servicedesk/integration/webhooks/${init.id}` : '/api/servicedesk/integration/webhooks', { method: init ? 'PUT' : 'POST', body }); })}>Save</button></div></div></Modal>;
+}
+
+/** Sends last month's report by mail on its own, to you and to each customer admin. */
+function ReportMail() {
+  const cfg = useLoad<Rec>('/api/servicedesk/integration/reportmail');
+  const [v, setV] = useState<{ enabled: boolean; to: string; companyAdmins: boolean } | null>(null); const [saved, setSaved] = useState(false);
+  const f = useSubmit(() => { setSaved(true); cfg.reload(); });
+  useEffect(() => { if (cfg.data) setV({ enabled: !!cfg.data.enabled, to: cfg.data.to ?? '', companyAdmins: cfg.data.companyAdmins !== false }); }, [cfg.data]);
+  const edit = (p: Partial<NonNullable<typeof v>>) => { setSaved(false); setV({ ...v!, ...p }); };
+  return <Card title="Monthly report by mail">
+    <Loading loading={!v} error={cfg.error} />
+    {v && <div className="form">
+      <label><input type="checkbox" checked={v.enabled} onChange={(e) => edit({ enabled: e.target.checked })} /> Mail last month's report at the start of every month</label>
+      <Field label="Your own addresses (separate with commas). They get the report for all companies."><input value={v.to} onChange={(e) => edit({ to: e.target.value })} placeholder="it@yourcompany.com" /></Field>
+      <label><input type="checkbox" checked={v.companyAdmins} onChange={(e) => edit({ companyAdmins: e.target.checked })} /> Each customer admin gets the report of their own company</label>
+      <p className="muted">Mail must be set up first (Mail page). Each report is sent once.</p>
+      <Err text={f.err} />
+      <div className="actions">{saved && <span className="muted">Saved.</span>}
+        <button className="primary" disabled={f.busy} onClick={() => f.submit(() => api('/api/servicedesk/integration/reportmail', { method: 'PUT', body: v }))}>Save</button>
+        <Act label="Send last month's report now" confirm="Send last month's report to everyone chosen above, even if it was sent before?" run={async () => { await api('/api/servicedesk/integration/reportmail/send', { method: 'POST', body: {} }); }} /></div>
+    </div>}
+  </Card>;
 }

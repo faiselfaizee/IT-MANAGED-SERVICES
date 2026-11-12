@@ -176,3 +176,38 @@ pre.term { background: rgba(3, 8, 16, .82); color: #d7e6f5; padding: 12px 14px; 
   .report { color: #000; }
   .report .tile, .report .card { break-inside: avoid; }
 }
+
+/* ---------------------------------------------------------------- Looks (Appearance in the side menu).
+   Glass is the frosted look above. Clean and Compact have flat surfaces, no blur and no moving background: they stay quick on big tables and weak computers. */
+html[data-look='clean'], html[data-look='compact'] {
+  --base: #f3f5f9; --ink: #14202e; --muted: #56677c; --accent: #0a8f84; --accent-ink: #fff;
+  --glass: #fff; --glass-2: #eaf0f6; --glass-solid: #fff; --edge: #dbe3ed; --edge-hi: transparent; --line: #d3dce8;
+  --shadow: 0 1px 2px rgba(20, 32, 46, .07); --row: #f0f4f9; --head: #f0f4f9; --field: #fff;
+  --ok: #0d7a45; --warn: #9a5b00; --bad: #b3261e; --info: #2748b8;
+  --ok-bg: rgba(13, 122, 69, .11); --warn-bg: rgba(154, 91, 0, .12); --bad-bg: rgba(179, 38, 30, .1); --info-bg: rgba(39, 72, 184, .09);
+  --glow-a: transparent; --glow-b: transparent; --glow-c: transparent; --r-lg: 14px; --r-md: 10px; --r-sm: 8px; color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-look='clean'], html[data-look='compact'] {
+    --base: #0e1621; --ink: #e6edf6; --muted: #9aaabd; --accent: #4fd9cb; --accent-ink: #04201d;
+    --glass: #162231; --glass-2: #1f2e41; --glass-solid: #162231; --edge: #263548; --edge-hi: transparent; --line: #2b3b50;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4); --row: #1b2a3b; --head: #1b2a3b; --field: #0f1a27;
+    --ok: #5eeaa0; --warn: #fbc65b; --bad: #ff8a8a; --info: #8fb4ff;
+    --ok-bg: rgba(94, 234, 160, .13); --warn-bg: rgba(251, 198, 91, .14); --bad-bg: rgba(255, 138, 138, .14); --info-bg: rgba(143, 180, 255, .13); color-scheme: dark;
+  }
+}
+html[data-look='clean'] body::before, html[data-look='compact'] body::before { display: none; }
+html[data-look='clean'] .side, html[data-look='clean'] .card, html[data-look='clean'] table, html[data-look='clean'] .tile, html[data-look='clean'] .modal > div, html[data-look='clean'] .sub, html[data-look='clean'] .note,
+html[data-look='compact'] .side, html[data-look='compact'] .card, html[data-look='compact'] table, html[data-look='compact'] .tile, html[data-look='compact'] .modal > div, html[data-look='compact'] .sub, html[data-look='compact'] .note,
+html[data-look='clean'] .modal, html[data-look='compact'] .modal { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-look='clean'] .modal, html[data-look='compact'] .modal { background: rgba(10, 20, 35, .5); }
+html[data-look='clean'] .sub a.on, html[data-look='compact'] .sub a.on, html[data-look='clean'] button.primary, html[data-look='compact'] button.primary { background: var(--accent); box-shadow: none; filter: none; }
+html[data-look='clean'] .tile-main:hover, html[data-look='compact'] .tile-main:hover { transform: none; }
+html[data-look='compact'] body { font-size: 13.5px; }
+html[data-look='compact'] .shell { padding: 8px; gap: 10px; }
+html[data-look='compact'] .side { width: 200px; padding: 10px 8px; }
+html[data-look='compact'] th, html[data-look='compact'] td { padding: 5px 10px; }
+html[data-look='compact'] .card { padding: 11px 14px; margin-bottom: 10px; }
+html[data-look='compact'] h1 { font-size: 21px; margin-bottom: 10px; }
+.look-pick { margin: 8px 8px 4px; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+.look-pick select { width: 100%; }

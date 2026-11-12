@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { whoAmI, type WhoAmI } from './api';
 import { signOut } from './auth';
+import { LOOKS, currentLook, setLook } from './look';
 import { Icon, Logo } from './chrome';
 import { useHash, useLoad, type Rec } from './http';
 
@@ -64,6 +65,7 @@ function Home({ who, live, assets }: { who: WhoAmI | null; live: boolean; assets
 export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const [who, setWho] = useState<WhoAmI | null>(null);
   const [err, setErr] = useState('');
+  const [look, setLookState] = useState(currentLook());
   const parts = useHash();
   useEffect(() => { whoAmI(fetcher).then(setWho, (e: Error) => setErr(e.message)); }, [fetcher]);
   const me = useLoad<Rec>(fetcher ? null : '/api/platform/me');
@@ -90,6 +92,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
         {isAdmin ? <a href="#/access" className={inAccess ? 'on' : ''}><Icon name="access" />Access</a> : null}
         {isAdmin ? <a href="#/mail" className={inMail ? 'on' : ''}><Icon name="mail" />Mail</a> : null}
         {isAdmin ? <a href="#/licence" className={inLicence ? 'on' : ''}><Icon name="access" />Licence</a> : null}
+        <label className="look-pick">Appearance<select value={look} onChange={(e) => { setLook(e.target.value); setLookState(e.target.value); }}>{LOOKS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></label>
         {fetcher ? null : <a className="out" href="#/" onClick={(e) => { e.preventDefault(); signOut(); }}><Icon name="signout" />Sign out</a>}
       </nav>
       <main className="main">

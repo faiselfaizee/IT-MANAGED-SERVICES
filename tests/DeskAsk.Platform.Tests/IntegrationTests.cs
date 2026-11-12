@@ -17,6 +17,7 @@ public class IntegrationTests : IClassFixture<WebApplicationFactory<Program>>
 
     static StringContent Json(object o) => new(JsonSerializer.Serialize(o), Encoding.UTF8, "application/json");
     static async Task<JsonElement> J(HttpResponseMessage r) => JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement.Clone();
+    static async Task<T> Scalar<T>(string sql) { await using var db = new NpgsqlConnection(Pg); await db.OpenAsync(); await using var c = new NpgsqlCommand(sql, db); return (T)(await c.ExecuteScalarAsync())!; }
     static async Task Sql(string sql) { await using var db = new NpgsqlConnection(Pg); await db.OpenAsync(); await using var c = new NpgsqlCommand(sql, db); await c.ExecuteNonQueryAsync(); }
 
     static HttpRequestMessage Keyed(HttpMethod m, string url, string key, object? body = null)
@@ -211,6 +212,31 @@ public class IntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.Forbidden, (await (await TestSupport.ClientFor(factory, "cust2@int.test", Pw)).GetAsync("/api/servicedesk/reports/monthly?month=" + thisMonth)).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/servicedesk/reports/monthly?month=2026-13")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/servicedesk/reports/monthly?month=" + thisMonth + "&companyId=99999")).StatusCode);
+    }
+
+    [PgFact]
+    public async Task LastMonthsReportIsMailedToYouAndToTheCustomerAdminOnce()
+    {
+        var admin = await Admin(); using var smtp = new FakeSmtp();
+        await Sql("truncate mail.outbox restart identity; delete from servicedesk.report_sent; delete from core.settings where key = 'servicedesk.reportmail'");
+        await Sql("delete from assets.companies where lower(name) = 'report client'; insert into assets.companies (name) values ('Report client')");
+        await Sql("delete from identity.users where \"Email\" like '%@int.test'");
+        Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "boss2@int.test", name = "Boss", role = "cadmin", password = Pw }))).StatusCode);
+        await Sql("insert into servicedesk.people (user_id, company_id) select \"Id\", (select id from assets.companies where lower(name) = 'report client') from identity.users where \"Email\" = 'boss2@int.test' on conflict (user_id) do update set company_id = excluded.company_id");
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/platform/mail/config", Json(new { provider = "smtp", from = "desk@example.test", fromName = "DeskAsk", host = "127.0.0.1", port = smtp.Port, security = "none", user = "", password = "" }))).StatusCode);
+        var coId = await Scalar<int>("select id from assets.companies where lower(name) = 'report client'");
+        var t = await J(await admin.PostAsync("/api/servicedesk/tickets", Json(new { subject = "Scanner broken", companyId = coId, category = "Hardware" })));
+        await Sql($"update servicedesk.tickets set created_at = date_trunc('month', now()) - interval '10 days' where id = {t.GetProperty("id").GetInt64()}");
+        var month = DateTime.UtcNow.AddMonths(-1).ToString("yyyy-MM");
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/servicedesk/integration/reportmail", Json(new { enabled = true, to = "", companyAdmins = false }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/servicedesk/integration/reportmail", Json(new { enabled = true, to = "owner@rep.test", companyAdmins = true }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/servicedesk/integration/reportmail/send", Json(new { month }))).StatusCode);
+        await Until(() => smtp.Snapshot().Count(m => m.Contains("Service report " + month)) >= 2);
+        var mails = smtp.Snapshot().Where(m => m.Contains("Service report " + month)).ToArray();
+        Assert.Equal(2, mails.Length);
+        Assert.Contains(mails, m => m.Contains("owner@rep.test") && m.Contains("Tickets opened: 1"));
+        Assert.Contains(mails, m => m.Contains("boss2@int.test") && m.Contains("Report client"));
     }
 
     static Task Until(Func<bool> ok) => Until(() => Task.FromResult(ok()));

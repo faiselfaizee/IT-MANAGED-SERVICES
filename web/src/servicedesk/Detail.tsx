@@ -47,6 +47,7 @@ export default function Detail({ id }: { id: string }) {
               </> : null}
           </div>
         </Card>
+        <Related id={id} />
         {can.edit && <Assist id={id} t={t} patch={patch} fill={setBody} />}
         <Card title="Details">
           {can.edit ? <div className="form">
@@ -88,5 +89,15 @@ function Assist({ id, t, patch, fill }: { id: string; t: Rec; patch: (b: Rec) =>
         <button onClick={() => fill(a.data!.replyDraft)}>Start a reply from this</button>
       </>}
     </>}
+  </Card>;
+}
+
+/** Problems and changes this ticket is tied to (the team sees them; customers get nothing back). */
+function Related({ id }: { id: string }) {
+  const r = useLoad<Rec>(`/api/servicedesk/tickets/${id}/related`); const problems = (r.data?.problems ?? []) as Rec[]; const changes = (r.data?.changes ?? []) as Rec[];
+  if (problems.length + changes.length === 0) return null;
+  return <Card title="Related">
+    {problems.length > 0 && <><b>Problems</b><ul>{problems.map((p) => <li key={p.id}><a href={`#/servicedesk/problems/${p.id}`}>{p.number}</a> {p.title} <span className="muted">· {String(p.status).replace('_', ' ')}</span></li>)}</ul></>}
+    {changes.length > 0 && <><b>Changes</b><ul>{changes.map((c) => <li key={c.id}><a href={`#/servicedesk/changes/${c.id}`}>{c.number}</a> {c.title} <span className="muted">· {c.status}</span></li>)}</ul></>}
   </Card>;
 }

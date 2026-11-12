@@ -101,6 +101,9 @@ public sealed class ServiceDeskSchema : ITenantSchema
             create index if not exists webhook_deliveries_due on servicedesk.webhook_deliveries (status, next_at);
             create index if not exists webhook_deliveries_hook on servicedesk.webhook_deliveries (hook_id, id desc);
             create table if not exists servicedesk.webhook_state (id int primary key check (id = 1), last_event bigint not null)"),
+        new(4, "monthly report mail", @"
+            create table if not exists servicedesk.report_sent (
+              month text not null, scope text not null, recipient text not null, at timestamptz not null default now(), primary key (month, scope, recipient))"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
         SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);

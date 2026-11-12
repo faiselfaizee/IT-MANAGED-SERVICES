@@ -32,9 +32,11 @@ if (trustProxy) builder.Services.Configure<ForwardedHeadersOptions>(o =>
 });
 
 var (roles, modules) = PlatformSetup.Add(builder);
+builder.Services.AddResponseCompression(o => o.MimeTypes = Microsoft.AspNetCore.ResponseCompression.ResponseCompressionDefaults.MimeTypes.Concat(new[] { "image/svg+xml" }));
 
 var app = builder.Build();
 if (trustProxy) app.UseForwardedHeaders();
+app.UseResponseCompression();
 app.UseTenancy();
 app.UseTenantSchemas();
 app.UseIdentity();
@@ -45,7 +47,11 @@ foreach (var m in modules) m.MapEndpoints(app);
 
 // The web app (web/dist) is shipped inside the bundle as wwwroot. Everything that is not an API or sign-in address falls back to it.
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    // Files in /assets have a fingerprint in their name, so the browser may keep them for good; the page itself is always fetched fresh.
+    OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = ctx.Context.Request.Path.StartsWithSegments("/assets") ? "public,max-age=31536000,immutable" : "no-cache",
+});
 // Not for addresses that end in a file name (.js, .css, .ico, ...): once an endpoint matches, the static file middleware steps aside,
 // so a script request would be answered with the page instead of the script.
 app.MapFallbackToFile("/{*path:regex(^(?!api/|connect/|account/|\\.well-known/|health)(?!.*\\.[A-Za-z0-9]+$).*$)}", "index.html");
