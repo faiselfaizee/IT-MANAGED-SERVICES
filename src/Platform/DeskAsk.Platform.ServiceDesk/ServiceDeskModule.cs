@@ -29,6 +29,7 @@ public sealed class ServiceDeskModule : IPlatformModule
     public void AddServices(IServiceCollection s, IConfiguration cfg)
     {
         s.AddSingleton<ITenantSchema, ServiceDeskSchema>();
+        s.AddScoped<IInboundMailHandler, InboundHandler>();
         s.AddSingleton<IJobHandler, SlaJob>();
         s.AddSingleton(new RecurringJob("servicedesk.sla", SlaJob.JobType, TimeSpan.FromMinutes(1)));
     }

@@ -191,3 +191,15 @@ public interface IMailQueue
     /// <summary>Queues a message. Returns false (and queues nothing) when the customer has not set up mail or the address is empty.</summary>
     Task<bool> EnqueueAsync(string to, string subject, string body, string? reference = null, CancellationToken ct = default);
 }
+
+/// <summary>A message read from the customer's support mailbox.</summary>
+public sealed record InboundMail(string MessageId, string FromAddr, string FromName, string Subject, string Body, DateTimeOffset At, bool Auto = false);
+
+/// <summary>What the Service Desk does with incoming mail (the Mail module reads the mailbox and hands each message over).</summary>
+public interface IInboundMailHandler
+{
+    /// <summary>Adds the message to the ticket it answers, or opens a ticket when automatic opening is on and the sender is a known customer. Returns the ticket number, or null when a person must decide.</summary>
+    Task<string?> HandleAsync(InboundMail m, CancellationToken ct = default);
+    /// <summary>Opens a ticket from the message. The company is optional.</summary>
+    Task<string> CreateTicketAsync(InboundMail m, int? companyId, CancellationToken ct = default);
+}

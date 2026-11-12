@@ -28,6 +28,14 @@ public sealed class MailSchema : ITenantSchema
               created_at timestamptz not null default now(), sent_at timestamptz);
             create index if not exists outbox_due on mail.outbox (status, next_try_at);
             create index if not exists outbox_created on mail.outbox (created_at desc)"),
+        new(2, "inbox", @"
+            create table if not exists mail.inbox (
+              id bigserial primary key, message_id text not null, from_addr text not null, from_name text not null default '', subject text not null default '', body text not null default '',
+              received_at timestamptz not null default now(),
+              status text not null default 'new' check (status in ('new','converted','rejected','ignored')),
+              ticket_number text not null default '', created_at timestamptz not null default now());
+            create unique index if not exists inbox_message on mail.inbox (message_id);
+            create index if not exists inbox_status on mail.inbox (status, id desc)"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) => SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
 }
@@ -96,14 +104,19 @@ public static class MailSender
         await smtp.DisconnectAsync(true, ct);
     }
 
-    static async Task Graph(MailConfig c, string to, string subject, string body, CancellationToken ct)
+    internal static async Task<string> GraphToken(MailConfig c, HttpClient http, CancellationToken ct)
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         var tok = await http.PostAsync($"https://login.microsoftonline.com/{Uri.EscapeDataString(c.TenantId)}/oauth2/v2.0/token", new FormUrlEncodedContent(new Dictionary<string, string>
         { ["client_id"] = c.ClientId, ["client_secret"] = c.Secret, ["scope"] = "https://graph.microsoft.com/.default", ["grant_type"] = "client_credentials" }), ct);
         var tj = await tok.Content.ReadAsStringAsync(ct);
         if (!tok.IsSuccessStatusCode) throw new InvalidOperationException("Microsoft 365 sign-in failed: " + Short(tj));
-        var access = JsonDocument.Parse(tj).RootElement.GetProperty("access_token").GetString()!;
+        return JsonDocument.Parse(tj).RootElement.GetProperty("access_token").GetString()!;
+    }
+
+    static async Task Graph(MailConfig c, string to, string subject, string body, CancellationToken ct)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        var access = await GraphToken(c, http, ct);
         var req = new HttpRequestMessage(HttpMethod.Post, $"https://graph.microsoft.com/v1.0/users/{Uri.EscapeDataString(c.From)}/sendMail")
         {
             Content = new StringContent(JsonSerializer.Serialize(new { message = new { subject, body = new { contentType = "Text", content = body }, toRecipients = new[] { new { emailAddress = new { address = to } } } }, saveToSentItems = false }), Encoding.UTF8, "application/json"),
@@ -113,7 +126,7 @@ public static class MailSender
         if (!res.IsSuccessStatusCode) throw new InvalidOperationException("Microsoft 365 refused the message: " + Short(await res.Content.ReadAsStringAsync(ct)));
     }
 
-    static string Short(string s) => s.Length > 300 ? s[..300] : s;
+    internal static string Short(string s) => s.Length > 300 ? s[..300] : s;
 }
 
 /// <summary>Queues messages in the customer's outbox and wakes the sender.</summary>
@@ -180,6 +193,9 @@ public sealed class MailModule : IPlatformModule
     {
         s.AddSingleton<ITenantSchema, MailSchema>();
         s.AddScoped<IMailQueue, MailQueue>();
+        s.AddSingleton<IInboundFetcher, RealInboundFetcher>();
+        s.AddSingleton<IJobHandler, MailFetchJob>();
+        s.AddSingleton(new RecurringJob("mail.fetch", MailFetchJob.JobType, TimeSpan.FromMinutes(1)));
         s.AddSingleton<IJobHandler, MailJob>();
         s.AddSingleton(new RecurringJob("mail.flush", MailJob.JobType, TimeSpan.FromMinutes(1)));
     }
@@ -189,6 +205,7 @@ public sealed class MailModule : IPlatformModule
     public void MapEndpoints(IEndpointRouteBuilder r)
     {
         var g = r.MapGroup("/api/platform/mail").RequireAuthorization(p => p.RequireRole("admin"));
+        InboundApi.Map(g);
 
         g.MapGet("/config", async (ISettings s, IDataProtectionProvider dp, CancellationToken ct) =>
         {
