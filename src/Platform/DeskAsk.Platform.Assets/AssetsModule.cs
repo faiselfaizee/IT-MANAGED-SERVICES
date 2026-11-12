@@ -196,6 +196,9 @@ public sealed class AssetsSchema : ITenantSchema
             alter table assets.creds add constraint creds_kind_check check (kind in ('windows','ssh','sshpw','snmp','login'))"),
         new(8, "credential account types", @"
             alter table assets.creds add column if not exists account_type text not null default ''"),
+        new(9, "recycle bin for agents and enrolment tokens", @"
+            alter table assets.agents add column if not exists deleted_at timestamptz;
+            alter table assets.enroll_tokens add column if not exists deleted_at timestamptz"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {

@@ -98,4 +98,27 @@ public class AssetsAccessTests : IClassFixture<WebApplicationFactory<Program>>
         var after = JsonDocument.Parse(await admin.GetStringAsync("/api/assets/discover/creds")).RootElement.GetProperty("items").EnumerateArray().Single(x => x.GetProperty("id").GetInt32() == id);
         Assert.Equal("Domain admin 2", after.GetProperty("name").GetString()); Assert.Equal(@"CRED\adm", after.GetProperty("username").GetString());
     }
+
+    [PgFact]
+    public async Task DeletedEnrolmentTokensWaitInTheRecycleBinUntilRestoredOrDeletedForGood()
+    {
+        var admin = await TestSupport.AdminClient(factory);
+        var made = await admin.PostAsync("/api/assets/enrolments", Json(new { label = "bin test" }));
+        Assert.True(made.IsSuccessStatusCode, await made.Content.ReadAsStringAsync());
+        var id = JsonDocument.Parse(await made.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetInt32();
+        bool Listed(string json, string label) => JsonDocument.Parse(json).RootElement.EnumerateArray().Any(x => x.GetProperty("label").GetString() == label);
+
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/assets/enrolments/{id}/bin", Json(new { }))).StatusCode);
+        Assert.False(Listed(await admin.GetStringAsync("/api/assets/enrolments"), "bin test"));
+        var bin = JsonDocument.Parse(await admin.GetStringAsync("/api/assets/recycle")).RootElement.GetProperty("tokens");
+        Assert.Contains(bin.EnumerateArray(), x => x.GetProperty("id").GetInt32() == id);
+
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/assets/recycle/token/{id}/restore", Json(new { }))).StatusCode);
+        var back = JsonDocument.Parse(await admin.GetStringAsync("/api/assets/enrolments")).RootElement.EnumerateArray().Single(x => x.GetProperty("id").GetInt32() == id);
+        Assert.False(back.GetProperty("revoked").GetBoolean());
+
+        await admin.PostAsync($"/api/assets/enrolments/{id}/bin", Json(new { }));
+        Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync($"/api/assets/recycle/token/{id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.PostAsync($"/api/assets/recycle/token/{id}/restore", Json(new { }))).StatusCode);
+    }
 }

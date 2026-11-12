@@ -8,7 +8,7 @@ export default function Fleet() {
 }
 
 function Agents() {
-  const tokens = useLoad<Rec[]>('/api/assets/enrolments'); const agents = useLoad<Rec[]>('/api/assets/agents'); const [add, setAdd] = useState(false); const [show, setShow] = useState<Rec | null>(null);
+  const tokens = useLoad<Rec[]>('/api/assets/enrolments'); const agents = useLoad<Rec[]>('/api/assets/agents'); const bin = useLoad<Rec>('/api/assets/recycle'); const [add, setAdd] = useState(false); const [show, setShow] = useState<Rec | null>(null);
   const tl = Array.isArray(tokens.data) ? tokens.data : []; const al = Array.isArray(agents.data) ? agents.data : [];
   return <>
     <h2>Agents</h2>
@@ -16,11 +16,12 @@ function Agents() {
     {al.length === 0 ? <Empty>No agents are installed yet.</Empty> : <table><thead><tr><th>Computer</th><th>Customer</th><th>System</th><th>Version</th><th>Last seen</th><th>Address</th><th /></tr></thead><tbody>
       {al.map((a) => <tr key={a.id}><td>{a.assetId ? <a href={`#/assets/${a.assetId}`}>{a.hostname || a.assetName}</a> : a.hostname}{a.locked && <> <Badge>monitor only</Badge></>}</td><td>{a.company}</td><td>{a.platform}</td><td>{a.version} {a.latest && a.version && a.version !== a.latest && <Badge tone="warn">update due</Badge>}</td>
         <td><Badge tone={a.online ? 'ok' : 'bad'}>{a.online ? 'online' : 'offline'}</Badge> {ago(a.lastSeen)}</td><td className="mono">{a.ip}</td>
-        <td><Act label="Remove" danger confirm={`Remove the agent on ${a.hostname}? The asset stays.`} run={async () => { await api(`/api/assets/agents/${a.id}`, { method: 'DELETE' }); agents.reload(); }} /></td></tr>)}</tbody></table>}
+        <td><Act label="Move to bin" confirm={`Move the agent on ${a.hostname} to the recycle bin? It stops reporting, the asset stays, and you can restore it for 30 days.`} run={async () => { await api(`/api/assets/agents/${a.id}/bin`, { method: 'POST', body: {} }); agents.reload(); bin.reload(); }} /> <Act label="Uninstall" danger confirm={`Uninstall the agent from ${a.hostname} and remove it for good? The asset stays.`} run={async () => { await api(`/api/assets/agents/${a.id}`, { method: 'DELETE' }); agents.reload(); }} /></td></tr>)}</tbody></table>}
     <h2>Enrolment tokens</h2>
     {tl.length === 0 ? <Empty>No tokens.</Empty> : <table><thead><tr><th>Label</th><th>Customer</th><th>Token</th><th className="num">Used</th><th>Expires</th><th /></tr></thead><tbody>
       {tl.map((t) => <tr key={t.id}><td>{t.label}{t.monitorOnly && <> <Badge>monitor only</Badge></>}</td><td>{t.company || '(own)'}</td><td className="mono">{t.prefix}…</td><td className="num">{t.uses}</td><td>{t.revoked ? <Badge tone="bad">revoked</Badge> : t.expires ? fmtDate(t.expires) : 'never'}</td>
-        <td>{!t.revoked && <><button onClick={async () => setShow(await api(`/api/assets/enrolments/${t.id}/scripts`))}>Install commands</button> <Act label="Revoke" danger run={async () => { await api(`/api/assets/enrolments/${t.id}`, { method: 'DELETE' }); tokens.reload(); }} /></>}</td></tr>)}</tbody></table>}
+        <td>{!t.revoked && <><button onClick={async () => setShow(await api(`/api/assets/enrolments/${t.id}/scripts`))}>Install commands</button> <Act label="Revoke" danger run={async () => { await api(`/api/assets/enrolments/${t.id}`, { method: 'DELETE' }); tokens.reload(); }} /> </>}<Act label="Delete" confirm={`Move the token "${t.label || t.prefix}" to the recycle bin? It stops working at once; you can restore it for 30 days.`} run={async () => { await api(`/api/assets/enrolments/${t.id}/bin`, { method: 'POST', body: {} }); tokens.reload(); bin.reload(); }} /></td></tr>)}</tbody></table>}
+    <RecycleBin bin={bin} onRestore={() => { agents.reload(); tokens.reload(); }} />
     {add && <TokenForm path="/api/assets/enrolments" title="New enrolment token" monitor onClose={(r) => { setAdd(false); if (r) { setShow(r); tokens.reload(); } }} />}
     {show && <Modal title="Install commands" onClose={() => setShow(null)}><Commands c={show.commands} /><div className="actions"><button onClick={() => setShow(null)}>Close</button></div></Modal>}
   </>;
@@ -75,4 +76,17 @@ function Manage({ c, onClose }: { c: Rec; onClose: () => void }) {
     <h3>Activity</h3>
     <Card>{log.data && ((log.data.items as Rec[]).length === 0 ? <Empty>No activity yet.</Empty> : <ul style={{ margin: 0, paddingLeft: 18, maxHeight: 180, overflow: 'auto' }}>{(log.data.items as Rec[]).map((l) => <li key={l.id}><span className="muted mono">{fmtDate(l.at)}</span> {l.level !== 'info' && <Badge tone={l.level === 'error' ? 'bad' : 'warn'}>{l.level}</Badge>} {l.text}</li>)}</ul>)}</Card>
     <div className="actions"><button onClick={onClose}>Close</button></div></div></Modal>;
+}
+
+function RecycleBin({ bin, onRestore }: { bin: { data: Rec | null; reload: () => void }; onRestore: () => void }) {
+  const ag = (bin.data?.agents ?? []) as Rec[]; const tk = (bin.data?.tokens ?? []) as Rec[];
+  if (ag.length + tk.length === 0) return null;
+  const row = (kind: string, id: string | number, what: string, when: string) => <tr key={kind + id}><td>{what}</td><td>{kind === 'agent' ? 'Agent' : 'Enrolment token'}</td><td>{fmtDate(when)}</td>
+    <td><Act label="Restore" run={async () => { await api(`/api/assets/recycle/${kind}/${id}/restore`, { method: 'POST', body: {} }); bin.reload(); onRestore(); }} /> <Act label="Delete for good" danger confirm="Delete this for good? It cannot be restored." run={async () => { await api(`/api/assets/recycle/${kind}/${id}`, { method: 'DELETE' }); bin.reload(); }} /></td></tr>;
+  return <>
+    <h2>Recycle bin</h2>
+    <p className="muted">Removed items are kept for 30 days, then deleted for good. A restored agent starts reporting again if its software is still on the computer.</p>
+    <table><thead><tr><th>Item</th><th>Kind</th><th>Removed</th><th /></tr></thead><tbody>
+      {ag.map((a) => row('agent', a.id, a.hostname || a.id, a.deletedAt))}{tk.map((t) => row('token', t.id, `${t.label || 'Token'} (${t.prefix}…)`, t.deletedAt))}</tbody></table>
+  </>;
 }
