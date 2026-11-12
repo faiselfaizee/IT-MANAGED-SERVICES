@@ -2,12 +2,20 @@ import { useState } from 'react';
 import { api, go, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Empty, Err, Field, Loading, Modal, fmtDate, useSubmit } from '../ui';
 
-export const CHANGE_STATUS: Record<string, string> = { draft: 'Draft', review: 'Awaiting approval', approved: 'Approved', rejected: 'Rejected', scheduled: 'Scheduled', implementing: 'In progress', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled' };
+export const CHANGE_STATUS: Record<string, string> = { draft: 'Draft', review: 'Awaiting approval', approved: 'Approved', rejected: 'Rejected', scheduled: 'Scheduled', implementing: 'In progress', completed: 'Completed', failed: 'Failed', closed: 'Closed', cancelled: 'Cancelled' };
 export const CHANGE_TYPE: Record<string, string> = { normal: 'Normal', standard: 'Standard (pre-approved)', emergency: 'Emergency' };
 const LEVEL: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High' };
 const tone = (s: string): 'ok' | 'warn' | 'bad' | undefined => (s === 'completed' || s === 'approved' ? 'ok' : s === 'review' || s === 'scheduled' || s === 'implementing' ? 'warn' : s === 'rejected' || s === 'failed' ? 'bad' : undefined);
 export const ChangeBadge = ({ s }: { s: string }) => <Badge tone={tone(s)}>{CHANGE_STATUS[s] ?? s}</Badge>;
 const local = (s?: string | null) => (s ? new Date(s).toISOString().slice(0, 16) : '');
+export const STAGES: [string, string][] = [['submission', 'Submission'], ['planning', 'Planning'], ['approval', 'Approval'], ['implementation', 'Implementation'], ['review', 'Review'], ['close', 'Close']];
+export const CLOSURE: Record<string, string> = { successful: 'Successful', successful_with_issues: 'Successful with issues', unsuccessful: 'Unsuccessful', rolled_back: 'Rolled back' };
+/** Which of the six stages a change is in; a draft has been created (submission) and is being planned. */
+const stageIndex = (stage: string) => Math.max(1, STAGES.findIndex(([k]) => k === stage));
+function Stepper({ stage, status }: { stage: string; status: string }) {
+  const at = stageIndex(stage); const stopped = status === 'cancelled' || status === 'rejected';
+  return <ol className="stages" aria-label="Change stages">{STAGES.map(([k, n], i) => <li key={k} className={i < at || (status === 'closed') ? 'done' : i === at ? (stopped ? 'stop' : 'now') : ''} aria-current={i === at ? 'step' : undefined}>{n}</li>)}</ol>;
+}
 const idsFrom = (t: string) => t.split(/[\s,]+/).map((x) => Number(x.replace(/\D/g, ''))).filter((n) => n > 0);
 
 export function ChangeList({ staff }: { staff: boolean }) {
@@ -72,12 +80,30 @@ function Ask({ title, label, need, onClose, onSend }: { title: string; label: st
   </div></Modal>;
 }
 
+function Tasks({ id, stage, rows, staff, locked, reload, people, title, hint }: { id: string; stage: 'planning' | 'implementation'; rows: Rec[]; staff: boolean; locked: boolean; reload: () => void; people: Rec[]; title: string; hint: string }) {
+  const mine = rows.filter((x) => x.stage === stage); const [text, setText] = useState(''); const [who, setWho] = useState(''); const f = useSubmit(() => undefined);
+  const call = (path: string, method: string, body?: unknown) => f.submit(async () => { await api(`/api/servicedesk/changes/${id}/tasks${path}`, { method, body: body ?? {} }); reload(); });
+  return <Card title={title}>
+    {mine.length === 0 ? <Empty>{hint}</Empty> : <table><tbody>{mine.map((x) => <tr key={x.id}>
+      <td style={{ width: 28 }}><input type="checkbox" checked={x.done} disabled={!staff || locked} aria-label={'Done: ' + x.title} onChange={(e) => call('/' + x.id, 'PATCH', { done: e.target.checked })} /></td>
+      <td style={x.done ? { textDecoration: 'line-through', opacity: 0.7 } : undefined}>{x.title}</td><td className="muted">{x.assignee}</td>
+      <td style={{ textAlign: 'right' }}>{staff && !locked && <button onClick={() => call('/' + x.id, 'DELETE')} aria-label={'Remove ' + x.title}>Remove</button>}</td></tr>)}</tbody></table>}
+    {staff && !locked && <div className="row" style={{ marginTop: 10 }}>
+      <Field label="New task"><input value={text} onChange={(e) => setText(e.target.value)} maxLength={300} /></Field>
+      {stage === 'implementation' && <Field label="Assigned to"><select value={who} onChange={(e) => setWho(e.target.value)}><option value="">Nobody</option>{people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>}
+      <button className="primary" disabled={f.busy || !text.trim()} onClick={() => call('', 'POST', { title: text, stage, assigneeId: who || null }).then(() => { setText(''); setWho(''); })}>Add task</button>
+    </div>}
+    <Err text={f.err} />
+  </Card>;
+}
+
 export function ChangeDetail({ id, staff, admin, myId }: { id: string; staff: boolean; admin: boolean; myId?: string }) {
   const { data, error, loading, reload } = useLoad<Rec>('/api/servicedesk/changes/' + id);
   const [ask, setAsk] = useState<'' | 'reject' | 'done' | 'failed'>(''); const [note, setNote] = useState(''); const [win, setWin] = useState<Rec | null>(null); const [links, setLinks] = useState<string | null>(null);
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg] = useState(''); const [plan, setPlan] = useState<Rec | null>(null); const [review, setReview] = useState<string | null>(null); const [closure, setClosure] = useState('');
+  const people = useLoad<Rec[]>(staff ? '/api/servicedesk/staff' : null);
   if (!data) return <Loading loading={loading} error={error} />;
-  const c = data.change as Rec; const votes = (data.votes ?? []) as Rec[]; const notes = (data.notes ?? []) as Rec[]; const tickets = (data.tickets ?? []) as Rec[]; const problems = (data.problems ?? []) as Rec[];
+  const c = data.change as Rec; const votes = (data.votes ?? []) as Rec[]; const notes = (data.notes ?? []) as Rec[]; const tickets = (data.tickets ?? []) as Rec[]; const problems = (data.problems ?? []) as Rec[]; const tasks = (data.tasks ?? []) as Rec[];
   const post = async (path: string, body?: unknown) => { setMsg(''); try { await api(`/api/servicedesk/changes/${id}/${path}`, { body: body ?? {} }); reload(); } catch (e) { setMsg((e as Error).message); throw e; } };
   const patch = async (body: Rec) => { setMsg(''); try { await api('/api/servicedesk/changes/' + id, { method: 'PATCH', body }); reload(); } catch (e) { setMsg((e as Error).message); } };
   const planning = ['draft', 'rejected', 'review'].includes(c.status); const mine = votes.find((x) => x.userId === myId); const approvals = votes.filter((x) => x.decision === 'approve').length;
@@ -86,6 +112,7 @@ export function ChangeDetail({ id, staff, admin, myId }: { id: string; staff: bo
   return <>
     <p><a href="#/servicedesk/changes">← All changes</a></p>
     <h1>{c.number} · {c.title} <ChangeBadge s={c.status} /></h1>
+    <Stepper stage={c.stage ?? 'planning'} status={c.status} />
     <Err text={msg} />
     <Card><Dl rows={[['Type', CHANGE_TYPE[c.type]], ['Risk', LEVEL[c.risk]], ['Impact', LEVEL[c.impact]], ['Company', c.companyName], ['Owner', c.ownerName], ['Window', c.startAt ? `${fmtDate(c.startAt)} to ${fmtDate(c.endAt)}` : ''], ['Approvals', c.type === 'standard' ? 'Pre-approved' : `${approvals} of ${c.quorum} needed`]]} /></Card>
     {staff && <div className="actions" style={{ justifyContent: 'flex-start', margin: '12px 0' }}>
@@ -96,18 +123,31 @@ export function ChangeDetail({ id, staff, admin, myId }: { id: string; staff: bo
       {['approved', 'scheduled'].includes(c.status) && <Act label="Start work" primary run={() => post('status', { status: 'implementing' })} />}
       {c.status === 'implementing' && <button className="primary" onClick={() => setAsk('done')}>Mark completed</button>}
       {c.status === 'implementing' && <button onClick={() => setAsk('failed')}>Mark failed</button>}
+      {['completed', 'failed'].includes(c.status) && <Act label="Close change" primary disabled={!closure || !(review ?? c.reviewNotes ?? '').trim()} run={() => post('status', { status: 'closed', closureCode: closure, reviewNotes: (review ?? c.reviewNotes ?? '').trim() })} />}
       {['draft', 'review', 'rejected', 'approved', 'scheduled'].includes(c.status) && <Act label="Cancel change" confirm="Cancel this change?" run={() => post('status', { status: 'cancelled' })} />}
     </div>}
     {c.status === 'approved' && staff && (!c.startAt || !c.endAt) && <p className="muted">Set the change window below before scheduling.</p>}
     <Card title="Plan">
-      <Dl rows={[['Why', c.reason], ['What changes', c.description], ['Implementation', c.plan], ['Rollback', c.rollback], ['Outcome', c.outcome]]} />
+      {staff && planning ? <div className="form">
+        {([['reason', 'Why is this needed?'], ['plan', 'Implementation plan'], ['rollback', 'Rollback plan'], ['impactAnalysis', 'Impact analysis (who and what is affected)']] as const).map(([k, n]) => <Field key={k} label={n}><textarea rows={3} value={(plan ?? c)[k] ?? ''} onChange={(e) => setPlan({ ...(plan ?? {}), [k]: e.target.value })} /></Field>)}
+        <div className="actions"><button disabled={!plan} onClick={() => patch(plan!).then(() => setPlan(null))}>Save plan</button></div></div>
+        : <Dl rows={[['Why', c.reason], ['What changes', c.description], ['Implementation', c.plan], ['Rollback', c.rollback], ['Impact analysis', c.impactAnalysis], ['Outcome', c.outcome]]} />}
       {staff && !['implementing', 'completed', 'failed', 'cancelled'].includes(c.status) && <div className="row" style={{ marginTop: 10 }}>
         <Field label="Window starts"><input type="datetime-local" value={w.startAt} onChange={(e) => setWin({ ...w, startAt: e.target.value })} /></Field>
         <Field label="Window ends"><input type="datetime-local" value={w.endAt} onChange={(e) => setWin({ ...w, endAt: e.target.value })} /></Field>
         <button disabled={!win} onClick={() => patch({ startAt: w.startAt ? new Date(w.startAt).toISOString() : null, endAt: w.endAt ? new Date(w.endAt).toISOString() : null }).then(() => setWin(null))}>Save window</button>
       </div>}
-      {staff && planning && <p className="muted" style={{ marginTop: 8 }}>To change the plan, create a new draft or ask an administrator.</p>}
     </Card>
+    {(c.stage === 'planning' || tasks.some((x) => x.stage === 'planning')) && <Tasks id={id} stage="planning" rows={tasks} staff={staff} locked={c.stage !== 'planning'} reload={reload} people={[]} title="Planning checklist" hint="Add the things to check before asking for approval, such as backup taken or users told." />}
+    {['approved', 'scheduled', 'implementing', 'completed', 'failed', 'closed'].includes(c.status) && <Tasks id={id} stage="implementation" rows={tasks} staff={staff} locked={['completed', 'failed', 'closed'].includes(c.status)} reload={reload} people={Array.isArray(people.data) ? people.data : []} title="Implementation tasks" hint="Break the work into tasks. All of them must be done before the change can be marked completed." />}
+    {['completed', 'failed', 'closed'].includes(c.status) && <Card title="Review and close">
+      {staff && c.status !== 'closed' ? <div className="form">
+        <Field label="Review notes: what went well, what to do differently"><textarea rows={4} value={review ?? c.reviewNotes ?? ''} onChange={(e) => setReview(e.target.value)} /></Field>
+        <div className="row"><Field label="How did the change end?"><select value={closure} onChange={(e) => setClosure(e.target.value)}><option value="">Choose…</option>{Object.entries(CLOSURE).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
+          <button disabled={review === null} onClick={() => patch({ reviewNotes: review }).then(() => setReview(null))}>Save review notes</button></div>
+        <p className="muted">Use Close change above when the notes are written and the ending is chosen.</p></div>
+        : <Dl rows={[['Closed as', CLOSURE[c.closureCode] ?? c.closureCode], ['Review notes', c.reviewNotes]]} />}
+    </Card>}
     <Card title="Approvals">{votes.length === 0 ? <Empty>No decisions yet.</Empty> : <table><tbody>{votes.map((x) => <tr key={x.userId}><td>{x.name}</td><td><Badge tone={x.decision === 'approve' ? 'ok' : 'bad'}>{x.decision === 'approve' ? 'Approved' : 'Rejected'}</Badge></td><td>{x.comment}</td><td className="muted">{fmtDate(x.at)}</td></tr>)}</tbody></table>}</Card>
     <Card title="Linked">
       <p>Tickets: {tickets.length === 0 ? <span className="muted">none</span> : tickets.map((t) => <a key={t.id} href={'#/servicedesk/' + t.id} style={{ marginRight: 10 }}>{t.number}</a>)}</p>

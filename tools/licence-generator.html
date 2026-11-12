@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeskAsk licence generator</title>
+<style>
+  :root { --bg:#f3f5f9; --card:#fff; --ink:#14202e; --muted:#56677c; --line:#d3dce8; --accent:#0a8f84; --bad:#b3261e; --ok:#0d7a45; --field:#fff; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0e1621; --card:#162231; --ink:#e6edf6; --muted:#9aaabd; --line:#2b3b50; --accent:#4fd9cb; --bad:#ff8a8a; --ok:#5eeaa0; --field:#0f1a27; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 24px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 0 0 10px; }
+  p { margin: 6px 0; } .muted { color: var(--muted); font-size: 13.5px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin: 14px 0; }
+  label { display: block; margin: 10px 0 4px; font-weight: 600; font-size: 13.5px; }
+  input[type=text], input[type=number], textarea, select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--field); color: var(--ink); font: inherit; }
+  textarea { font: 12.5px/1.4 ui-monospace, Consolas, monospace; min-height: 96px; word-break: break-all; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .mod { display: grid; grid-template-columns: 170px 1fr; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
+  .mod:first-of-type { border-top: 0; }
+  .mod label { margin: 0; font-weight: 500; display: flex; gap: 8px; align-items: center; }
+  .mod input[type=text] { padding: 5px 8px; }
+  button { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { button.primary { color: #04201d; } }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .msg { margin-top: 10px; font-size: 14px; } .bad { color: var(--bad); } .ok { color: var(--ok); }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 14px; } td { padding: 4px 8px; border-top: 1px solid var(--line); } td:first-child { color: var(--muted); width: 140px; }
+  code { font: 12.5px ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <h1>DeskAsk licence generator</h1>
+  <p class="muted">Everything happens inside this page on your computer. Nothing is sent anywhere, and the page can be used offline. Keep your private key file safe: whoever has it can issue licences.</p>
+
+  <section>
+    <h2>1. Your vendor key</h2>
+    <p class="muted">Use the key you already have, or create a pair once. The public key goes into every installation (<code>Licensing:VendorPublicKeyPem</code> in deskask.json). If you change the key, licences signed with the old one stop working.</p>
+    <label for="pem">Private key (the text of vendor-private.pem)</label>
+    <textarea id="pem" spellcheck="false" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+    <div class="actions">
+      <input id="pemfile" type="file" accept=".pem,.txt" style="display:none">
+      <button id="pick">Open key file…</button>
+      <button id="newkey">Create a new key pair</button>
+    </div>
+    <div id="keymsg" class="msg"></div>
+    <div id="pubwrap" hidden>
+      <label for="pub">Public key (put this into every installation)</label>
+      <textarea id="pub" spellcheck="false" readonly></textarea>
+      <div class="actions"><button id="dlpub">Save vendor-public.pem</button><button id="dlpriv">Save vendor-private.pem</button></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. The licence</h2>
+    <div class="row">
+      <div><label for="tenant">Customer (tenant id, or * for any)</label><input id="tenant" type="text" value="*"></div>
+      <div><label for="plan">Plan name</label><input id="plan" type="text" value="standard"></div>
+      <div><label for="days">Valid for (days)</label><input id="days" type="number" min="1" value="365"></div>
+      <div><label for="grace">Grace after expiry (days)</label><input id="grace" type="number" min="0" value="14"></div>
+    </div>
+    <label>Modules</label>
+    <div id="mods"></div>
+    <p class="muted">Limits are optional, written like <code>agents=10, customers=50</code>.</p>
+    <div class="actions"><button class="primary" id="issue">Create licence</button></div>
+    <div id="issuemsg" class="msg"></div>
+    <div id="outwrap" hidden>
+      <label for="out">Licence (paste this into Licence in the web app, or save it as a file)</label>
+      <textarea id="out" spellcheck="false" readonly></textarea>
+      <div class="actions"><button id="copy">Copy</button><button id="dllic">Save licence.txt</button></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Check a licence</h2>
+    <p class="muted">Paste any licence to see what it says. This reads it; it does not check the signature.</p>
+    <textarea id="chk" spellcheck="false" placeholder="Paste a licence here"></textarea>
+    <div id="chkout"></div>
+  </section>
+</main>
+<script>
+'use strict';
+const MODULES = [['servicedesk', 'Service Desk'], ['assets', 'Assets'], ['monitoring', 'Monitoring'], ['adsuite', 'AD Manager'], ['vault', 'Vault'], ['backup', 'Backup']];
+const $ = (id) => document.getElementById(id);
+const enc = new TextEncoder();
+
+function b64u(buf) { const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf); let s = ''; b.forEach((x) => { s += String.fromCharCode(x); }); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function fromB64u(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; const r = atob(s); return Uint8Array.from(r, (c) => c.charCodeAt(0)); }
+function pemToDer(pem) { return Uint8Array.from(atob(pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '')), (c) => c.charCodeAt(0)); }
+function derToPem(der, label) { const b = btoa(String.fromCharCode(...new Uint8Array(der))); return `-----BEGIN ${label}-----\n${b.match(/.{1,64}/g).join('\n')}\n-----END ${label}-----\n`; }
+const ALG = { name: 'ECDSA', namedCurve: 'P-256' };
+
+/** The same token the server and LicenseTool make: header.payload.signature, ES256, signature as raw r||s. */
+async function issueToken(privatePem, payload) {
+  const priv = await crypto.subtle.importKey('pkcs8', pemToDer(privatePem), ALG, true, ['sign']);
+  const jwk = await crypto.subtle.exportKey('jwk', priv);
+  const pub = await crypto.subtle.importKey('jwk', { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y }, ALG, true, ['verify']);
+  const spki = await crypto.subtle.exportKey('spki', pub);
+  const kid = [...new Uint8Array(await crypto.subtle.digest('SHA-256', spki))].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+  const header = b64u(enc.encode(JSON.stringify({ alg: 'ES256', typ: 'dk-license', kid })));
+  const body = b64u(enc.encode(JSON.stringify(payload)));
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, priv, enc.encode(header + '.' + body));
+  return { token: header + '.' + body + '.' + b64u(sig), kid, publicPem: derToPem(spki, 'PUBLIC KEY') };
+}
+function parseLimits(text) {
+  const out = {}; for (const part of text.split(/[,+;\s]+/).filter(Boolean)) {
+    const m = part.match(/^([A-Za-z][\w-]*)=(\d+)$/); if (!m) throw new Error(`Limit "${part}" must look like agents=10.`); out[m[1]] = Number(m[2]);
+  } return Object.keys(out).length ? out : null;
+}
+function download(name, text) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
+function say(id, text, cls) { const e = $(id); e.textContent = text; e.className = 'msg ' + (cls || ''); }
+
+// modules
+$('mods').innerHTML = MODULES.map(([k, n]) => `<div class="mod"><label><input type="checkbox" data-m="${k}" ${k === 'servicedesk' || k === 'assets' ? 'checked' : ''}> ${n}</label><input type="text" data-l="${k}" placeholder="limits, for example agents=10"></div>`).join('');
+
+// key handling
+$('pick').onclick = () => $('pemfile').click();
+$('pemfile').onchange = async (e) => { const f = e.target.files[0]; if (f) { $('pem').value = (await f.text()).trim(); await showPub(); } };
+$('pem').oninput = () => showPub();
+async function showPub() {
+  const pem = $('pem').value.trim(); $('pubwrap').hidden = true; if (!pem) { say('keymsg', ''); return; }
+  try {
+    const r = await issueToken(pem, { v: 1 }); $('pub').value = r.publicPem; $('pubwrap').hidden = false; say('keymsg', `Key accepted. Key id ${r.kid}.`, 'ok');
+  } catch { say('keymsg', 'That is not a usable private key. It must be an ECDSA P-256 key in PKCS#8 form (as made by this page or by the LicenseTool).', 'bad'); }
+}
+$('newkey').onclick = async () => {
+  if ($('pem').value.trim() && !confirm('This replaces the key in the box. Licences signed with the old key will not match the new public key. Continue?')) return;
+  const k = await crypto.subtle.generateKey(ALG, true, ['sign', 'verify']);
+  $('pem').value = derToPem(await crypto.subtle.exportKey('pkcs8', k.privateKey), 'PRIVATE KEY').trim(); await showPub();
+  say('keymsg', 'New key pair created. Save both files now. The private key cannot be recovered if you lose it.', 'ok');
+};
+$('dlpub').onclick = () => download('vendor-public.pem', $('pub').value);
+$('dlpriv').onclick = () => download('vendor-private.pem', $('pem').value.trim() + '\n');
+
+// licence
+$('issue').onclick = async () => {
+  try {
+    const pem = $('pem').value.trim(); if (!pem) throw new Error('Add your private key first (step 1).');
+    const tenant = $('tenant').value.trim(); if (!tenant) throw new Error('Enter the customer id, or * for any customer.');
+    const days = Number($('days').value), grace = Number($('grace').value);
+    if (!Number.isInteger(days) || days < 1) throw new Error('Valid for must be a whole number of days, at least 1.');
+    if (!Number.isInteger(grace) || grace < 0) throw new Error('Grace must be a whole number of days, 0 or more.');
+    const modules = {}; document.querySelectorAll('[data-m]:checked').forEach((c) => { const k = c.dataset.m; modules[k] = { limits: parseLimits(document.querySelector(`[data-l="${k}"]`).value) }; });
+    if (!Object.keys(modules).length) throw new Error('Choose at least one module.');
+    const now = Math.floor(Date.now() / 1000);
+    const payload = { v: 1, tenant, plan: $('plan').value.trim() || 'standard', issued: now, notBefore: now, expires: now + days * 86400, graceDays: grace, modules };
+    const r = await issueToken(pem, payload); $('out').value = r.token; $('outwrap').hidden = false;
+    say('issuemsg', `Licence for "${tenant}" created, valid until ${new Date((now + days * 86400) * 1000).toLocaleDateString()}.`, 'ok');
+  } catch (e) { $('outwrap').hidden = true; say('issuemsg', e.message || String(e), 'bad'); }
+};
+$('copy').onclick = async () => { try { await navigator.clipboard.writeText($('out').value); say('issuemsg', 'Copied.', 'ok'); } catch { $('out').select(); say('issuemsg', 'Select the text and copy it with Ctrl+C.'); } };
+$('dllic').onclick = () => download('licence.txt', $('out').value);
+
+// check
+$('chk').oninput = () => {
+  const box = $('chkout'); box.innerHTML = ''; const t = $('chk').value.trim(); if (!t) return;
+  try {
+    const p = JSON.parse(new TextDecoder().decode(fromB64u(t.split('.')[1]))); const d = (s) => new Date(s * 1000).toLocaleString();
+    const rows = [['Customer', p.tenant], ['Plan', p.plan], ['Issued', d(p.issued)], ['Valid from', d(p.notBefore)], ['Expires', d(p.expires)], ['Grace', p.graceDays + ' days'],
+      ['Modules', Object.entries(p.modules).map(([k, v]) => k + (v.limits ? ' (' + Object.entries(v.limits).map(([a, b]) => a + '=' + b).join(', ') + ')' : '')).join(', ')]];
+    const tb = document.createElement('table'); rows.forEach(([a, b]) => { const tr = tb.insertRow(); tr.insertCell().textContent = a; tr.insertCell().textContent = b; }); box.appendChild(tb);
+  } catch { box.innerHTML = '<p class="msg bad">That does not look like a licence.</p>'; }
+};
+</script>
+</body>
+</html>

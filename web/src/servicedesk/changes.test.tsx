@@ -51,3 +51,14 @@ test('a missing licence names the module that is missing', async () => {
   location.hash = '#/servicedesk'; render(<ServiceDeskApp />);
   await waitFor(() => expect(screen.getAllByText(/Service Desk is not part of this licence/).length).toBeGreaterThan(0));
 });
+
+test('a finished change shows the stage bar, its tasks and asks how it ended before closing', async () => {
+  mockApi({ '/api/servicedesk/me': staffMe, '/api/servicedesk/staff': [{ id: 's1', name: 'Sam' }], '/api/servicedesk/changes/7': { change: change({ status: 'completed', stage: 'review', outcome: 'Done at 02:00', reviewNotes: '' }), votes: [], notes: [], tickets: [], problems: [],
+    tasks: [{ id: 1, stage: 'implementation', title: 'Install update', assignee: 'Sam', done: true }] } });
+  location.hash = '#/servicedesk/changes/7'; render(<ServiceDeskApp />);
+  await waitFor(() => expect(screen.getByText(/CHG-000007/)).toBeTruthy());
+  expect(screen.getByLabelText('Change stages').querySelectorAll('li').length).toBe(6);
+  expect(screen.getByText('Install update')).toBeTruthy();
+  expect(screen.getByText('How did the change end?')).toBeTruthy();
+  expect((screen.getByText('Close change') as HTMLButtonElement).disabled).toBe(true);
+});
