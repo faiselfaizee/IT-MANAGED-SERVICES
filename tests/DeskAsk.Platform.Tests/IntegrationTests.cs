@@ -185,6 +185,34 @@ public class IntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/api/servicedesk/tickets/999999/assist")).StatusCode);
     }
 
+    [PgFact]
+    public async Task TheMonthlyReportCountsTicketsAndIsLimitedToStaffAndCompanyAdmins()
+    {
+        var admin = await Admin();
+        await Sql("delete from identity.users where \"Email\" like '%@int.test'");
+        foreach (var (e, role) in new[] { ("cust2", "customer"), ("view2", "viewer") })
+            Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = e + "@int.test", name = e, role, password = Pw }))).StatusCode);
+        static async Task<long> Make(HttpClient c, object b) => (await J(await c.PostAsync("/api/servicedesk/tickets", Json(b)))).GetProperty("id").GetInt64();
+        var a = await Make(admin, new { subject = "Mail not syncing", category = "Email", priority = "high", requesterName = "Sam" });
+        await Make(admin, new { subject = "Printer jam", category = "Hardware", requesterName = "Sam" });
+        await Make(admin, new { subject = "Need a monitor", category = "Hardware", requesterName = "Pat" });
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/servicedesk/tickets/{a}/comments", Json(new { body = "On it" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/servicedesk/tickets/{a}/status", Json(new { status = "resolved" }))).StatusCode);
+        await Sql("update servicedesk.tickets set created_at = created_at - interval '1 month' where subject = 'Need a monitor'");   // last month
+
+        var thisMonth = DateTime.UtcNow.ToString("yyyy-MM");
+        var rep = await J(await admin.GetAsync("/api/servicedesk/reports/monthly?month=" + thisMonth));
+        var t = rep.GetProperty("totals");
+        Assert.Equal(2, t.GetProperty("opened").GetInt32()); Assert.Equal(1, t.GetProperty("resolved").GetInt32()); Assert.Equal(2, t.GetProperty("backlogEnd").GetInt32());
+        Assert.Equal(2, rep.GetProperty("tickets").GetArrayLength());
+        var cat = rep.GetProperty("byCategory").EnumerateArray().First(x => x.GetProperty("name").GetString() == "Hardware");
+        Assert.Equal(1, cat.GetProperty("count").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, (await (await TestSupport.ClientFor(factory, "view2@int.test", Pw)).GetAsync("/api/servicedesk/reports/monthly?month=" + thisMonth)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await (await TestSupport.ClientFor(factory, "cust2@int.test", Pw)).GetAsync("/api/servicedesk/reports/monthly?month=" + thisMonth)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/servicedesk/reports/monthly?month=2026-13")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/servicedesk/reports/monthly?month=" + thisMonth + "&companyId=99999")).StatusCode);
+    }
+
     static Task Until(Func<bool> ok) => Until(() => Task.FromResult(ok()));
     static async Task Until(Func<Task<bool>> ok)
     {

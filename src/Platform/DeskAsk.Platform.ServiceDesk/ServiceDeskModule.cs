@@ -43,6 +43,7 @@ public sealed class ServiceDeskModule : IPlatformModule
         ChangesApi.Map(r, Key);
         IntegrationApi.Map(r, Key);
         AssistApi.Map(r, Key);
+        ReportsApi.Map(r, Key);
     }
 
     // ---------------------------------------------------------------- shared helpers

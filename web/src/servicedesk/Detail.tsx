@@ -47,6 +47,7 @@ export default function Detail({ id }: { id: string }) {
               </> : null}
           </div>
         </Card>
+        {can.edit && <Assist id={id} t={t} patch={patch} fill={setBody} />}
         <Card title="Details">
           {can.edit ? <div className="form">
             <label><span>Priority</span><select value={t.priority} onChange={(e) => patch({ priority: e.target.value })}>{Object.entries(PRIORITY).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></label>
@@ -72,4 +73,20 @@ export default function Detail({ id }: { id: string }) {
     {error && <Err text={error} />}
     <p><button onClick={() => go('servicedesk')}>Back to tickets</button></p>
   </>;
+}
+
+/** Suggestions for the support team: similar earlier tickets, a category and priority, and a reply to start from. */
+function Assist({ id, t, patch, fill }: { id: string; t: Rec; patch: (b: Rec) => Promise<unknown>; fill: (text: string) => void }) {
+  const [on, setOn] = useState(false); const a = useLoad<Rec>(on ? `/api/servicedesk/tickets/${id}/assist` : null);
+  return <Card title="Suggestions">
+    {!on ? <button onClick={() => setOn(true)}>Find similar tickets</button> : <>
+      <Loading loading={a.loading && !a.data} error={a.error} />
+      {a.data && <>
+        {a.data.suggestedCategory && <p>Category looks like <b>{a.data.suggestedCategory}</b> <Act label="Use it" run={() => patch({ category: a.data!.suggestedCategory })} /></p>}
+        {a.data.suggestedPriority && <p>Priority looks like <b>{PRIORITY[a.data.suggestedPriority] ?? a.data.suggestedPriority}</b> (now {PRIORITY[t.priority] ?? t.priority}) <Act label="Use it" run={() => patch({ priority: a.data!.suggestedPriority })} /></p>}
+        {(a.data.similar as Rec[]).length === 0 ? <p className="muted">No similar tickets yet.</p> : <ul>{(a.data.similar as Rec[]).map((s) => <li key={s.id}><a href={`#/servicedesk/${s.id}`}>{s.number}</a> {s.subject} <span className="muted">· {s.status}</span>{s.answer && <div className="muted">Answered: {s.answer}</div>}</li>)}</ul>}
+        <button onClick={() => fill(a.data!.replyDraft)}>Start a reply from this</button>
+      </>}
+    </>}
+  </Card>;
 }

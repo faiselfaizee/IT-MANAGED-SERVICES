@@ -167,3 +167,12 @@ pre.term { background: rgba(3, 8, 16, .82); color: #d7e6f5; padding: 12px 14px; 
 .timeline .who { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
 .timeline .said { white-space: pre-wrap; overflow-wrap: anywhere; }
 .files { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }
+
+/* monthly report */
+.report .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin: 12px 0; }
+.report .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+@media print {
+  .no-print, nav, header, .sub { display: none !important; }
+  .report { color: #000; }
+  .report .tile, .report .card { break-inside: avoid; }
+}
