@@ -87,6 +87,20 @@ public sealed class ServiceDeskSchema : ITenantSchema
               id bigserial primary key, kind text not null check (kind in ('change','problem')), item_id bigint not null,
               at timestamptz not null default now(), author_name text not null default '', body text not null);
             create index if not exists item_notes_item on servicedesk.item_notes (kind, item_id, id)"),
+        new(3, "api keys and webhooks", @"
+            create table if not exists servicedesk.api_keys (
+              id serial primary key, name text not null, prefix text not null, hash text not null unique, scope text not null check (scope in ('read','write')),
+              created_at timestamptz not null default now(), created_by text not null default '', last_used_at timestamptz, revoked_at timestamptz);
+            create table if not exists servicedesk.webhooks (
+              id serial primary key, url text not null, secret text not null, events text not null default '*', active boolean not null default true,
+              created_at timestamptz not null default now(), created_by text not null default '');
+            create table if not exists servicedesk.webhook_deliveries (
+              id bigserial primary key, hook_id int not null references servicedesk.webhooks(id) on delete cascade, event_id bigint not null, kind text not null, payload text not null,
+              status text not null default 'pending' check (status in ('pending','sent','failed')), attempts int not null default 0, http_code int, error text not null default '',
+              created_at timestamptz not null default now(), sent_at timestamptz, next_at timestamptz not null default now());
+            create index if not exists webhook_deliveries_due on servicedesk.webhook_deliveries (status, next_at);
+            create index if not exists webhook_deliveries_hook on servicedesk.webhook_deliveries (hook_id, id desc);
+            create table if not exists servicedesk.webhook_state (id int primary key check (id = 1), last_event bigint not null)"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
         SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);

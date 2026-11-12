@@ -31,6 +31,8 @@ public sealed class ServiceDeskModule : IPlatformModule
         s.AddSingleton<ITenantSchema, ServiceDeskSchema>();
         s.AddScoped<IInboundMailHandler, InboundHandler>();
         s.AddSingleton<IJobHandler, SlaJob>();
+        s.AddSingleton<IJobHandler, WebhookJob>();
+        s.AddSingleton(new RecurringJob("servicedesk.webhooks", WebhookJob.JobType, TimeSpan.FromMinutes(1)));
         s.AddSingleton(new RecurringJob("servicedesk.sla", SlaJob.JobType, TimeSpan.FromMinutes(1)));
     }
 
@@ -39,6 +41,7 @@ public sealed class ServiceDeskModule : IPlatformModule
         TicketsApi.Map(r, Key);
         SettingsApi.Map(r, Key);
         ChangesApi.Map(r, Key);
+        IntegrationApi.Map(r, Key);
     }
 
     // ---------------------------------------------------------------- shared helpers
