@@ -11,6 +11,7 @@ using Xunit;
 
 sealed class FakeFetcher : IInboundFetcher
 {
+    public static readonly FakeFetcher Shared = new();
     public readonly List<InboundMail> Pending = new();
     public async Task FetchAsync(InboundConfig inbound, MailConfig mail, Func<InboundMail, Task<bool>> store, CancellationToken ct)
     {
@@ -25,11 +26,10 @@ public class InboundTests : IClassFixture<WebApplicationFactory<Program>>
     const string Pw = "Long-Enough-1";
     readonly WebApplicationFactory<Program> factory;
     // one shared mailbox: hosts built for earlier tests keep their workers running and would otherwise read their own, empty one
-    static readonly FakeFetcher fake = new();
+    static readonly FakeFetcher fake = FakeFetcher.Shared;
     public InboundTests(WebApplicationFactory<Program> f) => factory = f.WithWebHostBuilder(b =>
     {
         TestSupport.Configure(b); b.UseSetting("Licensing:AllowUnlicensed", "true"); b.UseSetting("Platform:Roles", "all"); b.UseSetting("Jobs:PollSeconds", "1");
-        b.ConfigureServices(s => { s.RemoveAll<IInboundFetcher>(); s.AddSingleton<IInboundFetcher>(fake); });
     });
 
     static StringContent Json(object o) => new(JsonSerializer.Serialize(o), Encoding.UTF8, "application/json");

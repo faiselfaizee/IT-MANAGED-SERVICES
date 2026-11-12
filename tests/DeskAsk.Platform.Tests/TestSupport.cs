@@ -5,7 +5,10 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Hosting;
+using DeskAsk.Platform.Mail;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
 
 public static class TestSupport
@@ -21,6 +24,8 @@ public static class TestSupport
         b.UseSetting("Identity:AllowInsecureHttp", "true");
         b.UseSetting("Identity:Clients:0:Id", "web");
         b.UseSetting("Identity:Clients:0:RedirectUris:0", Redirect);
+        // Every host built by the tests reads the same fake mailbox: hosts of earlier tests keep their workers running and would otherwise take a mail.fetch job and read a real (empty) one.
+        b.ConfigureServices(s => { s.RemoveAll<IInboundFetcher>(); s.AddSingleton<IInboundFetcher>(FakeFetcher.Shared); });
     }
 
     static string B64u(byte[] b) => Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
