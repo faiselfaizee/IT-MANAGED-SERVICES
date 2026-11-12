@@ -15,6 +15,7 @@ test('shows what ends soon and saves the reminder settings', async () => {
   render(<Renewals />);
   await waitFor(() => expect(screen.getByText('AMC contract: Server AMC')).toBeTruthy());
   expect(screen.getByText('8 days')).toBeTruthy();
+  await waitFor(() => expect(screen.getByLabelText(/Send reminders/)).toBeTruthy());
   fireEvent.click(screen.getByLabelText(/Send reminders/)); fireEvent.change(screen.getByPlaceholderText('it@yourcompany.com'), { target: { value: 'it@acme.test' } });
   fireEvent.click(screen.getByText('Save'));
   await waitFor(() => expect(calls.some((c) => c[0] === 'PUT')).toBe(true));
