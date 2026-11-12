@@ -232,9 +232,9 @@ public static class DiscoveryApi
         Admin(r.MapGet("/api/assets/discover/creds", async (ITenantContext t, CancellationToken ct) =>
         {
             await using var db = await AgentsApi.Open(t, ct); var o = new List<object>();
-            await using var c = new NpgsqlCommand("select c.id, c.name, c.kind, c.username, c.company_id, coalesce(co.name,''), c.created_at from assets.creds c left join assets.companies co on co.id = c.company_id order by lower(c.name)", db);
+            await using var c = new NpgsqlCommand("select c.id, c.name, c.kind, c.username, c.company_id, coalesce(co.name,''), c.created_at, c.account_type from assets.creds c left join assets.companies co on co.id = c.company_id order by lower(c.name)", db);
             await using var rd = await c.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) o.Add(new { id = rd.GetInt32(0), name = rd.GetString(1), kind = rd.GetString(2), username = rd.GetString(3), companyId = rd.IsDBNull(4) ? (int?)null : rd.GetInt32(4), company = rd.GetString(5), createdAt = rd.GetDateTime(6) });
+            while (await rd.ReadAsync(ct)) o.Add(new { id = rd.GetInt32(0), name = rd.GetString(1), kind = rd.GetString(2), username = rd.GetString(3), companyId = rd.IsDBNull(4) ? (int?)null : rd.GetInt32(4), company = rd.GetString(5), createdAt = rd.GetDateTime(6), accountType = rd.GetString(7) });
             return Results.Ok(new { items = o });
         }));
         Admin(r.MapPost("/api/assets/discover/creds", async (JsonElement body, ITenantContext t, IConfiguration cfg, IAuditLog audit, CancellationToken ct) =>
@@ -248,12 +248,27 @@ public static class DiscoveryApi
             if (secret == "") return Bad("bad_input", kind == "ssh" ? "Paste the private key." : kind == "sshpw" ? "Enter the password." : kind == "snmp" ? "Enter the SNMP community string." : "Enter the password.");
             if (kind == "ssh" && !Regex.IsMatch(secret, "BEGIN [A-Z ]*PRIVATE KEY")) return Bad("bad_input", "That does not look like an SSH private key (PEM / OpenSSH format).");
             int? company = body.TryGetProperty("companyId", out var ce) && ce.ValueKind == JsonValueKind.Number ? ce.GetInt32() : null;
+            var acct = AgentsApi.Str(body, "accountType") ?? ""; if (acct is not ("domain" or "service" or "local")) acct = "";
             await using var db = await AgentsApi.Open(t, ct);
-            await using var c = new NpgsqlCommand("insert into assets.creds (name, kind, username, secret, company_id) values (@n,@k,@u,@s,@c) returning id", db);
-            AgentsApi.P(c, "n", name); AgentsApi.P(c, "k", kind); AgentsApi.P(c, "u", user); AgentsApi.P(c, "s", Sealed(cfg, t, secret)); AgentsApi.P(c, "c", company);
+            await using var c = new NpgsqlCommand("insert into assets.creds (name, kind, username, secret, company_id, account_type) values (@n,@k,@u,@s,@c,@at) returning id", db);
+            AgentsApi.P(c, "at", acct); AgentsApi.P(c, "n", name); AgentsApi.P(c, "k", kind); AgentsApi.P(c, "u", user); AgentsApi.P(c, "s", Sealed(cfg, t, secret)); AgentsApi.P(c, "c", company);
             int id; try { id = (int)(await c.ExecuteScalarAsync(ct))!; } catch (PostgresException e) when (e.SqlState == "23503") { return Bad("bad_input", "Customer not found."); }
             await audit.WriteAsync("assets.credential_added", name, kind, ct: ct);
             return Results.Ok(new { id });
+        }));
+        Admin(r.MapPut("/api/assets/discover/creds/{id:int}", async (int id, JsonElement body, ITenantContext t, IConfiguration cfg, IAuditLog audit, CancellationToken ct) =>
+        {
+            var name = AgentsApi.Clip(AgentsApi.Str(body, "name"), 80).Trim(); var user = AgentsApi.Clip(AgentsApi.Str(body, "username"), 120).Trim();
+            var secret = AgentsApi.Str(body, "secret") ?? "";   // empty keeps the saved one
+            if (name == "") return Bad("bad_input", "Give the credential a name.");
+            var acct = AgentsApi.Str(body, "accountType") ?? ""; if (acct is not ("domain" or "service" or "local")) acct = "";
+            int? company = body.TryGetProperty("companyId", out var ce) && ce.ValueKind == JsonValueKind.Number ? ce.GetInt32() : null;
+            await using var db = await AgentsApi.Open(t, ct);
+            await using var c = new NpgsqlCommand("update assets.creds set name = @n, username = case when @u = '' then username else @u end, secret = case when @s::text is null then secret else @s end, company_id = @c, account_type = @at where id = @i", db);
+            AgentsApi.P(c, "n", name); AgentsApi.P(c, "u", user); AgentsApi.P(c, "s", secret == "" ? null : Sealed(cfg, t, secret)); AgentsApi.P(c, "c", company); AgentsApi.P(c, "at", acct); AgentsApi.P(c, "i", id);
+            try { if (await c.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound(); } catch (PostgresException e) when (e.SqlState == "23503") { return Bad("bad_input", "Customer not found."); }
+            await audit.WriteAsync("assets.credential_changed", id.ToString(), name, ct: ct);
+            return Results.Ok(new { ok = true });
         }));
         Admin(r.MapDelete("/api/assets/discover/creds/{id:int}", async (int id, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
         {

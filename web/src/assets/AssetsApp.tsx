@@ -4,6 +4,7 @@ import Companies from './Companies';
 import Contracts from './Contracts';
 import Renewals from './Renewals';
 import DeleteRequests from './DeleteRequests';
+import Credentials from './Credentials';
 import Detail from './Detail';
 import Discover from './Discover';
 import Fleet from './Fleet';
@@ -12,7 +13,7 @@ import Software from './Software';
 import { RemoteLog, Repository, Settings } from './Admin';
 
 const NAV: [string, string][] = [
-  ['', 'Assets'], ['software', 'Software'], ['discover', 'Discover'], ['fleet', 'Agents & collectors'], ['delete-requests', 'Delete requests'], ['companies', 'Companies'],
+  ['', 'Assets'], ['software', 'Software'], ['discover', 'Discover'], ['fleet', 'Agents & collectors'], ['delete-requests', 'Delete requests'], ['companies', 'Companies'], ['credentials', 'Credentials'],
   ['amc', 'AMC'], ['rentals', 'Rentals'], ['renewals', 'Renewals'], ['remote-log', 'Remote activity'], ['commands', 'Command repository'], ['settings', 'Settings'],
 ];
 
@@ -29,6 +30,7 @@ export default function AssetsApp() {
     case 'fleet': page = <Fleet />; break;
     case 'delete-requests': page = <DeleteRequests />; break;
     case 'companies': page = <Companies />; break;
+    case 'credentials': page = <Credentials />; break;
     case 'amc': page = <Contracts kind="amc" />; break;
     case 'rentals': page = <Contracts kind="rentals" />; break;
     case 'renewals': page = <Renewals />; break;

@@ -194,6 +194,8 @@ public sealed class AssetsSchema : ITenantSchema
             create index if not exists delete_requests_status on assets.delete_requests (status, created_at desc);
             alter table assets.creds drop constraint if exists creds_kind_check;
             alter table assets.creds add constraint creds_kind_check check (kind in ('windows','ssh','sshpw','snmp','login'))"),
+        new(8, "credential account types", @"
+            alter table assets.creds add column if not exists account_type text not null default ''"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {

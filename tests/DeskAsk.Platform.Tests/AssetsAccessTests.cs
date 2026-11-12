@@ -77,4 +77,25 @@ public class AssetsAccessTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.NotFound, (await eng.GetAsync($"/api/assets/{id}/device")).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync($"/api/assets/delete-requests/{rid2}/approve", Json(new { }))).StatusCode);
     }
+
+    [PgFact]
+    public async Task CredentialsBelongToACustomerAndCanBeEditedWithoutRetypingTheSecret()
+    {
+        var admin = await TestSupport.AdminClient(factory);
+        await Sql("delete from assets.creds");
+        var co = await admin.PostAsync("/api/assets/companies", Json(new { name = "Cred Co" }));
+        Assert.True(co.IsSuccessStatusCode, await co.Content.ReadAsStringAsync());
+        var companyId = JsonDocument.Parse(await co.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetInt32();
+        var made = await admin.PostAsync("/api/assets/discover/creds", Json(new { name = "Domain admin", kind = "windows", accountType = "domain", username = @"CRED\adm", secret = "pw-1", companyId }));
+        Assert.True(made.IsSuccessStatusCode, await made.Content.ReadAsStringAsync());
+        var id = JsonDocument.Parse(await made.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetInt32();
+        Assert.True((await admin.PostAsync("/api/assets/discover/creds", Json(new { name = "Local", kind = "sshpw", accountType = "local", username = "root", secret = "pw-2" }))).IsSuccessStatusCode);
+        var items = JsonDocument.Parse(await admin.GetStringAsync("/api/assets/discover/creds")).RootElement.GetProperty("items");
+        var mine = items.EnumerateArray().Single(x => x.GetProperty("id").GetInt32() == id);
+        Assert.Equal(companyId, mine.GetProperty("companyId").GetInt32()); Assert.Equal("domain", mine.GetProperty("accountType").GetString());
+        Assert.DoesNotContain("pw-1", items.ToString());
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync($"/api/assets/discover/creds/{id}", Json(new { name = "Domain admin 2", accountType = "service", companyId }))).StatusCode);
+        var after = JsonDocument.Parse(await admin.GetStringAsync("/api/assets/discover/creds")).RootElement.GetProperty("items").EnumerateArray().Single(x => x.GetProperty("id").GetInt32() == id);
+        Assert.Equal("Domain admin 2", after.GetProperty("name").GetString()); Assert.Equal(@"CRED\adm", after.GetProperty("username").GetString());
+    }
 }

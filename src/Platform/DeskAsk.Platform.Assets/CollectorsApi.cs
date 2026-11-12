@@ -260,20 +260,6 @@ chmod 755 /opt/deskask-collector/deskask-collector
                 await Log(db, col.Id, AgentsApi.Str(l, "l") ?? "info", m, ct);
             }
 
-            // the work list
-            var assets = new List<object>(); foreach (var (id, a) in mine) assets.Add(new { id = id.ToString(), ip = a.Ip, host = a.Host, name = a.Name, monitor = a.Monitor == "" ? "ping" : a.Monitor, logins = a.Monitor is "snmp" or "ssh" or "windows" ? LoginsFor(id) : Array.Empty<object>() });
-            var checks = new Dictionary<string, List<object>>();
-            await using (var c = new NpgsqlCommand("select s.id, s.asset_id, s.name, s.type, s.host, s.port, s.url, s.expect, s.status, s.insecure, s.dns, s.timeout_s, a.ip_address, a.dns_name, a.hostname from assets.service_checks s join assets.assets a on a.id = s.asset_id where a.collector_id = @i and a.monitor <> '' and s.enabled", db))
-            {
-                AgentsApi.P(c, "i", col.Id); await using var rd = await c.ExecuteReaderAsync(ct);
-                while (await rd.ReadAsync(ct))
-                {
-                    var type = rd.GetString(3); var host = type == "dns" ? rd.GetString(4) : new[] { rd.GetString(4), rd.GetString(12), rd.GetString(13), rd.GetString(14) }.FirstOrDefault(x => x != "") ?? "";
-                    if (host == "" && type != "http") continue;
-                    var aid = rd.GetInt64(1).ToString(); if (!checks.TryGetValue(aid, out var l)) checks[aid] = l = new();
-                    l.Add(new { id = rd.GetInt32(0), name = rd.GetString(2), type, host, port = rd.GetInt32(5), url = rd.GetString(6), expect = rd.GetString(7), status = rd.GetString(8), insecure = rd.GetBoolean(9), dns = rd.GetString(10), timeoutS = rd.GetInt32(11) });
-                }
-            }
             // the logins saved under Assets > Discover > Credentials, sealed in the database; sent only to this collector, over its own authenticated connection
             var saved = new List<(int? Company, object Login)>();
             await using (var c = new NpgsqlCommand("select name, kind, username, secret, company_id from assets.creds where kind in ('windows','ssh','snmp','sshpw') order by id", db))
@@ -291,7 +277,21 @@ chmod 755 /opt/deskask-collector/deskask-collector
                 AgentsApi.P(c, "i", col.Id); await using var rd = await c.ExecuteReaderAsync(ct);
                 while (await rd.ReadAsync(ct)) company[rd.GetInt64(0)] = rd.IsDBNull(1) ? null : rd.GetInt32(1);
             }
-            object[] LoginsFor(long assetId) { company.TryGetValue(assetId, out var co); return saved.Where(x => x.Company == null || x.Company == co).Select(x => x.Login).ToArray(); }
+            object[] LoginsFor(long assetId) { company.TryGetValue(assetId, out var co); return saved.Where(x => x.Company == null || x.Company == co).OrderBy(x => x.Company == null ? 1 : 0).Select(x => x.Login).ToArray(); }
+            // the work list
+            var assets = new List<object>(); foreach (var (id, a) in mine) assets.Add(new { id = id.ToString(), ip = a.Ip, host = a.Host, name = a.Name, monitor = a.Monitor == "" ? "ping" : a.Monitor, logins = a.Monitor is "snmp" or "ssh" or "windows" ? LoginsFor(id) : Array.Empty<object>() });
+            var checks = new Dictionary<string, List<object>>();
+            await using (var c = new NpgsqlCommand("select s.id, s.asset_id, s.name, s.type, s.host, s.port, s.url, s.expect, s.status, s.insecure, s.dns, s.timeout_s, a.ip_address, a.dns_name, a.hostname from assets.service_checks s join assets.assets a on a.id = s.asset_id where a.collector_id = @i and a.monitor <> '' and s.enabled", db))
+            {
+                AgentsApi.P(c, "i", col.Id); await using var rd = await c.ExecuteReaderAsync(ct);
+                while (await rd.ReadAsync(ct))
+                {
+                    var type = rd.GetString(3); var host = type == "dns" ? rd.GetString(4) : new[] { rd.GetString(4), rd.GetString(12), rd.GetString(13), rd.GetString(14) }.FirstOrDefault(x => x != "") ?? "";
+                    if (host == "" && type != "http") continue;
+                    var aid = rd.GetInt64(1).ToString(); if (!checks.TryGetValue(aid, out var l)) checks[aid] = l = new();
+                    l.Add(new { id = rd.GetInt32(0), name = rd.GetString(2), type, host, port = rd.GetInt32(5), url = rd.GetString(6), expect = rd.GetString(7), status = rd.GetString(8), insecure = rd.GetBoolean(9), dns = rd.GetString(10), timeoutS = rd.GetInt32(11) });
+                }
+            }
             var deploys = new List<object>();
             await using (var c = new NpgsqlCommand("select d.asset_id, a.ip_address, a.hostname, a.os_family from assets.deploys d join assets.assets a on a.id = d.asset_id where d.collector_id = @i and d.status = 'queued'", db))
             {

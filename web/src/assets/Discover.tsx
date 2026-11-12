@@ -3,11 +3,11 @@ import { api, go, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Empty, Err, Field, Modal, fmtBytes, useSubmit } from '../ui';
 
 export default function Discover() {
-  const [tab, setTab] = useState<'probe' | 'scan' | 'creds'>('probe'); const [prefill, setPrefill] = useState('');
+  const [tab, setTab] = useState<'probe' | 'scan'>('probe'); const [prefill, setPrefill] = useState('');
   return <>
     <h1>Discover devices</h1>
-    <nav className="sub">{([['probe', 'Look up a device'], ['scan', 'Scan a range'], ['creds', 'Saved credentials']] as const).map(([k, l]) => <a key={k} href="#/assets/discover" className={tab === k ? 'on' : ''} onClick={(e) => { e.preventDefault(); setTab(k); }}>{l}</a>)}</nav>
-    {tab === 'probe' && <Probe key={prefill} initial={prefill} />}{tab === 'scan' && <Scan onPick={(ip) => { setPrefill(ip); setTab('probe'); }} />}{tab === 'creds' && <Creds />}
+    <nav className="sub">{([['probe', 'Look up a device'], ['scan', 'Scan a range']] as const).map(([k, l]) => <a key={k} href="#/assets/discover" className={tab === k ? 'on' : ''} onClick={(e) => { e.preventDefault(); setTab(k); }}>{l}</a>)}</nav>
+    {tab === 'probe' && <Probe key={prefill} initial={prefill} />}{tab === 'scan' && <Scan onPick={(ip) => { setPrefill(ip); setTab('probe'); }} />}
   </>;
 }
 
@@ -55,24 +55,3 @@ function Scan({ onPick }: { onPick: (ip: string) => void }) {
   </>;
 }
 
-function Creds() {
-  const { data, error, reload } = useLoad<Rec>('/api/assets/discover/creds'); const [add, setAdd] = useState(false);
-  return <>
-    <div className="tools"><button className="primary" onClick={() => setAdd(true)}>Add credential</button></div><Err text={error} />
-    <p className="muted">Credentials are encrypted in this customer's database and never shown again. Use an account with just enough rights to read hardware and software details.</p>
-    {data && (data.items.length === 0 ? <Empty>No saved credentials.</Empty> : <table><thead><tr><th>Name</th><th>Kind</th><th>User</th><th>Customer</th><th /></tr></thead><tbody>
-      {(data.items as Rec[]).map((c) => <tr key={c.id}><td>{c.name}</td><td>{c.kind === 'windows' ? 'Windows (WinRM)' : c.kind === 'ssh' ? 'Linux (SSH key)' : c.kind === 'sshpw' ? 'Linux (SSH password)' : c.kind === 'snmp' ? 'SNMP community' : c.kind}</td><td>{c.username}</td><td>{c.company || '(any)'}</td>
-        <td><Act label="Delete" danger confirm={`Delete the credential "${c.name}"?`} run={async () => { await api(`/api/assets/discover/creds/${c.id}`, { method: 'DELETE' }); reload(); }} /></td></tr>)}</tbody></table>)}
-    {add && <CredForm onClose={(ch) => { setAdd(false); if (ch) reload(); }} />}
-  </>;
-}
-function CredForm({ onClose }: { onClose: (changed: boolean) => void }) {
-  const [v, setV] = useState({ name: '', kind: 'windows', username: '', secret: '' }); const f = useSubmit(() => onClose(true));
-  return <Modal title="Add credential" onClose={() => onClose(false)}><div className="form">
-    <Field label="Name"><input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} placeholder="Domain admin (read only)" /></Field>
-    <Field label="Kind"><select value={v.kind} onChange={(e) => setV({ ...v, kind: e.target.value })}><option value="windows">Windows (user and password, WinRM)</option><option value="sshpw">Linux (user and SSH password)</option><option value="ssh">Linux (user and SSH private key)</option><option value="snmp">Printer, switch or firewall (SNMP community)</option></select></Field>
-    {v.kind !== 'snmp' && <Field label="User name"><input value={v.username} onChange={(e) => setV({ ...v, username: e.target.value })} autoComplete="off" /></Field>}
-    <Field label={v.kind === 'ssh' ? 'Private key' : v.kind === 'snmp' ? 'Community string' : 'Password'}>{v.kind === 'ssh' ? <textarea rows={5} value={v.secret} onChange={(e) => setV({ ...v, secret: e.target.value })} /> : <input type="password" value={v.secret} onChange={(e) => setV({ ...v, secret: e.target.value })} autoComplete="new-password" />}</Field>
-    {v.kind === 'windows' && <p className="muted">The collector sends this login to Windows computers over PowerShell remoting. For a domain account write DOMAIN\\user.</p>}
-    <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button><button className="primary" disabled={f.busy} onClick={() => f.submit(() => api('/api/assets/discover/creds', { body: v }))}>Save</button></div></div></Modal>;
-}
