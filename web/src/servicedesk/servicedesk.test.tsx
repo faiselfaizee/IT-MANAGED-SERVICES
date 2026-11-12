@@ -82,3 +82,18 @@ test('settings page shows the service levels', async () => {
   fireEvent.change(screen.getByLabelText('Critical resolution'), { target: { value: '6' } });
   expect((screen.getByLabelText('Critical resolution') as HTMLInputElement).value).toBe('6');
 });
+
+test('a required extra field must be filled in before a ticket can be opened', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const routes: Record<string, unknown> = { '/api/servicedesk/me': staffMe, '/api/servicedesk/settings': { categories: [], sla: {} }, '/api/assets/companies': [],
+      '/api/servicedesk/fields': { items: [{ id: 1, key: 'site_code', label: 'Site code', kind: 'choice', options: ['BLR', 'DEL'], required: true, staffOnly: false, active: true }] } };
+    const key = Object.keys(routes).sort((a, b) => b.length - a.length).find((k) => String(url).startsWith(k));
+    return key ? new Response(JSON.stringify(routes[key]), { status: 200 }) : new Response('{}', { status: 404 });
+  }));
+  location.hash = '#/servicedesk/new'; render(<ServiceDeskApp />);
+  await waitFor(() => expect(screen.getByText('Site code *')).toBeTruthy());
+  fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: 'Printer jam' } });
+  expect((screen.getByText('Open ticket') as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(screen.getByRole('combobox', { name: /Site code/ }), { target: { value: 'DEL' } });
+  await waitFor(() => expect((screen.getByText('Open ticket') as HTMLButtonElement).disabled).toBe(false));
+});

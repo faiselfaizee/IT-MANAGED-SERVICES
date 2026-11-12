@@ -30,7 +30,7 @@ public class IntegrationTests : IClassFixture<WebApplicationFactory<Program>>
     async Task<HttpClient> Admin()
     {
         var admin = await TestSupport.AdminClient(factory);
-        await Sql("truncate servicedesk.tickets, servicedesk.events, servicedesk.webhook_deliveries, servicedesk.webhook_state restart identity cascade");
+        await Sql("truncate servicedesk.changes, servicedesk.problems, servicedesk.tickets, servicedesk.events, servicedesk.webhook_deliveries, servicedesk.webhook_state restart identity cascade");
         await Sql("delete from servicedesk.webhooks; delete from servicedesk.api_keys");
         return admin;
     }
@@ -72,6 +72,30 @@ public class IntegrationTests : IClassFixture<WebApplicationFactory<Program>>
 
         var list = await J(await anon.SendAsync(Keyed(HttpMethod.Get, "/api/v1/tickets?status=active", read)));
         Assert.Equal(1, list.GetProperty("total").GetInt32());
+    }
+
+    [PgFact]
+    public async Task AnApiKeyListsChangesAndProblemsAndMayRaiseADraftOrAProblem()
+    {
+        var admin = await Admin(); var anon = factory.CreateClient();
+        var read = await NewKey(admin, "Dashboard", "read"); var write = await NewKey(admin, "Planner", "write");
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anon.GetAsync("/api/v1/changes")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await anon.SendAsync(Keyed(HttpMethod.Post, "/api/v1/changes", read, new { title = "x" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await anon.SendAsync(Keyed(HttpMethod.Post, "/api/v1/changes", write, new { title = "x", type = "huge" }))).StatusCode);
+        var made = await J(await anon.SendAsync(Keyed(HttpMethod.Post, "/api/v1/changes", write, new { title = "Renew the VPN certificate", type = "standard", risk = "low", plan = "Replace it at night" })));
+        var number = made.GetProperty("number").GetString()!;
+        Assert.StartsWith("CHG-", number); Assert.Equal("draft", made.GetProperty("status").GetString());
+        var one = await J(await anon.SendAsync(Keyed(HttpMethod.Get, "/api/v1/changes/" + number, read)));
+        Assert.Equal("planning", one.GetProperty("change").GetProperty("stage").GetString());
+        Assert.Equal("Replace it at night", one.GetProperty("change").GetProperty("plan").GetString());
+        Assert.Equal(1, (await J(await anon.SendAsync(Keyed(HttpMethod.Get, "/api/v1/changes?status=draft", read)))).GetProperty("total").GetInt32());
+
+        var prb = await J(await anon.SendAsync(Keyed(HttpMethod.Post, "/api/v1/problems", write, new { title = "Printers drop off the network", priority = "high" })));
+        Assert.StartsWith("PRB-", prb.GetProperty("number").GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, (await anon.SendAsync(Keyed(HttpMethod.Post, "/api/v1/problems", write, new { title = "" }))).StatusCode);
+        var got = await J(await anon.SendAsync(Keyed(HttpMethod.Get, "/api/v1/problems/" + prb.GetProperty("number").GetString(), read)));
+        Assert.Equal("open", got.GetProperty("problem").GetProperty("status").GetString());
+        Assert.Equal(HttpStatusCode.NotFound, (await anon.SendAsync(Keyed(HttpMethod.Get, "/api/v1/problems/PRB-999999", read))).StatusCode);
     }
 
     [PgFact]

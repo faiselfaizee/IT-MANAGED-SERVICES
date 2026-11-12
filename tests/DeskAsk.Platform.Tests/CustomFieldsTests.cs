@@ -25,6 +25,8 @@ public class CustomFieldsTests : IClassFixture<WebApplicationFactory<Program>>
         await Sql("delete from identity.users where \"Email\" like '%@cf.test'");
         Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "eng@cf.test", name = "eng", role = "engineer", password = Pw }))).StatusCode);
         var eng = await TestSupport.ClientFor(factory, "eng@cf.test", Pw);
+        try
+        {
 
         Assert.Equal(HttpStatusCode.Forbidden, (await eng.PostAsync("/api/servicedesk/fields", Json(new { label = "Site", kind = "text" }))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync("/api/servicedesk/fields", Json(new { label = "Colour", kind = "choice", options = "" }))).StatusCode);
@@ -42,14 +44,14 @@ public class CustomFieldsTests : IClassFixture<WebApplicationFactory<Program>>
         var made = await eng.PostAsync("/api/servicedesk/tickets", Json(new { subject = "Printer", custom = new { site_code = "del", cost = 120.5, go_live = "2026-11-30" } }));
         Assert.True(made.IsSuccessStatusCode, await made.Content.ReadAsStringAsync());
         var id = (await J(made)).GetProperty("id").GetInt64();
-        var d = (await J(await eng.GetAsync($"/api/servicedesk/tickets/{id}"))).GetProperty("ticket").GetProperty("custom");
+        var d = (await J(await eng.GetAsync($"/api/servicedesk/tickets/{id}"))).GetProperty("custom");
         Assert.Equal("DEL", d.GetProperty("site_code").GetString());
         Assert.Equal(120.5m, d.GetProperty("cost").GetDecimal());
 
         // change one value, keep the rest; a required field cannot be emptied
         Assert.Equal(HttpStatusCode.OK, (await Patch(eng, $"/api/servicedesk/tickets/{id}", new { custom = new { site_code = "MUM" } })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await Patch(eng, $"/api/servicedesk/tickets/{id}", new { custom = new { site_code = "" } })).StatusCode);
-        d = (await J(await eng.GetAsync($"/api/servicedesk/tickets/{id}"))).GetProperty("ticket").GetProperty("custom");
+        d = (await J(await eng.GetAsync($"/api/servicedesk/tickets/{id}"))).GetProperty("custom");
         Assert.Equal("MUM", d.GetProperty("site_code").GetString());
         Assert.Equal("2026-11-30", d.GetProperty("go_live").GetString());
 
@@ -57,5 +59,7 @@ public class CustomFieldsTests : IClassFixture<WebApplicationFactory<Program>>
         await Sql("update servicedesk.custom_fields set staff_only = true where key = 'cost'");
         var shown = (await J(await eng.GetAsync("/api/servicedesk/fields"))).GetProperty("items").EnumerateArray().Select(x => x.GetProperty("key").GetString()).ToList();
         Assert.Equal(3, shown.Count);
+        }
+        finally { await Sql("truncate servicedesk.custom_fields restart identity"); }
     }
 }

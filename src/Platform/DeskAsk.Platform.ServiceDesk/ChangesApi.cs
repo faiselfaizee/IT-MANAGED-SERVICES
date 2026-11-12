@@ -72,7 +72,7 @@ public static class ChangesApi
         return l.Distinct().ToList();
     }
 
-    static async Task<int> Quorum(ISettings s, string type, CancellationToken ct)
+    internal static async Task<int> Quorum(ISettings s, string type, CancellationToken ct)
     {
         if (type == "standard") return 0;
         if (type == "emergency") return 1;

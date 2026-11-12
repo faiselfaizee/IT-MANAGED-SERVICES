@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, useLoad, type Rec } from '../http';
 import { Card, Empty, Err, Loading, useSubmit } from '../ui';
 import { PRIORITY } from './List';
+import { FieldsAdmin } from './Fields';
 
 /** Categories and service levels. */
 export function Settings() {
@@ -30,6 +31,7 @@ export function Settings() {
         <label><input type="checkbox" checked={sla.escalate} onChange={(e) => { setSla({ ...sla, escalate: e.target.checked }); setSaved(false); }} /> Record warnings and missed targets on the ticket</label>
       </div>
     </Card>
+    <FieldsAdmin />
     <Err text={f.err} />
     <div className="actions"><span className="muted">{saved ? 'Saved. Open tickets use the new targets.' : ''}</span>
       <button className="primary" disabled={f.busy} onClick={() => f.submit(() => api('/api/servicedesk/settings', { method: 'PUT', body: { categories: cats.split('\n').map((c) => c.trim()).filter(Boolean), sla } }))}>Save settings</button></div>

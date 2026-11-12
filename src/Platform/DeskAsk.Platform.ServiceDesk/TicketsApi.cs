@@ -17,7 +17,7 @@ public static class TicketsApi
     const int MaxAttachment = 10 * 1024 * 1024;
 
     const string Cols = @"t.id, t.number, t.subject, t.description, t.status, t.priority, t.category, t.company_id, t.company_name, t.requester_id, t.requester_name, t.requester_email,
-        t.assignee_id, t.assignee_name, t.asset_id, t.asset_name, t.source, t.created_at, t.updated_at, t.first_response_at, t.resolved_at, t.closed_at, t.respond_due, t.resolve_due, t.paused_at, t.paused_s, t.created_by, t.custom::text";
+        t.assignee_id, t.assignee_name, t.asset_id, t.asset_name, t.source, t.created_at, t.updated_at, t.first_response_at, t.resolved_at, t.closed_at, t.respond_due, t.resolve_due, t.paused_at, t.paused_s, t.created_by";
 
     static DateTime? Dt(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetDateTime(i);
 
@@ -35,7 +35,6 @@ public static class TicketsApi
             assetId = r.IsDBNull(14) ? (long?)null : r.GetInt64(14), asset = r.GetString(15), source = r.GetString(16),
             createdAt = created, updatedAt = r.GetDateTime(18), firstResponseAt = Dt(r, 19), resolvedAt = resolved, closedAt = Dt(r, 21),
             respondDue = Dt(r, 22), resolveDue = due, paused = paused != null, sla = state, respond = respondState,
-            custom = full ? JsonDocument.Parse(r.GetString(27)).RootElement.Clone() : (JsonElement?)null,
         };
     }
 
@@ -166,8 +165,14 @@ public static class TicketsApi
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 while (await rd.ReadAsync(ct)) files.Add(new { id = rd.GetInt64(0), name = rd.GetString(1), contentType = rd.GetString(2), size = rd.GetInt32(3), at = rd.GetDateTime(4), by = rd.GetString(5), @internal = rd.GetBoolean(6) });
             }
+            var customValues = new Dictionary<string, object?>();
+            await using (var cc = new NpgsqlCommand("select custom::text from servicedesk.tickets where id = @i", db))
+            {
+                P(cc, "i", id); customValues = CustomFields.Parse((string?)await cc.ExecuteScalarAsync(ct));
+                if (w.Customer) { var hidden = (await CustomFields.LoadAsync(db, false, ct)).Where(f => f.StaffOnly).Select(f => f.Key).ToHashSet(); foreach (var k in hidden) customValues.Remove(k); }
+            }
             var canModify = w.Staff || (w.Customer && w.MayModify);
-            return Results.Ok(new { ticket, comments, attachments = files, can = new { edit = w.Staff, comment = canModify, internalNote = w.Staff, status = w.Staff || canModify } });
+            return Results.Ok(new { ticket, custom = customValues, comments, attachments = files, can = new { edit = w.Staff, comment = canModify, internalNote = w.Staff, status = w.Staff || canModify } });
         }));
 
         // ---------------------------------------------------------------- open a ticket

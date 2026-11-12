@@ -1,12 +1,14 @@
 import { useRef, useState } from 'react';
 import { api, go, saveFile, upload, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Err, Loading, fmtDate, fmtBytes, useSubmit } from '../ui';
+import { CustomCard, useFields } from './Fields';
 import { PRIORITY, PriorityBadge, STATUS, SlaBadge, StatusBadge } from './List';
 
 export default function Detail({ id }: { id: string }) {
   const { data, error, loading, reload } = useLoad<Rec>('/api/servicedesk/tickets/' + id);
   const t = data?.ticket as Rec | undefined; const can = (data?.can ?? {}) as Rec;
   const staffList = useLoad<Rec[]>(can.edit ? '/api/servicedesk/staff' : null);
+  const fieldDefs = useFields();
   const settings = useLoad<Rec>(can.edit ? '/api/servicedesk/settings' : null);
   const [body, setBody] = useState(''); const [internal, setInternal] = useState(false); const file = useRef<HTMLInputElement>(null);
   const reply = useSubmit(() => { setBody(''); setInternal(false); reload(); });
@@ -47,6 +49,7 @@ export default function Detail({ id }: { id: string }) {
               </> : null}
           </div>
         </Card>
+        <CustomCard defs={fieldDefs} values={(data?.custom ?? {}) as Rec} edit={!!can.edit} save={patch} />
         <Related id={id} />
         {can.edit && <Assist id={id} t={t} patch={patch} fill={setBody} />}
         <Card title="Details">

@@ -245,6 +245,113 @@ internal static class IntegrationApi
             await ServiceDeskModule.Event(db, id, note ? "ticket.note" : "ticket.comment", new { by, customer = false }, ct);
             return Results.Ok(new { ok = true });
         }), true);
+
+        // ---- changes and problems (the support team's records; a key with write access may also raise a draft change or a problem)
+        static void MatchBy(NpgsqlCommand c, string idOrNumber, string prefix)
+        {
+            if (long.TryParse(idOrNumber, out var n)) { ServiceDeskModule.P(c, "i", n); c.CommandText += " where id = @i"; }
+            else { ServiceDeskModule.P(c, "n", idOrNumber.ToUpperInvariant().StartsWith(prefix) ? idOrNumber.ToUpperInvariant() : prefix + idOrNumber); c.CommandText += " where number = @n"; }
+        }
+        static string? Pick(JsonElement b, string n, string[] allowed, string fallback, out string? error)
+        {
+            error = null; var v = Str(b, n, 30); if (string.IsNullOrEmpty(v)) return fallback;
+            if (!allowed.Contains(v)) { error = n + " must be one of " + string.Join(", ", allowed); return null; }
+            return v;
+        }
+        const string chgCols = "id, number, title, description, type, status, risk, impact, reason, plan, rollback, impact_analysis, outcome, review_notes, closure_code, company_id, company_name, owner_name, start_at, end_at, created_at, updated_at, closed_at";
+        static object ChangeRow(NpgsqlDataReader r, bool full) => new
+        {
+            id = r.GetInt64(0), number = r.GetString(1), title = r.GetString(2), description = full ? r.GetString(3) : null, type = r.GetString(4), status = r.GetString(5), stage = ChangesApi.StageOf(r.GetString(5)),
+            risk = r.GetString(6), impact = r.GetString(7), reason = full ? r.GetString(8) : null, plan = full ? r.GetString(9) : null, rollback = full ? r.GetString(10) : null, impactAnalysis = full ? r.GetString(11) : null,
+            outcome = full ? r.GetString(12) : null, reviewNotes = full ? r.GetString(13) : null, closureCode = r.GetString(14), companyId = r.IsDBNull(15) ? (int?)null : r.GetInt32(15), company = r.GetString(16), owner = r.GetString(17),
+            startAt = r.IsDBNull(18) ? (DateTime?)null : r.GetDateTime(18), endAt = r.IsDBNull(19) ? (DateTime?)null : r.GetDateTime(19), createdAt = r.GetDateTime(20), updatedAt = r.GetDateTime(21), closedAt = r.IsDBNull(22) ? (DateTime?)null : r.GetDateTime(22),
+        };
+        Keyed(r.MapGet("/api/v1/changes", async (HttpContext h, ITenantContext t, CancellationToken ct) =>
+        {
+            var q = h.Request.Query; await using var db = await ServiceDeskModule.Open(t, ct);
+            await using var c = new NpgsqlCommand { Connection = db }; var where = new List<string> { "true" };
+            if (q["status"].ToString() is { Length: > 0 } st) { if (st == "active") where.Add("status not in ('closed','cancelled','rejected')"); else { ServiceDeskModule.P(c, "st", st.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)); where.Add("status = any(@st)"); } }
+            if (q["type"].ToString() is { Length: > 0 } ty) { ServiceDeskModule.P(c, "ty", ty); where.Add("type = @ty"); }
+            if (int.TryParse(q["companyId"], out var co)) { ServiceDeskModule.P(c, "co", co); where.Add("company_id = @co"); }
+            var take = Math.Clamp(int.TryParse(q["take"], out var tk) ? tk : 50, 1, 200); var skip = Math.Max(0, int.TryParse(q["skip"], out var sk) ? sk : 0);
+            c.CommandText = $"select count(*) from servicedesk.changes where {string.Join(" and ", where)}"; var total = (long)(await c.ExecuteScalarAsync(ct))!;
+            c.CommandText = $"select {chgCols} from servicedesk.changes where {string.Join(" and ", where)} order by id desc limit {take} offset {skip}";
+            var items = new List<object>(); await using var rd = await c.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct)) items.Add(ChangeRow(rd, false));
+            return Results.Ok(new { total, items });
+        }), false);
+        Keyed(r.MapGet("/api/v1/changes/{idOrNumber}", async (string idOrNumber, ITenantContext t, CancellationToken ct) =>
+        {
+            await using var db = await ServiceDeskModule.Open(t, ct);
+            await using var c = new NpgsqlCommand($"select {chgCols} from servicedesk.changes", db); MatchBy(c, idOrNumber, "CHG-");
+            object change; long id;
+            await using (var rd = await c.ExecuteReaderAsync(ct)) { if (!await rd.ReadAsync(ct)) return Results.NotFound(); id = rd.GetInt64(0); change = ChangeRow(rd, true); }
+            var tasks = new List<object>();
+            await using var tc = new NpgsqlCommand("select stage, title, assignee_name, done from servicedesk.change_tasks where change_id = @i order by stage, position, id", db); ServiceDeskModule.P(tc, "i", id);
+            await using var tr = await tc.ExecuteReaderAsync(ct);
+            while (await tr.ReadAsync(ct)) tasks.Add(new { stage = tr.GetString(0), title = tr.GetString(1), assignee = tr.GetString(2), done = tr.GetBoolean(3) });
+            return Results.Ok(new { change, tasks });
+        }), false);
+        Keyed(r.MapPost("/api/v1/changes", async (JsonElement b, HttpContext h, ITenantContext t, ISettings s, ICompanyDirectory companies, CancellationToken ct) =>
+        {
+            var title = Str(b, "title", 200) ?? ""; if (title == "") return ServiceDeskModule.Bad("bad_input", "title is needed");
+            var type = Pick(b, "type", new[] { "normal", "standard", "emergency" }, "normal", out var e1); if (e1 != null) return ServiceDeskModule.Bad("bad_input", e1);
+            var risk = Pick(b, "risk", new[] { "low", "medium", "high" }, "low", out var e2); if (e2 != null) return ServiceDeskModule.Bad("bad_input", e2);
+            var impact = Pick(b, "impact", new[] { "low", "medium", "high" }, "low", out var e3); if (e3 != null) return ServiceDeskModule.Bad("bad_input", e3);
+            int? company = null; var companyName = "";
+            if (b.TryGetProperty("companyId", out var cv) && cv.ValueKind != JsonValueKind.Null)
+            {
+                if (cv.ValueKind != JsonValueKind.Number || !cv.TryGetInt32(out var cid)) return ServiceDeskModule.Bad("bad_input", "companyId must be a number");
+                var co = await companies.GetAsync(cid, ct); if (co == null) return ServiceDeskModule.Bad("bad_input", "companyId " + cid + " does not exist"); company = cid; companyName = co.Name;
+            }
+            var by = "API: " + (h.Items["apikey"] as string ?? "key");
+            await using var db = await ServiceDeskModule.Open(t, ct);
+            await using var c = new NpgsqlCommand(@"insert into servicedesk.changes (title, description, type, risk, impact, reason, plan, rollback, impact_analysis, company_id, company_name, owner_name, quorum, created_by)
+                values (@t,@d,@ty,@rk,@im,@re,@pl,@rb,@ia,@ci,@cn,@on,@q,@cb) returning id, number", db);
+            ServiceDeskModule.P(c, "t", title); ServiceDeskModule.P(c, "d", Str(b, "description", 8000) ?? ""); ServiceDeskModule.P(c, "ty", type); ServiceDeskModule.P(c, "rk", risk); ServiceDeskModule.P(c, "im", impact);
+            ServiceDeskModule.P(c, "re", Str(b, "reason", 4000) ?? ""); ServiceDeskModule.P(c, "pl", Str(b, "plan", 8000) ?? ""); ServiceDeskModule.P(c, "rb", Str(b, "rollback", 8000) ?? ""); ServiceDeskModule.P(c, "ia", Str(b, "impactAnalysis", 8000) ?? "");
+            ServiceDeskModule.P(c, "ci", company); ServiceDeskModule.P(c, "cn", companyName); ServiceDeskModule.P(c, "on", by); ServiceDeskModule.P(c, "q", await ChangesApi.Quorum(s, type!, ct)); ServiceDeskModule.P(c, "cb", by);
+            long id; string number;
+            await using (var rd = await c.ExecuteReaderAsync(ct)) { await rd.ReadAsync(ct); id = rd.GetInt64(0); number = rd.GetString(1); }
+            return Results.Ok(new { id, number, status = "draft" });
+        }), true);
+
+        const string prbCols = "id, number, title, description, status, priority, category, root_cause, workaround, resolution, owner_name, created_at, updated_at";
+        static object ProblemRow(NpgsqlDataReader r, bool full) => new
+        {
+            id = r.GetInt64(0), number = r.GetString(1), title = r.GetString(2), description = full ? r.GetString(3) : null, status = r.GetString(4), priority = r.GetString(5), category = r.GetString(6),
+            rootCause = full ? r.GetString(7) : null, workaround = full ? r.GetString(8) : null, resolution = full ? r.GetString(9) : null, owner = r.GetString(10), createdAt = r.GetDateTime(11), updatedAt = r.GetDateTime(12),
+        };
+        Keyed(r.MapGet("/api/v1/problems", async (HttpContext h, ITenantContext t, CancellationToken ct) =>
+        {
+            var q = h.Request.Query; await using var db = await ServiceDeskModule.Open(t, ct);
+            await using var c = new NpgsqlCommand { Connection = db }; var where = new List<string> { "true" };
+            if (q["status"].ToString() is { Length: > 0 } st) { if (st == "active") where.Add("status not in ('resolved','closed')"); else { ServiceDeskModule.P(c, "st", st.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)); where.Add("status = any(@st)"); } }
+            var take = Math.Clamp(int.TryParse(q["take"], out var tk) ? tk : 50, 1, 200); var skip = Math.Max(0, int.TryParse(q["skip"], out var sk) ? sk : 0);
+            c.CommandText = $"select count(*) from servicedesk.problems where {string.Join(" and ", where)}"; var total = (long)(await c.ExecuteScalarAsync(ct))!;
+            c.CommandText = $"select {prbCols} from servicedesk.problems where {string.Join(" and ", where)} order by id desc limit {take} offset {skip}";
+            var items = new List<object>(); await using var rd = await c.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct)) items.Add(ProblemRow(rd, false));
+            return Results.Ok(new { total, items });
+        }), false);
+        Keyed(r.MapGet("/api/v1/problems/{idOrNumber}", async (string idOrNumber, ITenantContext t, CancellationToken ct) =>
+        {
+            await using var db = await ServiceDeskModule.Open(t, ct);
+            await using var c = new NpgsqlCommand($"select {prbCols} from servicedesk.problems", db); MatchBy(c, idOrNumber, "PRB-");
+            await using var rd = await c.ExecuteReaderAsync(ct); if (!await rd.ReadAsync(ct)) return Results.NotFound();
+            return Results.Ok(new { problem = ProblemRow(rd, true) });
+        }), false);
+        Keyed(r.MapPost("/api/v1/problems", async (JsonElement b, HttpContext h, ITenantContext t, CancellationToken ct) =>
+        {
+            var title = Str(b, "title", 200) ?? ""; if (title == "") return ServiceDeskModule.Bad("bad_input", "title is needed");
+            var prio = Pick(b, "priority", Prios, "medium", out var e1); if (e1 != null) return ServiceDeskModule.Bad("bad_input", e1);
+            var by = "API: " + (h.Items["apikey"] as string ?? "key");
+            await using var db = await ServiceDeskModule.Open(t, ct);
+            await using var c = new NpgsqlCommand("insert into servicedesk.problems (title, description, priority, category, owner_name, created_by) values (@t,@d,@p,@c,@on,@cb) returning id, number", db);
+            ServiceDeskModule.P(c, "t", title); ServiceDeskModule.P(c, "d", Str(b, "description", 8000) ?? ""); ServiceDeskModule.P(c, "p", prio); ServiceDeskModule.P(c, "c", Str(b, "category", 100) ?? ""); ServiceDeskModule.P(c, "on", by); ServiceDeskModule.P(c, "cb", by);
+            await using var rd = await c.ExecuteReaderAsync(ct); await rd.ReadAsync(ct);
+            return Results.Ok(new { id = rd.GetInt64(0), number = rd.GetString(1), status = "open" });
+        }), true);
     }
 
     static (string url, string events, string? err) ReadHook(JsonElement b)
