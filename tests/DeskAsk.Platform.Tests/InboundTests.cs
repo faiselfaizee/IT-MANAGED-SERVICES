@@ -42,7 +42,7 @@ public class InboundTests : IClassFixture<WebApplicationFactory<Program>>
     async Task<HttpClient> Start()
     {
         var admin = await TestSupport.AdminClient(factory);
-        await Sql("truncate mail.inbox, mail.outbox restart identity; truncate servicedesk.tickets restart identity cascade");
+        await Sql("truncate mail.inbox, mail.outbox restart identity cascade; truncate servicedesk.tickets restart identity cascade");
         await Sql("delete from core.settings where key in ('mail.config','mail.inbound')");
         await Sql("delete from identity.users where \"Email\" like '%@in.test'");
         fake.Pending.Clear();
