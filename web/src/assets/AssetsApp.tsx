@@ -2,6 +2,7 @@ import { useHash } from '../http';
 import { usePerms } from '../perms';
 import Companies from './Companies';
 import Contracts from './Contracts';
+import Renewals from './Renewals';
 import Detail from './Detail';
 import Discover from './Discover';
 import Fleet from './Fleet';
@@ -11,7 +12,7 @@ import { RemoteLog, Repository, Settings } from './Admin';
 
 const NAV: [string, string][] = [
   ['', 'Assets'], ['software', 'Software'], ['discover', 'Discover'], ['fleet', 'Agents & collectors'], ['companies', 'Companies'],
-  ['amc', 'AMC'], ['rentals', 'Rentals'], ['remote-log', 'Remote activity'], ['commands', 'Command repository'], ['settings', 'Settings'],
+  ['amc', 'AMC'], ['rentals', 'Rentals'], ['renewals', 'Renewals'], ['remote-log', 'Remote activity'], ['commands', 'Command repository'], ['settings', 'Settings'],
 ];
 
 /** The Assets module: routes inside the #/assets address. */
@@ -28,6 +29,7 @@ export default function AssetsApp() {
     case 'companies': page = <Companies />; break;
     case 'amc': page = <Contracts kind="amc" />; break;
     case 'rentals': page = <Contracts kind="rentals" />; break;
+    case 'renewals': page = <Renewals />; break;
     case 'remote-log': page = <RemoteLog />; break;
     case 'commands': page = <Repository />; break;
     case 'settings': page = <Settings />; break;
