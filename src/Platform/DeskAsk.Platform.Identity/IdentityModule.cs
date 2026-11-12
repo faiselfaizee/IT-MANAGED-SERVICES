@@ -140,6 +140,7 @@ public sealed class IdentityModule : IPlatformModule
         {
             sub = u.FindFirstValue(Claims.Subject), email = u.FindFirstValue(Claims.Email),
             name = u.FindFirstValue(Claims.Name), role = u.FindFirstValue(Claims.Role), tenant = u.FindFirstValue("tenant"),
+            serverTime = DateTimeOffset.UtcNow,   // lets the page warn when the server's clock or time zone is wrong
         })).RequireAuthorization();
     }
 

@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { whoAmI, type WhoAmI } from './api';
 import { signOut } from './auth';
 import { LOOKS, currentLook, setLook } from './look';
@@ -71,6 +71,8 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   useEffect(() => { whoAmI(fetcher).then(setWho, (e: Error) => setErr(e.message)); }, [fetcher]);
   const me = useLoad<Rec>(fetcher ? null : '/api/platform/me');
   const isAdmin = me.data?.role === 'admin';
+  // every time DeskAsk shows comes from the server's clock; tell an administrator when it disagrees with this computer's
+  const skewMin = useMemo(() => (me.data?.serverTime ? Math.round((new Date(me.data.serverTime as string).getTime() - Date.now()) / 60000) : 0), [me.data]);
   const mine = useLoad<Rec>(fetcher ? null : '/api/platform/access/mine');
   const canAssets = !!fetcher || (!!mine.data?.assets?.read && mine.data.assets.read !== 'none');
   const inAssets = parts[0] === 'assets' && canAssets;
@@ -101,6 +103,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
       </nav>
       <main className="main">
         {err ? <p role="alert" className="err">{err}</p> : null}
+        {isAdmin && Math.abs(skewMin) >= 3 ? <p role="alert" className="err">The server's clock is about {Math.floor(Math.abs(skewMin) / 60)} h {Math.abs(skewMin) % 60} min {skewMin > 0 ? 'ahead of' : 'behind'} this computer, so times shown here and written to logs are wrong. On the server, set the correct time zone first (Windows: <code>Set-TimeZone -Id "India Standard Time"</code> for India), then correct the time (<code>w32tm /resync</code>).</p> : null}
         {inAssets
           ? <Suspense fallback={<p className="muted">Loading…</p>}><AssetsApp /></Suspense>
           : inDesk ? <Suspense fallback={<p className="muted">Loading…</p>}><ServiceDeskApp /></Suspense>

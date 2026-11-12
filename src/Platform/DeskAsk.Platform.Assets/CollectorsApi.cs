@@ -142,9 +142,16 @@ chmod 755 /opt/deskask-collector/deskask-collector
         {
             await using var db = await AgentsApi.Open(t, ct);
             var col = await Auth(http, db, ct); if (col == null) return Results.Json(new { error = "collector_auth" }, statusCode: 401);
+            // one install token per collector and day, not one per click: the same token is handed out again while it has more than two hours left
+            var label = "Push install via " + col.Name + " (automatic, 24 hours)";
+            await using (var f = new NpgsqlCommand("select token_enc from assets.enroll_tokens where created_by = 'collector' and label = @l and kind = 'agent' and not revoked and deleted_at is null and token_enc <> '' and expires_at > now() + interval '2 hours' order by id desc limit 1", db))
+            {
+                AgentsApi.P(f, "l", label);
+                if (await f.ExecuteScalarAsync(ct) is string enc && enc != "") { try { return Results.Ok(new { token = SecretBox.Open(cfg, t.Require().Id, enc) }); } catch (Exception) { /* sealed under another key: make a new one */ } }
+            }
             var tok = "dkat_" + AgentsApi.Rand(21);
             await using var c = new NpgsqlCommand("insert into assets.enroll_tokens (company_id, label, token_hash, prefix, token_enc, expires_at, created_by) values (@c,@l,@h,@p,@e, now() + interval '24 hours', 'collector')", db);
-            AgentsApi.P(c, "c", col.Company); AgentsApi.P(c, "l", "Collector " + col.Name); AgentsApi.P(c, "h", AgentsApi.Hash(tok)); AgentsApi.P(c, "p", tok[..9]); AgentsApi.P(c, "e", SecretBox.Seal(cfg, t.Require().Id, tok));
+            AgentsApi.P(c, "c", col.Company); AgentsApi.P(c, "l", label); AgentsApi.P(c, "h", AgentsApi.Hash(tok)); AgentsApi.P(c, "p", tok[..9]); AgentsApi.P(c, "e", SecretBox.Seal(cfg, t.Require().Id, tok));
             await c.ExecuteNonQueryAsync(ct);
             return Results.Ok(new { token = tok });
         }));
