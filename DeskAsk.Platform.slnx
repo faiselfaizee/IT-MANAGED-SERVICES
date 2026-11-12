@@ -3,6 +3,7 @@
     <Project Path="src/Platform/DeskAsk.Platform.Abstractions/DeskAsk.Platform.Abstractions.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Tenancy/DeskAsk.Platform.Tenancy.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Assets/DeskAsk.Platform.Assets.csproj" />
+    <Project Path="src/Platform/DeskAsk.Platform.Access/DeskAsk.Platform.Access.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.ServiceDesk/DeskAsk.Platform.ServiceDesk.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Jobs/DeskAsk.Platform.Jobs.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Updates/DeskAsk.Platform.Updates.csproj" />

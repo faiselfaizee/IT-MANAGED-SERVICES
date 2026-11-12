@@ -77,7 +77,7 @@ public static class SettingsApi
             }));
         }));
 
-        admin(r.MapPut("/api/servicedesk/people/{userId:guid}", async (Guid userId, JsonElement b, ITenantContext t, IUserDirectory users, ICompanyDirectory companies, IAuditLog audit, CancellationToken ct) =>
+        admin(r.MapPut("/api/servicedesk/people/{userId:guid}", async (Guid userId, JsonElement b, ITenantContext t, IUserDirectory users, ICompanyDirectory companies, IAccess access, IAuditLog audit, CancellationToken ct) =>
         {
             var u = await users.GetAsync(userId, ct);
             if (u == null) return Results.NotFound();
@@ -95,6 +95,7 @@ public static class SettingsApi
                 on conflict (user_id) do update set company_id = @c, may_raise = @r, may_modify = @m, updated_at = now()", db);
             P(c, "u", userId); P(c, "c", company); P(c, "r", Flag("mayRaise")); P(c, "m", Flag("mayModify"));
             await c.ExecuteNonQueryAsync(ct);
+            await access.SetCompanyAsync(userId, company, ct);   // the same company decides what a customer administrator sees in Assets
             await audit.WriteAsync("servicedesk.person_saved", u.Email, "company=" + (company?.ToString() ?? "none"), ct: ct);
             return Results.Ok(new { ok = true });
         }));

@@ -155,3 +155,32 @@ public interface IUserDirectory
     Task<UserRef?> GetAsync(Guid id, CancellationToken ct = default);
     Task<IReadOnlyList<UserRef>> ListAsync(CancellationToken ct = default);
 }
+
+/// <summary>What a person may do, decided in one place (the access module). Modules ask this instead of checking roles themselves.</summary>
+public interface IAccess
+{
+    /// <summary>May this person do this to this module? companyId null asks "to anything at all"; a number asks "to that company's data".</summary>
+    Task<bool> AllowedAsync(System.Security.Claims.ClaimsPrincipal user, string module, string action, int? companyId = null, CancellationToken ct = default);
+    /// <summary>The companies the person may act on: null means every company, an empty list means none.</summary>
+    Task<IReadOnlyList<int>?> ScopeAsync(System.Security.Claims.ClaimsPrincipal user, string module, string action, CancellationToken ct = default);
+    /// <summary>Ties a customer user to the one company whose data they may see (null removes the tie).</summary>
+    Task SetCompanyAsync(Guid userId, int? companyId, CancellationToken ct = default);
+}
+
+public static class Acts { public const string Read = "read", Add = "add", Modify = "modify", Delete = "delete"; public static readonly string[] All = { Read, Add, Modify, Delete }; }
+
+public static class AccessExtensions
+{
+    /// <summary>
+    /// 403 {"error":"forbidden"} unless the person may do this action in the module: on some company's data, or (allCompanies) on every company's data.
+    /// Use allCompanies for endpoints that are not limited by company.
+    /// </summary>
+    public static RouteHandlerBuilder RequireAccess(this RouteHandlerBuilder b, string module, string action, bool allCompanies = false) =>
+        b.AddEndpointFilter(async (ctx, next) =>
+        {
+            var h = ctx.HttpContext; var access = h.RequestServices.GetRequiredService<IAccess>();
+            var ok = allCompanies ? await access.ScopeAsync(h.User, module, action, h.RequestAborted) == null
+                                  : await access.AllowedAsync(h.User, module, action, null, h.RequestAborted);
+            return ok ? await next(ctx) : Results.Json(new { error = "forbidden", module, action }, statusCode: 403);
+        });
+}

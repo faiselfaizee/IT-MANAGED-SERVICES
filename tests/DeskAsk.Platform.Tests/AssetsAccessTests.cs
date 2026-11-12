@@ -27,7 +27,11 @@ public class AssetsAccessTests : IClassFixture<WebApplicationFactory<Program>>
         foreach (var u in urls) Assert.Equal(HttpStatusCode.Forbidden, (await customer.GetAsync(u)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await customer.PostAsync("/api/assets", Json(new { name = "x" }))).StatusCode);
 
-        foreach (var who in new[] { "cadm@acc.test", "eng@acc.test", "view@acc.test" })
+        // a customer administrator who is not tied to a company sees nothing
+        var cadm = await TestSupport.ClientFor(factory, "cadm@acc.test", Pw);
+        foreach (var u in urls) Assert.Equal(HttpStatusCode.Forbidden, (await cadm.GetAsync(u)).StatusCode);
+
+        foreach (var who in new[] { "eng@acc.test", "view@acc.test" })
         {
             var c = await TestSupport.ClientFor(factory, who, Pw);
             foreach (var u in urls) Assert.Equal(HttpStatusCode.OK, (await c.GetAsync(u)).StatusCode);

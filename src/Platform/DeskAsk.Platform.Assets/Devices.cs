@@ -167,14 +167,16 @@ public static class AssetsDevice
     public static void Map(IEndpointRouteBuilder r, string key)
     {
         var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
-        var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole(AssetsAccess.Readers)).RequireModule(key);
+        var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Read, allCompanies: true);
+        var scoped = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Read);
 
         // ---------------------------------------------------------------- companies
-        anyone(r.MapGet("/api/assets/companies", async (ITenantContext t, CancellationToken ct) =>
+        scoped(r.MapGet("/api/assets/companies", async (HttpContext http, ITenantContext t, CancellationToken ct) =>
         {
+            var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             await using var db = await Open(t, ct);
             await using var c = new NpgsqlCommand(@"select c.id, c.name, c.code, c.contact_name, c.contact_email, c.phone, c.address, c.notes, c.status, c.remote_allowed,
-                (select count(*) from assets.assets a where a.company_id = c.id) from assets.companies c order by lower(c.name)", db);
+                (select count(*) from assets.assets a where a.company_id = c.id) from assets.companies c where (not @sc or c.id = any(@scope)) order by lower(c.name)", db).Scoped(scope);
             var rows = new List<object>(); await using var rd = await c.ExecuteReaderAsync(ct);
             while (await rd.ReadAsync(ct)) rows.Add(new { id = rd.GetInt32(0), name = rd.GetString(1), code = rd.GetString(2), contactName = rd.GetString(3), contactEmail = rd.GetString(4), phone = rd.GetString(5), address = rd.GetString(6), notes = rd.GetString(7), status = rd.GetString(8), remoteAllowed = rd.GetBoolean(9), assets = rd.GetInt64(10) });
             return Results.Ok(rows);
@@ -283,16 +285,18 @@ public static class AssetsDevice
         }
 
         // ---------------------------------------------------------------- the device side of one asset
-        anyone(r.MapGet("/api/assets/{id:long}/device", async (long id, ITenantContext t, Microsoft.Extensions.Configuration.IConfiguration cfg, CancellationToken ct) =>
+        scoped(r.MapGet("/api/assets/{id:long}/device", async (HttpContext http, long id, ITenantContext t, Microsoft.Extensions.Configuration.IConfiguration cfg, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
+            if (!await AssetsAccess.InScope(db, id, await AssetsAccess.ScopeAsync(http, Acts.Read), ct)) return Results.NotFound();
             var d = await Device(db, id, OfflineSeconds(cfg), ct);
             return d == null ? Results.NotFound() : Results.Ok(d);
         }));
 
-        anyone(r.MapGet("/api/assets/{id:long}/applications", async (long id, HttpContext http, ITenantContext t, CancellationToken ct) =>
+        scoped(r.MapGet("/api/assets/{id:long}/applications", async (long id, HttpContext http, ITenantContext t, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
+            if (!await AssetsAccess.InScope(db, id, await AssetsAccess.ScopeAsync(http, Acts.Read), ct)) return Results.NotFound();
             var q = http.Request.Query["q"].ToString().Trim();
             await using var c = new NpgsqlCommand(@"select e->>'name', coalesce(e->>'version',''), coalesce(e->>'publisher',''), coalesce(e->>'installed_on','')
                 from assets.assets a cross join lateral jsonb_array_elements(a.installed_apps) e

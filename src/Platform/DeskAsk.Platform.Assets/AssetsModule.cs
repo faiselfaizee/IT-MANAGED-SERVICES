@@ -383,7 +383,8 @@ public sealed class AssetsModule : IPlatformModule
     public void MapEndpoints(IEndpointRouteBuilder r)
     {
         var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(Key);
-        var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole(AssetsAccess.Readers)).RequireModule(Key);
+        var delegated = (string action, RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(Key).RequireAccess(Key, action);
+        var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(Key).RequireAccess(Key, Acts.Read);
 
         AssetsDevice.Map(r, Key);
         AgentsApi.Map(r, Key);
@@ -454,6 +455,7 @@ public sealed class AssetsModule : IPlatformModule
         // ---- assets: list, one, summary
         anyone(r.MapGet("/api/assets", async (HttpContext http, ITenantContext t, CancellationToken ct) =>
         {
+            var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             var q = http.Request.Query;
             var search = q["search"].ToString().Trim(); var status = q["status"].ToString(); var assigned = q["assignedTo"].ToString().Trim();
             int.TryParse(q["typeId"], out var typeId); int.TryParse(q["take"], out var take); int.TryParse(q["skip"], out var skip);
@@ -463,42 +465,46 @@ public sealed class AssetsModule : IPlatformModule
             await using var c = new NpgsqlCommand($@"select {Cols}, count(*) over() from {From}
                 where (@q = '' or a.name ilike @l or a.tag ilike @l or a.serial ilike @l or a.model ilike @l or a.assigned_to ilike @l or a.location ilike @l)
                   and (@st = '' or a.status = @st) and (@ty = 0 or a.type_id = @ty) and (@as = '' or lower(a.assigned_to) = lower(@as))
+                  and (not @sc or a.company_id = any(@scope))
                 order by a.id desc offset @sk limit @tk", db);
+            AssetsAccess.Bind(c, scope);
             P(c, "q", search); P(c, "l", Like(search)); P(c, "st", status); P(c, "ty", typeId); P(c, "as", assigned); P(c, "sk", skip); P(c, "tk", take);
             var items = new List<object>(); long total = 0;
             await using (var rd = await c.ExecuteReaderAsync(ct))
                 while (await rd.ReadAsync(ct)) { items.Add(Row(rd)); total = rd.GetInt64(19); }
             if (items.Count == 0 && skip > 0)
             {
-                await using var cc = new NpgsqlCommand("select count(*) from assets.assets", db);
+                await using var cc = new NpgsqlCommand("select count(*) from assets.assets a where (not @sc or a.company_id = any(@scope))", db); AssetsAccess.Bind(cc, scope);
                 total = (long)(await cc.ExecuteScalarAsync(ct))!;
             }
             return Results.Ok(new { total, items });
         }));
 
-        anyone(r.MapGet("/api/assets/summary", async (ITenantContext t, CancellationToken ct) =>
+        anyone(r.MapGet("/api/assets/summary", async (HttpContext http, ITenantContext t, CancellationToken ct) =>
         {
+            var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             await using var db = await Open(t, ct);
             var byStatus = Statuses.ToDictionary(s => s, _ => 0L); var byType = new List<object>();
-            await using (var c = new NpgsqlCommand("select status, count(*) from assets.assets group by status", db))
+            await using (var c = new NpgsqlCommand("select status, count(*) from assets.assets a where (not @sc or a.company_id = any(@scope)) group by status", db).Scoped(scope))
             await using (var rd = await c.ExecuteReaderAsync(ct)) while (await rd.ReadAsync(ct)) byStatus[rd.GetString(0)] = rd.GetInt64(1);
-            await using (var c = new NpgsqlCommand("select coalesce(t.name, '(no type)'), count(*) from assets.assets a left join assets.types t on t.id = a.type_id group by 1 order by 2 desc, 1", db))
+            await using (var c = new NpgsqlCommand("select coalesce(t.name, '(no type)'), count(*) from assets.assets a left join assets.types t on t.id = a.type_id where (not @sc or a.company_id = any(@scope)) group by 1 order by 2 desc, 1", db).Scoped(scope))
             await using (var rd = await c.ExecuteReaderAsync(ct)) while (await rd.ReadAsync(ct)) byType.Add(new { type = rd.GetString(0), count = rd.GetInt64(1) });
             long w30, w90, expired;
             await using (var c = new NpgsqlCommand(@"select count(*) filter (where warranty_end >= current_date and warranty_end < current_date + 30),
                 count(*) filter (where warranty_end >= current_date and warranty_end < current_date + 90), count(*) filter (where warranty_end < current_date)
-                from assets.assets where status not in ('retired','lost') and warranty_end is not null", db))
+                from assets.assets where status not in ('retired','lost') and warranty_end is not null and (not @sc or company_id = any(@scope))", db).Scoped(scope))
             await using (var rd = await c.ExecuteReaderAsync(ct)) { await rd.ReadAsync(ct); (w30, w90, expired) = (rd.GetInt64(0), rd.GetInt64(1), rd.GetInt64(2)); }
             return Results.Ok(new { total = byStatus.Values.Sum(), byStatus, byType, warrantyEndsIn30Days = w30, warrantyEndsIn90Days = w90, warrantyExpired = expired });
         }));
 
-        anyone(r.MapGet("/api/assets/{id:long}", async (long id, ITenantContext t, CancellationToken ct) =>
+        anyone(r.MapGet("/api/assets/{id:long}", async (HttpContext http, long id, ITenantContext t, CancellationToken ct) =>
         {
+            var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             await using var db = await Open(t, ct);
             object? asset = null;
-            await using (var c = new NpgsqlCommand($"select {Cols} from {From} where a.id = @i", db))
+            await using (var c = new NpgsqlCommand($"select {Cols} from {From} where a.id = @i and (not @sc or a.company_id = any(@scope))", db))
             {
-                P(c, "i", id);
+                P(c, "i", id); AssetsAccess.Bind(c, scope);
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 if (await rd.ReadAsync(ct)) asset = Row(rd);
             }
@@ -514,8 +520,10 @@ public sealed class AssetsModule : IPlatformModule
         }));
 
         // ---- assets: create, change, delete
-        admin(r.MapPost("/api/assets", async (JsonElement body, ClaimsPrincipal u, ITenantContext t, IEntitlements ent, IAuditLog audit, CancellationToken ct) =>
+        delegated(Acts.Add, r.MapPost("/api/assets", async (HttpContext http, JsonElement body, ClaimsPrincipal u, ITenantContext t, IEntitlements ent, IAuditLog audit, CancellationToken ct) =>
         {
+            var scope = await AssetsAccess.ScopeAsync(http, Acts.Add);
+            if (scope != null && scope.Count != 1) return Results.Json(new { error = "forbidden", detail = "You may add assets for one company only; ask an administrator." }, statusCode: 403);
             await using var db = await Open(t, ct);
             var v = await Read(body, true, db, null, ct);
             if (v.Error != null) return Bad("bad_input", v.Error);
@@ -523,13 +531,18 @@ public sealed class AssetsModule : IPlatformModule
             if (!await ent.WithinLimitAsync(Key, "max_assets", active, ct)) return Results.Json(new { error = "limit_reached", limit = "max_assets" }, statusCode: 402);
             var created = await Insert(db, v, Actor(u), "manual", ct);
             if (created.Error != null) return created.Error == "duplicate" ? Results.Conflict(new { error = "duplicate", detail = created.Detail }) : Bad(created.Error, created.Detail);
+            if (scope != null)
+            {   // someone limited to one company adds assets to that company
+                await using var own = new NpgsqlCommand("update assets.assets set company_id = @c where id = @i", db); P(own, "c", scope[0]); P(own, "i", created.Id); await own.ExecuteNonQueryAsync(ct);
+            }
             await audit.WriteAsync("assets.created", created.Id.ToString(), created.Tag, ct: ct);
             return Results.Ok(new { id = created.Id, tag = created.Tag });
         }));
 
-        admin(r.MapPut("/api/assets/{id:long}", async (long id, JsonElement body, ClaimsPrincipal u, ITenantContext t, IEntitlements ent, IAuditLog audit, CancellationToken ct) =>
+        delegated(Acts.Modify, r.MapPut("/api/assets/{id:long}", async (HttpContext http, long id, JsonElement body, ClaimsPrincipal u, ITenantContext t, IEntitlements ent, IAuditLog audit, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
+            if (!await AssetsAccess.InScope(db, id, await AssetsAccess.ScopeAsync(http, Acts.Modify), ct)) return Results.NotFound();
             await using var tx = await db.BeginTransactionAsync(ct);
             Dictionary<string, string> before = new(); int? typeId = null;
             await using (var c = new NpgsqlCommand("select name, type_id, status, manufacturer, model, serial, location, assigned_to, purchase_date, purchase_cost, warranty_end, notes, custom from assets.assets where id = @i for update", db, tx))
@@ -576,9 +589,10 @@ public sealed class AssetsModule : IPlatformModule
             return Results.Ok(new { ok = true, changed = changes.Count });
         }));
 
-        admin(r.MapDelete("/api/assets/{id:long}", async (long id, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        delegated(Acts.Delete, r.MapDelete("/api/assets/{id:long}", async (HttpContext http, long id, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
+            if (!await AssetsAccess.InScope(db, id, await AssetsAccess.ScopeAsync(http, Acts.Delete), ct)) return Results.NotFound();
             await using var c = new NpgsqlCommand("delete from assets.assets where id = @i returning tag", db); P(c, "i", id);
             if (await c.ExecuteScalarAsync(ct) is not string tag) return Results.NotFound();
             await audit.WriteAsync("assets.deleted", id.ToString(), tag, ct: ct);
@@ -588,8 +602,9 @@ public sealed class AssetsModule : IPlatformModule
         // ---- CSV
         anyone(r.MapGet("/api/assets/export.csv", async (HttpContext http, ITenantContext t, CancellationToken ct) =>
         {
+            var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             await using var db = await Open(t, ct);
-            await using var c = new NpgsqlCommand($"select {Cols} from {From} order by a.id", db);
+            await using var c = new NpgsqlCommand($"select {Cols} from {From} where (not @sc or a.company_id = any(@scope)) order by a.id", db); AssetsAccess.Bind(c, scope);
             var sb = new StringBuilder("tag,name,type,status,manufacturer,model,serial,location,assigned_to,purchase_date,purchase_cost,warranty_end,notes\r\n");
             await using var rd = await c.ExecuteReaderAsync(ct);
             while (await rd.ReadAsync(ct))
@@ -601,8 +616,9 @@ public sealed class AssetsModule : IPlatformModule
             return Results.File(Encoding.UTF8.GetBytes(sb.ToString()), "text/csv; charset=utf-8", "assets.csv");
         }));
 
-        admin(r.MapPost("/api/assets/import", async (HttpRequest req, ClaimsPrincipal u, ITenantContext t, IEntitlements ent, IAuditLog audit, CancellationToken ct) =>
+        delegated(Acts.Add, r.MapPost("/api/assets/import", async (HttpContext http, HttpRequest req, ClaimsPrincipal u, ITenantContext t, IEntitlements ent, IAuditLog audit, CancellationToken ct) =>
         {
+            if (await AssetsAccess.ScopeAsync(http, Acts.Add) != null) return Results.Json(new { error = "forbidden", detail = "Importing needs permission to add assets for every company." }, statusCode: 403);
             if ((req.ContentLength ?? 0) > 5 * 1024 * 1024) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
             using var sr = new StreamReader(req.Body, Encoding.UTF8);
             var text = await sr.ReadToEndAsync(ct);
