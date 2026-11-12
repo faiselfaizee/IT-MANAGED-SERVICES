@@ -263,3 +263,37 @@ func TestCredsForUsesPlatformLogins(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+func TestWinReachNamesTheProblemWhenNoWinRMPortAnswers(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	open := l.Addr().(*net.TCPAddr).Port
+	old := winRMPorts
+	defer func() { winRMPorts = old }()
+
+	winRMPorts = [2]int{open, 1}
+	if ssl, err := winReach(context.Background(), "127.0.0.1"); err != nil || ssl {
+		t.Fatalf("http port open: ssl=%v err=%v", ssl, err)
+	}
+	winRMPorts = [2]int{1, open}
+	if ssl, err := winReach(context.Background(), "127.0.0.1"); err != nil || !ssl {
+		t.Fatalf("only https open: ssl=%v err=%v", ssl, err)
+	}
+	winRMPorts = [2]int{1, 2}
+	_, err = winReach(context.Background(), "127.0.0.1")
+	if err == nil || !strings.Contains(err.Error(), "Enable-PSRemoting") {
+		t.Fatalf("no explanation: %v", err)
+	}
+}

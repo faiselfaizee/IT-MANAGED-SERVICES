@@ -135,20 +135,43 @@ const remoteWrapper = `
 $ErrorActionPreference = 'Stop'
 $opt = New-PSSessionOption -OpenTimeout 30000 -OperationTimeout 180000
 $args2 = @{ ComputerName = $env:DK_HOST; ScriptBlock = ([scriptblock]::Create($env:DK_SCRIPT)); SessionOption = $opt; Authentication = 'Negotiate' }
+if ($env:DK_SSL) { $args2.UseSSL = $true; $args2.SessionOption = New-PSSessionOption -OpenTimeout 30000 -OperationTimeout 180000 -SkipCACheck -SkipCNCheck }
 if ($env:DK_USER) { $sec = ConvertTo-SecureString $env:DK_PW -AsPlainText -Force; $args2.Credential = New-Object System.Management.Automation.PSCredential($env:DK_USER, $sec) }
 Invoke-Command @args2
 `
 
 var errNeedsWindows = errors.New("reading or installing on Windows computers needs the collector to run on Windows (PowerShell remoting); install the agent on this computer by hand or by Group Policy")
 
+// winRMPorts are the HTTP and HTTPS ports of PowerShell remoting (variables so a test can point them at a local listener).
+var winRMPorts = [2]int{5985, 5986}
+
+// winReach checks from the collector that the computer answers on a WinRM port, and says which one (ssl is true when only HTTPS answers).
+// A running WinRM service is not enough: remoting also needs its listener and a firewall rule that lets this computer in.
+func winReach(ctx context.Context, host string) (ssl bool, err error) {
+	if ok, _ := TCPOpen(ctx, host, winRMPorts[0], 4*time.Second); ok {
+		return false, nil
+	}
+	if ok, _ := TCPOpen(ctx, host, winRMPorts[1], 4*time.Second); ok {
+		return true, nil
+	}
+	return false, fmt.Errorf("%s does not answer on port %d or %d from the collector. The WinRM service can be running while remoting is not set up or is blocked. On that computer run (as administrator)  Enable-PSRemoting -Force  and, if the collector is on another network, allow it in the firewall:  Set-NetFirewallRule -Name WINRM-HTTP-In-TCP -RemoteAddress Any  (on a Public network profile also  Set-NetFirewallRule -Name WINRM-HTTP-In-TCP-PUBLIC -RemoteAddress Any). Also check that the address %s is the computer's address on the collector's network", host, winRMPorts[0], winRMPorts[1], host)
+}
+
 func winRemote(ctx context.Context, c config.Cred, host, script string, timeout time.Duration) (string, error) {
 	if runtime.GOOS != "windows" {
 		return "", errNeedsWindows
+	}
+	ssl, rerr := winReach(ctx, host)
+	if rerr != nil {
+		return "", rerr
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "powershell.exe", inventory.PowerShellArgs(remoteWrapper)...)
 	cmd.Env = append(os.Environ(), "DK_HOST="+host, "DK_SCRIPT="+script, "DK_USER="+c.User, "DK_PW="+c.Password)
+	if ssl {
+		cmd.Env = append(cmd.Env, "DK_SSL=1")
+	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
@@ -246,7 +269,7 @@ func WinHint(msg string) string {
 	case strings.Contains(m, "trustedhosts") || strings.Contains(m, "kerberos"):
 		return msg + " - the computer is not in the domain: on the collector's computer run  Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value '<computer>' -Force  (or install by hand or Group Policy)"
 	case strings.Contains(m, "winrm") || strings.Contains(m, "connecting to remote server") || strings.Contains(m, "cannot connect"):
-		return msg + " - check that the computer is switched on and reachable from the collector, that WinRM is enabled on it (run  Enable-PSRemoting -Force  there) and that port 5985 is open in its firewall"
+		return msg + " - the collector reached the WinRM port but PowerShell remoting did not start: run  Enable-PSRemoting -Force  on that computer, check that it accepts the login's account (administrators group) and that the date and time are right on both computers"
 	}
 	return msg
 }

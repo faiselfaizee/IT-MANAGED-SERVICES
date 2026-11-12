@@ -79,3 +79,11 @@ Save the logins under **Assets > Credentials** (Windows user and password, Linux
 - Administrators and engineers add and edit assets. Viewers only read.
 - Only people with the **delete** right can delete: administrators, and anyone (or any group, such as "Team leads" or "Managers") given the Assets > delete grant under Access.
 - Everyone else uses **Request deletion** on the asset and gives a reason. The request appears under **Assets > Delete requests**; an approver approves (the asset is deleted) or rejects with a note. A person cannot approve their own request (administrators excepted). Every step is in the audit log.
+
+## Windows push: "WinRM is running but the install fails"
+A running WinRM service is not the same as remoting being ready. Before it starts PowerShell, the collector tries the computer's port 5985 (and 5986 for HTTPS) and the log says which one answered. Check, from the collector's computer: `Test-NetConnection <computer> -Port 5985` and `Test-WSMan <computer>`. On the target, as administrator:
+- `Enable-PSRemoting -Force` creates the listener and the firewall rule (it refuses on a Public network profile: change the profile or add `-SkipNetworkProfileCheck`).
+- The default firewall rule only lets the same subnet in. For a collector on another subnet: `Set-NetFirewallRule -Name WINRM-HTTP-In-TCP -RemoteAddress Any`.
+- `winrm enumerate winrm/config/listener` must list a listener.
+- The login must belong to the target's Administrators group; use `DOMAIN\user` for a domain account and `.\user` for a local one.
+- Outside a domain, the collector's computer must trust the target: `Set-Item WSMan:\localhost\Client\TrustedHosts -Value '<computer>' -Force`.
