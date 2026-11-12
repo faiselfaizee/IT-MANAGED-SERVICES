@@ -208,7 +208,10 @@ public sealed class MailFetchJob : IJobHandler
                     await using var u = new NpgsqlCommand("update mail.inbox set status = 'converted', ticket_number = @n where id = @i", db); u.Parameters.AddWithValue("n", number); u.Parameters.AddWithValue("i", id); await u.ExecuteNonQueryAsync(ct);
                 }
             }
-            catch (Exception e) when (e is not OperationCanceledException) { /* stays in the inbox for a person */ }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {   // the message stays in the inbox for a person; the audit log says why the automatic step failed
+                try { await sp.GetRequiredService<IAuditLog>().WriteAsync("mail.inbound_error", m.MessageId, e.Message.Length > 300 ? e.Message[..300] : e.Message, "system", ct); } catch { }
+            }
             return true;
         }, ct);
     }

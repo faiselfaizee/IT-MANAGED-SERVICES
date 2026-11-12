@@ -76,7 +76,8 @@ public class InboundTests : IClassFixture<WebApplicationFactory<Program>>
         fake.Pending.Add(Msg("m1", "pat@acme.test", $"Re: [{no}] Printer down", "duplicate delivery"));
         await Fetch(admin);
         var d = await J(await admin.GetAsync($"/api/servicedesk/tickets/{id}"));
-        Assert.Equal("open", d.GetProperty("ticket").GetProperty("status").GetString());   // the customer answered
+        var why = await Scalar<string>("select coalesce(string_agg(target || ': ' || detail, ' | '), 'no errors') from core.audit where action = 'mail.inbound_error'") + " / inbox: " + await Scalar<string>("select coalesce(string_agg(message_id || '=' || status, ','), 'empty') from mail.inbox");
+        Assert.True("open" == d.GetProperty("ticket").GetProperty("status").GetString(), why);   // the customer answered
         Assert.Contains(d.GetProperty("comments").EnumerateArray(), c => c.GetProperty("body").GetString() == "It is the third floor one");
         Assert.DoesNotContain(d.GetProperty("comments").EnumerateArray(), c => (c.GetProperty("body").GetString() ?? "").Contains("not involved"));
         Assert.Equal(2L, await Scalar<long>("select count(*) from mail.inbox where status = 'new'"));
