@@ -26,9 +26,10 @@ export async function apiText(path: string): Promise<string> {
   if (!r.ok) throw new ApiError(r.status, message(r.status, undefined));
   return r.text();
 }
-function message(status: number, j?: Rec): string {
+const MODULE_NAMES: Record<string, string> = { servicedesk: 'Service Desk', assets: 'Asset management', monitoring: 'Monitoring', adsuite: 'AD Manager', vault: 'Vault', backup: 'Backup' };
+export function message(status: number, j?: Rec): string {
   if (j?.detail) return String(j.detail);
-  if (j?.error === 'module_not_licensed') return 'Asset management is not part of this licence.';
+  if (j?.error === 'module_not_licensed') return `${MODULE_NAMES[String(j.module)] ?? 'This part of DeskAsk'} is not part of this licence. Ask your administrator to add it to the licence.`;
   if (j?.error === 'limit_reached') return 'The licence limit for assets has been reached.';
   if (j?.error) return String(j.error).replace(/_/g, ' ');
   return status === 403 ? 'Only administrators can do this.' : status === 404 ? 'Not found.' : `The server answered ${status}.`;

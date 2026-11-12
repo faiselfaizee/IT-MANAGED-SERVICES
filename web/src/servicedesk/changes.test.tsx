@@ -44,3 +44,10 @@ test('the problem list offers to raise a problem from repeated tickets', async (
   await waitFor(() => expect(screen.getByText('Raise a problem')).toBeTruthy());
   expect(screen.getByText('Network', { selector: 'strong' })).toBeTruthy();
 });
+
+test('a missing licence names the module that is missing', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => String(url).startsWith('/api/servicedesk/me')
+    ? new Response(JSON.stringify({ error: 'module_not_licensed', module: 'servicedesk' }), { status: 402 }) : new Response('{}', { status: 404 })));
+  location.hash = '#/servicedesk'; render(<ServiceDeskApp />);
+  await waitFor(() => expect(screen.getAllByText(/Service Desk is not part of this licence/).length).toBeGreaterThan(0));
+});

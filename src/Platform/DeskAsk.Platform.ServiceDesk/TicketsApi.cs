@@ -169,7 +169,7 @@ public static class TicketsApi
         }));
 
         // ---------------------------------------------------------------- open a ticket
-        anyone(r.MapPost("/api/servicedesk/tickets", async (JsonElement b, ClaimsPrincipal u, ITenantContext t, ISettings s, ICompanyDirectory companies, IAssetDirectory assets, IUserDirectory users, IMailQueue mail, IAuditLog audit, CancellationToken ct) =>
+        anyone(r.MapPost("/api/servicedesk/tickets", async (JsonElement b, ClaimsPrincipal u, ITenantContext t, ISettings s, ICompanyDirectory companies, IAssetDirectory assets, IUserDirectory users, IMailQueue mailq, IAuditLog audit, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
             var w = await WhoAsync(u, db, ct);
@@ -221,7 +221,7 @@ public static class TicketsApi
             await using (var rd = await c.ExecuteReaderAsync(ct)) { await rd.ReadAsync(ct); id = rd.GetInt64(0); number = rd.GetString(1); }
             await Event(db, id, "ticket.created", new { number, priority, company }, ct);
             await audit.WriteAsync("servicedesk.ticket_created", number, subject, ct: ct);
-            await Tell(mail, users, db, id, "created", description, w, ct);
+            await Tell(mailq, users, db, id, "created", description, w, ct);
             return Results.Created("/api/servicedesk/tickets/" + id, new { id, number });
         }));
 
@@ -297,7 +297,7 @@ public static class TicketsApi
         }));
 
         // ---------------------------------------------------------------- status
-        anyone(r.MapPost("/api/servicedesk/tickets/{id:long}/status", async (long id, JsonElement b, ClaimsPrincipal u, ITenantContext t, ISettings s, IUserDirectory users, IMailQueue mail, IAuditLog audit, CancellationToken ct) =>
+        anyone(r.MapPost("/api/servicedesk/tickets/{id:long}/status", async (long id, JsonElement b, ClaimsPrincipal u, ITenantContext t, ISettings s, IUserDirectory users, IMailQueue mailq, IAuditLog audit, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
             var (found, number, status, w) = await Load(id, u, db, s, false, ct);
@@ -333,13 +333,13 @@ public static class TicketsApi
             if (note != "") await Note(db, id, w, internalNote ? "internal" : "public", note, ct);
             await Event(db, id, "ticket.status", new { @from = prev, to }, ct);
             await audit.WriteAsync("servicedesk.ticket_status", number, prev + " → " + to, ct: ct);
-            if (w.Staff && to == "resolved") await Tell(mail, users, db, id, "resolved", note, w, ct);
-            else if (w.Staff && note != "" && !internalNote) await Tell(mail, users, db, id, "reply", note, w, ct);
+            if (w.Staff && to == "resolved") await Tell(mailq, users, db, id, "resolved", note, w, ct);
+            else if (w.Staff && note != "" && !internalNote) await Tell(mailq, users, db, id, "reply", note, w, ct);
             return Results.Ok(new { ok = true, changed = true });
         }));
 
         // ---------------------------------------------------------------- comments
-        anyone(r.MapPost("/api/servicedesk/tickets/{id:long}/comments", async (long id, JsonElement b, ClaimsPrincipal u, ITenantContext t, ISettings s, IUserDirectory users, IMailQueue mail, IAuditLog audit, CancellationToken ct) =>
+        anyone(r.MapPost("/api/servicedesk/tickets/{id:long}/comments", async (long id, JsonElement b, ClaimsPrincipal u, ITenantContext t, ISettings s, IUserDirectory users, IMailQueue mailq, IAuditLog audit, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
             var (found, number, status, w) = await Load(id, u, db, s, false, ct);
@@ -370,7 +370,7 @@ public static class TicketsApi
             await Touch(db, id, ct);
             await Event(db, id, isInternal ? "ticket.note" : "ticket.comment", new { by = w.Name, customer = w.Customer }, ct);
             await audit.WriteAsync("servicedesk.ticket_comment", number, isInternal ? "internal" : "public", ct: ct);
-            if (!isInternal) await Tell(mail, users, db, id, w.Staff ? "reply" : "customer_reply", body, w, ct);
+            if (!isInternal) await Tell(mailq, users, db, id, w.Staff ? "reply" : "customer_reply", body, w, ct);
             return Results.Ok(new { ok = true });
         }));
 

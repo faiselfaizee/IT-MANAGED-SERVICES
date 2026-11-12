@@ -158,3 +158,18 @@ public class MailTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.NotFound, (await admin.PostAsync($"/api/platform/mail/outbox/{fid}/retry", null)).StatusCode);
     }
 }
+
+public class SignOutTests : IClassFixture<WebApplicationFactory<Program>>
+{
+    readonly WebApplicationFactory<Program> factory;
+    public SignOutTests(WebApplicationFactory<Program> f) => factory = f.WithWebHostBuilder(b => TestSupport.Configure(b));
+
+    [PgFact]
+    public async Task SigningOutEndsTheSessionAndReturnsToTheStartPage()
+    {
+        var c = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var r = await c.GetAsync("/connect/logout");
+        Assert.Equal(HttpStatusCode.Redirect, r.StatusCode);
+        Assert.Equal("/", r.Headers.Location?.OriginalString);
+    }
+}

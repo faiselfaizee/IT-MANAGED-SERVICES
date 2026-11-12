@@ -51,4 +51,5 @@ export async function ensureSignedIn(): Promise<boolean> {
   if (accessToken()) return true;
   await signIn(); return false;
 }
-export function signOut() { set(TOKEN, null); location.assign('/'); }
+/** Ends the session on the server too (its cookie would otherwise sign the person straight back in), then returns to the start page. */
+export function signOut() { set(TOKEN, null); location.assign('/connect/logout'); }

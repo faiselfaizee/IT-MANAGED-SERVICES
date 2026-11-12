@@ -210,6 +210,9 @@ public sealed class IdentityModule : IPlatformModule
         var who = (await http.AuthenticateAsync(CookieName)).Principal?.FindFirstValue("sub");
         await http.SignOutAsync(CookieName);
         if (who != null) await audit.WriteAsync("auth.logout", actor: who);
+        // the web app's own sign-out passes no return address: send the browser back to the start page, which asks for a fresh sign-in
+        var hasReturn = http.Request.Query.ContainsKey("post_logout_redirect_uri") || (http.Request.HasFormContentType && http.Request.Form.ContainsKey("post_logout_redirect_uri"));
+        if (!hasReturn) return Results.Redirect("/");
         return Results.SignOut(new AuthenticationProperties { RedirectUri = "/" }, new[] { OpenIddictServerAspNetCoreDefaults.AuthenticationScheme });
     }
 
