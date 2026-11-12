@@ -167,7 +167,7 @@ public static class AssetsDevice
     public static void Map(IEndpointRouteBuilder r, string key)
     {
         var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
-        var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(key);
+        var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole(AssetsAccess.Readers)).RequireModule(key);
 
         // ---------------------------------------------------------------- companies
         anyone(r.MapGet("/api/assets/companies", async (ITenantContext t, CancellationToken ct) =>

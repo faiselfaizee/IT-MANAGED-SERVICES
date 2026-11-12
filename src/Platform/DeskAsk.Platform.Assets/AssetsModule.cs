@@ -383,7 +383,7 @@ public sealed class AssetsModule : IPlatformModule
     public void MapEndpoints(IEndpointRouteBuilder r)
     {
         var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(Key);
-        var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(Key);
+        var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole(AssetsAccess.Readers)).RequireModule(Key);
 
         AssetsDevice.Map(r, Key);
         AgentsApi.Map(r, Key);

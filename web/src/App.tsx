@@ -16,8 +16,8 @@ const AssetsApp = lazy(() => import('./assets/AssetsApp'));
 const Users = lazy(() => import('./Users'));
 const ServiceDeskApp = lazy(() => import('./servicedesk/ServiceDeskApp'));
 
-function Home({ who, live }: { who: WhoAmI | null; live: boolean }) {
-  const sum = useLoad<Rec>(live ? '/api/assets/summary' : null);
+function Home({ who, live, assets }: { who: WhoAmI | null; live: boolean; assets: boolean }) {
+  const sum = useLoad<Rec>(live && assets ? '/api/assets/summary' : null);
   const s = sum.data;
   const desk = useLoad<Rec>(live ? '/api/servicedesk/summary' : null);
   return <>
@@ -26,7 +26,7 @@ function Home({ who, live }: { who: WhoAmI | null; live: boolean }) {
       <p>Your IT operations in one place.</p>
     </header>
     <div className="tiles">
-      <a className="tile tile-main" href="#/assets">
+      {assets && <a className="tile tile-main" href="#/assets">
         <span className="chip"><Icon name="Assets" size={22} /></span>
         <h2>Assets</h2>
         <p className="muted">Every device, licence and contract, with QR labels, agents and discovery.</p>
@@ -36,7 +36,7 @@ function Home({ who, live }: { who: WhoAmI | null; live: boolean }) {
           <div><dt>Warranty ends within 30 days</dt><dd>{s.warrantyEndsIn30Days ?? 0}</dd></div>
         </dl> : null}
         <span className="open">Open Assets</span>
-      </a>
+      </a>}
       <a className="tile tile-main" href="#/servicedesk">
         <span className="chip"><Icon name="Service Desk" size={22} /></span>
         <h2>Service Desk</h2>
@@ -65,7 +65,8 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   useEffect(() => { whoAmI(fetcher).then(setWho, (e: Error) => setErr(e.message)); }, [fetcher]);
   const me = useLoad<Rec>(fetcher ? null : '/api/platform/me');
   const isAdmin = me.data?.role === 'admin';
-  const inAssets = parts[0] === 'assets';
+  const canAssets = !!fetcher || ['admin', 'engineer', 'viewer', 'cadmin'].includes(me.data?.role);
+  const inAssets = parts[0] === 'assets' && canAssets;
   const inDesk = parts[0] === 'servicedesk';
   const inUsers = parts[0] === 'users' && isAdmin;
   return (
@@ -73,7 +74,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
       <nav aria-label="Modules" className="side">
         <a className="brand" href="#/" aria-label="DeskAsk Platform home"><Logo /><strong>DeskAsk</strong></a>
         <a href="#/" className={!inAssets && !inDesk && !inUsers ? 'on' : ''}><Icon name="home" />Home</a>
-        {MODULES.map((m) => m === 'Assets'
+        {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
           ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
           : m === 'Service Desk'
             ? <a key={m} href="#/servicedesk" className={inDesk ? 'on' : ''}><Icon name={m} />{m}</a>
@@ -87,7 +88,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           ? <Suspense fallback={<p className="muted">Loading…</p>}><AssetsApp /></Suspense>
           : inDesk ? <Suspense fallback={<p className="muted">Loading…</p>}><ServiceDeskApp /></Suspense>
           : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><Users meId={me.data?.sub} /></Suspense>
-          : !err ? <Home who={who} live={!fetcher} /> : null}
+          : !err ? <Home who={who} live={!fetcher} assets={canAssets} /> : null}
       </main>
     </div>
   );
