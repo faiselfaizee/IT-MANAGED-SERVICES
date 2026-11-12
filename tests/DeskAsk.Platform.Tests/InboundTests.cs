@@ -68,11 +68,12 @@ public class InboundTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var admin = await Start();
         var id = await Ticket(admin, new { subject = "Printer down", requesterName = "Pat", requesterEmail = "pat@acme.test" });
+        var no = await Scalar<string>($"select number from servicedesk.tickets where id = {id}");
         await admin.PostAsync($"/api/servicedesk/tickets/{id}/status", Json(new { status = "hold" }));
-        fake.Pending.Add(Msg("m1", "pat@acme.test", "Re: [TKT-000001] Printer down", "It is the third floor one"));
-        fake.Pending.Add(Msg("m2", "stranger@evil.test", "Re: [TKT-000001] Printer down", "Hello, I am not involved"));
+        fake.Pending.Add(Msg("m1", "pat@acme.test", $"Re: [{no}] Printer down", "It is the third floor one"));
+        fake.Pending.Add(Msg("m2", "stranger@evil.test", $"Re: [{no}] Printer down", "Hello, I am not involved"));
         fake.Pending.Add(Msg("m3", "new@acme.test", "Need a laptop", "Please order one"));
-        fake.Pending.Add(Msg("m1", "pat@acme.test", "Re: [TKT-000001] Printer down", "duplicate delivery"));
+        fake.Pending.Add(Msg("m1", "pat@acme.test", $"Re: [{no}] Printer down", "duplicate delivery"));
         await Fetch(admin);
         var d = await J(await admin.GetAsync($"/api/servicedesk/tickets/{id}"));
         Assert.Equal("open", d.GetProperty("ticket").GetProperty("status").GetString());   // the customer answered
