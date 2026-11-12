@@ -96,6 +96,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
         {isAdmin ? <a href="#/updates" className={inUpdates ? 'on' : ''}><Icon name="access" />Updates</a> : null}
         {isAdmin ? <a href="#/licence" className={inLicence ? 'on' : ''}><Icon name="access" />Licence</a> : null}
         <label className="look-pick">Appearance<select value={look} onChange={(e) => { setLook(e.target.value); setLookState(e.target.value); }}>{LOOKS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></label>
+        {fetcher ? null : <a href="/account/security?returnUrl=%2F"><Icon name="access" />Two-step sign-in</a>}
         {fetcher ? null : <a className="out" href="#/" onClick={(e) => { e.preventDefault(); signOut(); }}><Icon name="signout" />Sign out</a>}
       </nav>
       <main className="main">

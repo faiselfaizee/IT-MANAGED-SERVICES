@@ -42,6 +42,7 @@ export default function Updates() {
     </Card>}
     {d?.installed && <Card title="Install a new version">
       <p className="muted">Download <code>deskask-host-win-x64-&lt;version&gt;.dkb</code> from the GitHub release and choose it here. Your settings, database and customers stay as they are. The signature is checked first; if the new version does not start, the old one comes back by itself.</p>
+      <p className="muted">Uploading needs two-step sign-in. If you have not set it up: <a href="/account/security?returnUrl=%2F">switch on two-step sign-in</a>, then sign out and sign in again with the code.</p>
       <div className="form">
         <input type="file" accept=".dkb" disabled={busy} onChange={(e) => setFile(e.target.files?.[0] ?? null)} aria-label="Release file" />
         {busy && <progress value={pct} max={100} aria-label="Upload progress" />}
