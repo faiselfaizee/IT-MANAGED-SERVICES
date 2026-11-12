@@ -5,6 +5,66 @@ import { Act, Badge, Card, Empty, Err, Field, Loading, fmtDate, useSubmit } from
 const STATUS: Record<string, [string, 'ok' | 'warn' | 'bad' | undefined]> = { queued: ['Waiting', 'warn'], sent: ['Sent', 'ok'], failed: ['Failed', 'bad'] };
 
 /** Admin page: how this customer sends mail, a test button, and the outbox. */
+function Incoming() {
+  const cfg = useLoad<Rec>('/api/platform/mail/inbound');
+  const [v, setV] = useState<Rec | null>(null); const [msg, setMsg] = useState('');
+  useEffect(() => { if (cfg.data && !v) setV({ ...cfg.data, password: '' }); }, [cfg.data, v]);
+  const save = useSubmit(() => { setMsg('Saved.'); cfg.reload(); });
+  const test = useSubmit(() => undefined); const [found, setFound] = useState('');
+  if (!v) return <Card title="Incoming mail"><Loading loading={cfg.loading} error={cfg.error} /></Card>;
+  const set = (k: string, x: unknown) => { setMsg(''); setFound(''); setV({ ...v, [k]: x }); };
+  const body = () => { const b: Rec = { provider: v.provider, host: v.host, port: Number(v.port) || 993, security: v.security, user: v.user, folder: v.folder, mailbox: v.mailbox, autoCreate: !!v.autoCreate }; if (v.password) b.password = v.password; return b; };
+  return <Card title="Incoming mail">
+    <p className="muted">DeskAsk can read your support mailbox every minute. A reply that carries a ticket number is added to that ticket. Anything else waits below for you to turn into a ticket or dismiss.</p>
+    <div className="form">
+      <Field label="Read mail with"><select value={v.provider} onChange={(e) => set('provider', e.target.value)}><option value="none">Nothing (off)</option><option value="imap">A mail server (IMAP)</option><option value="graph">Microsoft 365 (uses the sending application)</option></select></Field>
+      {v.provider === 'imap' && <>
+        <div className="row">
+          <Field label="Mail server"><input value={v.host} onChange={(e) => set('host', e.target.value)} placeholder="imap.yourcompany.com" /></Field>
+          <Field label="Port"><input type="number" value={v.port} onChange={(e) => set('port', e.target.value)} /></Field>
+          <Field label="Security"><select value={v.security} onChange={(e) => set('security', e.target.value)}><option value="ssl">SSL (usually port 993)</option><option value="starttls">STARTTLS (usually port 143)</option><option value="none">None</option></select></Field>
+        </div>
+        <div className="row">
+          <Field label="User name"><input value={v.user} onChange={(e) => set('user', e.target.value)} autoComplete="off" /></Field>
+          <Field label={cfg.data?.hasPassword ? 'Password (saved; type to replace)' : 'Password'}><input type="password" value={v.password} onChange={(e) => set('password', e.target.value)} autoComplete="new-password" /></Field>
+        </div>
+        <Field label="Folder (empty for the main inbox)"><input value={v.folder} onChange={(e) => set('folder', e.target.value)} /></Field>
+      </>}
+      {v.provider === 'graph' && <>
+        <p className="muted">The Microsoft 365 application also needs the Mail.ReadWrite application permission (with admin consent). It reads the mailbox below.</p>
+        <Field label="Mailbox (empty to use the From address)"><input type="email" value={v.mailbox} onChange={(e) => set('mailbox', e.target.value)} /></Field>
+      </>}
+      {v.provider !== 'none' && <label className="check"><input type="checkbox" checked={!!v.autoCreate} onChange={(e) => set('autoCreate', e.target.checked)} /> Open tickets automatically for customer users who are linked to a company</label>}
+      <Err text={save.err} />{msg && <p role="status">{msg}</p>}
+      <div className="actions">
+        {cfg.data?.on && <button disabled={test.busy} onClick={() => test.submit(async () => { const r = await api<Rec>('/api/platform/mail/inbound/test', { body: {} }); setFound(`Connected. ${r.unread} unread message${r.unread === 1 ? '' : 's'} waiting.`); })}>Test connection</button>}
+        <button className="primary" disabled={save.busy} onClick={() => save.submit(() => api('/api/platform/mail/inbound', { method: 'PUT', body: body() }))}>Save incoming settings</button>
+      </div>
+      <Err text={test.err} />{found && <p role="status">{found}</p>}
+    </div>
+  </Card>;
+}
+
+function Inbox() {
+  const { data, error, loading, reload } = useLoad<Rec>('/api/platform/mail/inbox?status=new');
+  const companies = useLoad<Rec[]>('/api/assets/companies');
+  const [pick, setPick] = useState<Record<string, string>>({}); const [msg, setMsg] = useState('');
+  const items = (data?.items ?? []) as Rec[]; const cos = Array.isArray(companies.data) ? companies.data : [];
+  const run = async (fn: () => Promise<unknown>) => { setMsg(''); try { await fn(); reload(); } catch (e) { setMsg((e as Error).message); } };
+  return <Card title="Inbox: waiting for a decision">
+    <Loading loading={loading && !data} error={error} /><Err text={msg} />
+    {data && (items.length === 0 ? <Empty>No mail is waiting.</Empty> : items.map((m) => <div key={m.id} className="mailrow" style={{ borderTop: '1px solid var(--line, #0001)', padding: '10px 0' }}>
+      <strong>{m.subject || '(no subject)'}</strong> <span className="muted">from {m.name ? `${m.name} <${m.from}>` : m.from} · {fmtDate(m.receivedAt)}</span>
+      <p style={{ whiteSpace: 'pre-wrap', margin: '6px 0' }}>{String(m.body).slice(0, 400)}{String(m.body).length > 400 ? '…' : ''}</p>
+      <div className="row">
+        <select aria-label={`Company for ${m.subject}`} value={pick[m.id] ?? ''} onChange={(e) => setPick({ ...pick, [m.id]: e.target.value })}><option value="">No company</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        <Act label="Open as ticket" primary run={() => run(async () => { await api(`/api/platform/mail/inbox/${m.id}/convert`, { body: pick[m.id] ? { companyId: Number(pick[m.id]) } : {} }); })} />
+        <Act label="Dismiss" confirm="Dismiss this message? It will not become a ticket." run={() => run(() => api(`/api/platform/mail/inbox/${m.id}/reject`, { method: 'POST', body: {} }))} />
+      </div></div>))}
+    <div className="actions"><button onClick={() => run(async () => { await api('/api/platform/mail/inbound/fetch', { body: {} }); })}>Check mail now</button><button onClick={reload}>Refresh</button></div>
+  </Card>;
+}
+
 export default function Mail() {
   const cfg = useLoad<Rec>('/api/platform/mail/config');
   const outbox = useLoad<Rec>('/api/platform/mail/outbox');
@@ -61,6 +121,8 @@ export default function Mail() {
       <Err text={test.err} />{tested && <p role="status">{tested}</p>}
       <p className="muted">Test only uses the saved settings. Save first if you changed something.</p>
     </Card>}
+    <Incoming />
+    <Inbox />
     <Card title="Recent messages">
       <Loading loading={outbox.loading && !outbox.data} error={outbox.error} />
       {outbox.data && (items.length === 0 ? <Empty>Nothing has been sent yet.</Empty> : <table><thead><tr><th>To</th><th>Subject</th><th>Status</th><th>When</th><th /></tr></thead><tbody>
