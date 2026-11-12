@@ -23,7 +23,9 @@ public class InboundTests : IClassFixture<WebApplicationFactory<Program>>
 {
     static readonly string Pg = Environment.GetEnvironmentVariable("TEST_PG_CONNECTION") ?? "";
     const string Pw = "Long-Enough-1";
-    readonly WebApplicationFactory<Program> factory; readonly FakeFetcher fake = new();
+    readonly WebApplicationFactory<Program> factory;
+    // one shared mailbox: hosts built for earlier tests keep their workers running and would otherwise read their own, empty one
+    static readonly FakeFetcher fake = new();
     public InboundTests(WebApplicationFactory<Program> f) => factory = f.WithWebHostBuilder(b =>
     {
         TestSupport.Configure(b); b.UseSetting("Licensing:AllowUnlicensed", "true"); b.UseSetting("Platform:Roles", "all"); b.UseSetting("Jobs:PollSeconds", "1");
