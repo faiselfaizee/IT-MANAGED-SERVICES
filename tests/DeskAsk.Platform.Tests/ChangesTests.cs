@@ -138,9 +138,9 @@ public class ChangesTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task RepeatedTicketsInOneCategorySuggestAProblem()
     {
         var x = await Start();
-        for (var i = 0; i < 3; i++) Assert.Equal(HttpStatusCode.Created, (await x.Admin.PostAsync("/api/servicedesk/tickets", Json(new { subject = "Wi-Fi slow " + i, category = "Wi-Fi" }))).StatusCode);
+        for (var i = 0; i < 3; i++) Assert.Equal(HttpStatusCode.Created, (await x.Admin.PostAsync("/api/servicedesk/tickets", Json(new { subject = "Wi-Fi slow " + i, category = "Network" }))).StatusCode);
         var s = await J(await x.Eng.GetAsync("/api/servicedesk/problems/suggestions"));
-        Assert.Equal("Wi-Fi", s.GetProperty("items")[0].GetProperty("category").GetString());
+        Assert.Equal("Network", s.GetProperty("items")[0].GetProperty("category").GetString());
         Assert.Equal(3, s.GetProperty("items")[0].GetProperty("count").GetInt64());
     }
 }
