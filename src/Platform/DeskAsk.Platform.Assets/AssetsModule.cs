@@ -181,6 +181,10 @@ public sealed class AssetsSchema : ITenantSchema
               priority text not null default 'normal', status text not null default 'open', source text not null default 'manual', note text not null default '',
               created_at timestamptz not null default now(), created_by text not null default '');
             create index if not exists ticket_links_asset on assets.ticket_links (asset_id, id)"),
+        new(6, "renewal reminders", @"
+            create table if not exists assets.renewal_notices (
+              kind text not null, ref_id bigint not null, due date not null, days int not null, sent_at timestamptz not null default now(),
+              primary key (kind, ref_id, due, days))"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -213,6 +217,8 @@ public sealed class AssetsModule : IPlatformModule
         s.AddScoped<IAssetDirectory>(sp => sp.GetRequiredService<AssetsDirectory>());
         s.AddSingleton<IJobHandler, AssetsJanitorJob>();
         s.AddSingleton(new RecurringJob("assets.janitor", AssetsJanitorJob.JobType, TimeSpan.FromMinutes(1)));
+        s.AddSingleton<IJobHandler, RenewalsJob>();
+        s.AddSingleton(new RecurringJob("assets.renewals", RenewalsJob.JobType, TimeSpan.FromHours(6)));
     }
 
     sealed record FieldDef(string Key, string Label, string Kind, string[] Options);
@@ -392,6 +398,7 @@ public sealed class AssetsModule : IPlatformModule
         DiscoveryApi.Map(r, Key);
         CollectorsApi.Map(r, Key);
         ExtrasApi.Map(r, Key);
+        RenewalsApi.Map(r, Key);
 
         // ---- types
         anyone(r.MapGet("/api/assets/types", async (ITenantContext t, CancellationToken ct) =>
