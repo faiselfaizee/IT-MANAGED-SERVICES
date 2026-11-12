@@ -184,3 +184,10 @@ public static class AccessExtensions
             return ok ? await next(ctx) : Results.Json(new { error = "forbidden", module, action }, statusCode: 403);
         });
 }
+
+/// <summary>Sends e-mail for the current customer through the Mail module. Messages are queued and retried, never sent inside the caller's request.</summary>
+public interface IMailQueue
+{
+    /// <summary>Queues a message. Returns false (and queues nothing) when the customer has not set up mail or the address is empty.</summary>
+    Task<bool> EnqueueAsync(string to, string subject, string body, string? reference = null, CancellationToken ct = default);
+}

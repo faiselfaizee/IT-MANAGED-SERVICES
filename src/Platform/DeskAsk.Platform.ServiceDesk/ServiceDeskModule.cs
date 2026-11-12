@@ -65,4 +65,37 @@ public sealed class ServiceDeskModule : IPlatformModule
         P(c, "t", ticket); P(c, "k", kind); P(c, "d", JsonSerializer.Serialize(data ?? new { }));
         await c.ExecuteNonQueryAsync(ct);
     }
+
+    /// <summary>
+    /// Tells the right person about a ticket by mail: the requester about the ticket opening, a reply from the team and its resolution; the assigned engineer about a customer's reply.
+    /// A person is never mailed about what they did themselves (except the opening confirmation). Mail trouble never fails the ticket action.
+    /// </summary>
+    internal static async Task Tell(IMailQueue mail, IUserDirectory users, NpgsqlConnection db, long id, string kind, string text, Who by, CancellationToken ct)
+    {
+        try
+        {
+            string number, subject, requester, status; Guid? assignee;
+            await using (var c = new NpgsqlCommand("select number, subject, requester_email, assignee_id, status from servicedesk.tickets where id = @i", db))
+            {
+                P(c, "i", id);
+                await using var rd = await c.ExecuteReaderAsync(ct);
+                if (!await rd.ReadAsync(ct)) return;
+                number = rd.GetString(0); subject = rd.GetString(1); requester = rd.GetString(2); assignee = rd.IsDBNull(3) ? null : rd.GetGuid(3); status = rd.GetString(4);
+            }
+            string? to = null, head = null;
+            switch (kind)
+            {
+                case "created": to = requester; head = "We received your request"; break;
+                case "reply": to = requester; head = "New reply"; break;
+                case "resolved": to = requester; head = "Resolved"; break;
+                case "customer_reply": if (assignee is Guid g) to = (await users.GetAsync(g, ct))?.Email; head = "Customer replied"; break;
+            }
+            if (string.IsNullOrWhiteSpace(to)) return;
+            if (kind != "created" && string.Equals(to, by.Email, StringComparison.OrdinalIgnoreCase)) return;
+            var snippet = text.Length > 1500 ? text[..1500] + "…" : text;
+            var body = $"{head}: {subject}\nTicket {number} · status {status}\n\n{snippet}".TrimEnd();
+            await mail.EnqueueAsync(to, $"[{number}] {head}: {subject}", body, number, ct);
+        }
+        catch (Exception e) when (e is not OperationCanceledException) { /* mail is best effort */ }
+    }
 }
