@@ -14,6 +14,7 @@ const ABOUT: Record<string, string> = {
 };
 const AssetsApp = lazy(() => import('./assets/AssetsApp'));
 const Users = lazy(() => import('./Users'));
+const Access = lazy(() => import('./Access'));
 const ServiceDeskApp = lazy(() => import('./servicedesk/ServiceDeskApp'));
 
 function Home({ who, live, assets }: { who: WhoAmI | null; live: boolean; assets: boolean }) {
@@ -65,21 +66,24 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   useEffect(() => { whoAmI(fetcher).then(setWho, (e: Error) => setErr(e.message)); }, [fetcher]);
   const me = useLoad<Rec>(fetcher ? null : '/api/platform/me');
   const isAdmin = me.data?.role === 'admin';
-  const canAssets = !!fetcher || ['admin', 'engineer', 'viewer', 'cadmin'].includes(me.data?.role);
+  const mine = useLoad<Rec>(fetcher ? null : '/api/platform/access/mine');
+  const canAssets = !!fetcher || (!!mine.data?.assets?.read && mine.data.assets.read !== 'none');
   const inAssets = parts[0] === 'assets' && canAssets;
   const inDesk = parts[0] === 'servicedesk';
   const inUsers = parts[0] === 'users' && isAdmin;
+  const inAccess = parts[0] === 'access' && isAdmin;
   return (
     <div className="shell">
       <nav aria-label="Modules" className="side">
         <a className="brand" href="#/" aria-label="DeskAsk Platform home"><Logo /><strong>DeskAsk</strong></a>
-        <a href="#/" className={!inAssets && !inDesk && !inUsers ? 'on' : ''}><Icon name="home" />Home</a>
+        <a href="#/" className={!inAssets && !inDesk && !inUsers && !inAccess ? 'on' : ''}><Icon name="home" />Home</a>
         {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
           ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
           : m === 'Service Desk'
             ? <a key={m} href="#/servicedesk" className={inDesk ? 'on' : ''}><Icon name={m} />{m}</a>
             : <span key={m} title="Not built yet"><Icon name={m} />{m}<em>Soon</em></span>)}
         {isAdmin ? <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a> : null}
+        {isAdmin ? <a href="#/access" className={inAccess ? 'on' : ''}><Icon name="access" />Access</a> : null}
         {fetcher ? null : <a className="out" href="#/" onClick={(e) => { e.preventDefault(); signOut(); }}><Icon name="signout" />Sign out</a>}
       </nav>
       <main className="main">
@@ -87,6 +91,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
         {inAssets
           ? <Suspense fallback={<p className="muted">Loading…</p>}><AssetsApp /></Suspense>
           : inDesk ? <Suspense fallback={<p className="muted">Loading…</p>}><ServiceDeskApp /></Suspense>
+          : inAccess ? <Suspense fallback={<p className="muted">Loading…</p>}><Access /></Suspense>
           : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><Users meId={me.data?.sub} /></Suspense>
           : !err ? <Home who={who} live={!fetcher} assets={canAssets} /> : null}
       </main>
