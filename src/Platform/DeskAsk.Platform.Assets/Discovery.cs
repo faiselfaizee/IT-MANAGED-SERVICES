@@ -240,12 +240,12 @@ public static class DiscoveryApi
         Admin(r.MapPost("/api/assets/discover/creds", async (JsonElement body, ITenantContext t, IConfiguration cfg, IAuditLog audit, CancellationToken ct) =>
         {
             var name = AgentsApi.Clip(AgentsApi.Str(body, "name"), 80).Trim(); var kindIn = AgentsApi.Str(body, "kind") ?? "windows";
-            var kind = kindIn is "ssh" or "snmp" or "login" ? kindIn : "windows";
+            var kind = kindIn is "ssh" or "sshpw" or "snmp" or "login" ? kindIn : "windows";
             var user = AgentsApi.Clip(AgentsApi.Str(body, "username"), 120).Trim(); if (user == "" && kind == "snmp") user = "snmp";
             var secret = AgentsApi.Str(body, "secret") ?? "";
             if (name == "") return Bad("bad_input", "Give the credential a name.");
             if (user == "") return Bad("bad_input", "Enter the user name.");
-            if (secret == "") return Bad("bad_input", kind == "ssh" ? "Paste the private key." : kind == "snmp" ? "Enter the SNMP community string." : "Enter the password.");
+            if (secret == "") return Bad("bad_input", kind == "ssh" ? "Paste the private key." : kind == "sshpw" ? "Enter the password." : kind == "snmp" ? "Enter the SNMP community string." : "Enter the password.");
             if (kind == "ssh" && !Regex.IsMatch(secret, "BEGIN [A-Z ]*PRIVATE KEY")) return Bad("bad_input", "That does not look like an SSH private key (PEM / OpenSSH format).");
             int? company = body.TryGetProperty("companyId", out var ce) && ce.ValueKind == JsonValueKind.Number ? ce.GetInt32() : null;
             await using var db = await AgentsApi.Open(t, ct);

@@ -16,6 +16,8 @@ public sealed class AccessService : IAccess
     static (bool All, bool OwnCompany) Default(string role, string module, string action)
     {
         if (role == "admin") return (true, false);
+        // engineers keep the asset records up to date (add, change) but cannot delete: they ask, and someone with the delete right approves
+        if (module == Modules.Assets && role == "engineer" && (action == Acts.Add || action == Acts.Modify)) return (true, false);
         if (module == Modules.Assets && action == Acts.Read)
             return role switch { "engineer" or "viewer" => (true, false), "cadmin" => (false, true), _ => (false, false) };
         return (false, false);

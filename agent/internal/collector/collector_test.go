@@ -239,3 +239,27 @@ func TestAScanResultIsSentEvenWhenItFoundNothing(t *testing.T) {
 		t.Fatalf("the platform only ends a scan request when it gets a found list, even an empty one: %v", f.bodies[0]["found"])
 	}
 }
+
+func TestCleanCLIXMLAndHint(t *testing.T) {
+	raw := `#< CLIXML
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><S S="Error">[host.example.in] Connecting to remote server host.example.in failed with the following error message : WinRM cannot complete the operation._x000D__x000A_</S><S S="Error">At line:1 &lt;x&gt;_x000D__x000A_</S></Objs>`
+	got := WinHint(CleanCLIXML(raw))
+	if strings.Contains(got, "CLIXML") || strings.Contains(got, "_x000D_") || strings.Contains(got, "&lt;") {
+		t.Fatalf("not cleaned: %s", got)
+	}
+	if !strings.Contains(got, "Enable-PSRemoting") || !strings.Contains(got, "WinRM cannot complete the operation.") {
+		t.Fatalf("no readable message or hint: %s", got)
+	}
+	if !strings.Contains(WinHint("Access is denied."), "Assets > Discover > Credentials") {
+		t.Fatal("no hint for a refused login")
+	}
+}
+
+func TestCredsForUsesPlatformLogins(t *testing.T) {
+	t.Setenv("DESKASK_CONFIG_DIR", t.TempDir())
+	r := &Runner{Cfg: config.Collector{Creds: []config.Cred{{Name: "local", Kind: "windows", User: "a"}}}}
+	got := r.credsFor([]login{{Name: "w", Kind: "windows", User: `D\x`, Secret: "pw"}, {Name: "k", Kind: "ssh", User: "root", Secret: "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n"}, {Name: "s", Kind: "snmp", Secret: "public"}, {Name: "p", Kind: "sshpw", User: "u", Secret: "pw2"}})
+	if len(got) != 5 || got[1].Password != "pw" || got[2].KeyFile == "" || got[3].Community != "public" || got[4].Password != "pw2" {
+		t.Fatalf("%+v", got)
+	}
+}

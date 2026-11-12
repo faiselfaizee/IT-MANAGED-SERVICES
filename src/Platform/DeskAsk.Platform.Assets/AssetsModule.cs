@@ -185,6 +185,15 @@ public sealed class AssetsSchema : ITenantSchema
             create table if not exists assets.renewal_notices (
               kind text not null, ref_id bigint not null, due date not null, days int not null, sent_at timestamptz not null default now(),
               primary key (kind, ref_id, due, days))"),
+        new(7, "delete approvals, SSH password logins", @"
+            create table if not exists assets.delete_requests (
+              id serial primary key, asset_id bigint not null, tag text not null default '', name text not null default '',
+              requested_by text not null, requested_by_id text not null default '', reason text not null default '',
+              status text not null default 'pending' check (status in ('pending','approved','rejected','cancelled')),
+              decided_by text not null default '', note text not null default '', decided_at timestamptz, created_at timestamptz not null default now());
+            create index if not exists delete_requests_status on assets.delete_requests (status, created_at desc);
+            alter table assets.creds drop constraint if exists creds_kind_check;
+            alter table assets.creds add constraint creds_kind_check check (kind in ('windows','ssh','sshpw','snmp','login'))"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -603,6 +612,71 @@ public sealed class AssetsModule : IPlatformModule
             await using var c = new NpgsqlCommand("delete from assets.assets where id = @i returning tag", db); P(c, "i", id);
             if (await c.ExecuteScalarAsync(ct) is not string tag) return Results.NotFound();
             await audit.WriteAsync("assets.deleted", id.ToString(), tag, ct: ct);
+            return Results.Ok(new { ok = true });
+        }));
+
+        // ---- deleting needs the delete right (administrators, or people and groups it was granted to); everyone else asks and an approver decides
+        var who = (ClaimsPrincipal u) => u.FindFirstValue("email") ?? u.FindFirstValue("sub") ?? "";
+        delegated(Acts.Modify, r.MapPost("/api/assets/{id:long}/delete-request", async (HttpContext http, long id, JsonElement body, ClaimsPrincipal u, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        {
+            await using var db = await Open(t, ct);
+            if (!await AssetsAccess.InScope(db, id, await AssetsAccess.ScopeAsync(http, Acts.Modify), ct)) return Results.NotFound();
+            var reason = AgentsApi.Clip(AgentsApi.Str(body, "reason"), 500).Trim();
+            if (reason == "") return Results.BadRequest(new { error = "bad_input", detail = "Say why this asset should be deleted." });
+            string tag, name;
+            await using (var c = new NpgsqlCommand("select tag, name from assets.assets where id = @i", db))
+            {
+                P(c, "i", id); await using var rd = await c.ExecuteReaderAsync(ct);
+                if (!await rd.ReadAsync(ct)) return Results.NotFound();
+                tag = rd.GetString(0); name = rd.GetString(1);
+            }
+            await using (var c = new NpgsqlCommand("select 1 from assets.delete_requests where asset_id = @i and status = 'pending'", db)) { P(c, "i", id); if (await c.ExecuteScalarAsync(ct) != null) return Results.Json(new { error = "already_requested", detail = "A request to delete this asset is already waiting for approval." }, statusCode: 409); }
+            await using var ins = new NpgsqlCommand("insert into assets.delete_requests (asset_id, tag, name, requested_by, requested_by_id, reason) values (@a,@t,@n,@u,@s,@r) returning id", db);
+            P(ins, "a", id); P(ins, "t", tag); P(ins, "n", name); P(ins, "u", who(u)); P(ins, "s", u.FindFirstValue("sub") ?? ""); P(ins, "r", reason);
+            var rid = (int)(await ins.ExecuteScalarAsync(ct))!;
+            await audit.WriteAsync("assets.delete_requested", id.ToString(), tag + ": " + reason, ct: ct);
+            return Results.Json(new { id = rid }, statusCode: 201);
+        }));
+        anyone(r.MapGet("/api/assets/delete-requests", async (HttpContext http, string? status, ITenantContext t, CancellationToken ct) =>
+        {
+            var scope = await AssetsAccess.ScopeAsync(http, Acts.Read); var del = await AssetsAccess.ScopeAsync(http, Acts.Delete);
+            await using var db = await Open(t, ct);
+            var items = new List<object>();
+            await using var c = new NpgsqlCommand(@"select q.id, q.asset_id, q.tag, q.name, q.requested_by, q.reason, q.status, q.decided_by, q.note, q.decided_at, q.created_at,
+                  (a.id is not null and (not @dc or a.company_id = any(@dscope))) as can_decide
+                from assets.delete_requests q left join assets.assets a on a.id = q.asset_id
+                where (@st = '' or q.status = @st) and (a.id is null or not @sc or a.company_id = any(@scope)) order by q.created_at desc limit 200", db);
+            AssetsAccess.Bind(c, scope); P(c, "st", status ?? ""); P(c, "dc", del != null); P(c, "dscope", del?.ToArray() ?? Array.Empty<int>());
+            await using var rd = await c.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct))
+                items.Add(new { id = rd.GetInt32(0), assetId = rd.GetInt64(1), tag = rd.GetString(2), name = rd.GetString(3), requestedBy = rd.GetString(4), reason = rd.GetString(5), status = rd.GetString(6),
+                    decidedBy = rd.GetString(7), note = rd.GetString(8), decidedAt = rd.IsDBNull(9) ? (DateTime?)null : rd.GetDateTime(9), createdAt = rd.GetDateTime(10), canDecide = rd.GetBoolean(11) && (del == null || del.Count > 0) });
+            return Results.Ok(new { items });
+        }));
+        delegated(Acts.Delete, r.MapPost("/api/assets/delete-requests/{rid:int}/{verb}", async (HttpContext http, int rid, string verb, JsonElement body, ClaimsPrincipal u, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        {
+            if (verb is not ("approve" or "reject")) return Results.NotFound();
+            await using var db = await Open(t, ct);
+            long assetId; string tag, requester, requesterId;
+            await using (var c = new NpgsqlCommand("select asset_id, tag, requested_by, requested_by_id from assets.delete_requests where id = @i and status = 'pending'", db))
+            {
+                P(c, "i", rid); await using var rd = await c.ExecuteReaderAsync(ct);
+                if (!await rd.ReadAsync(ct)) return Results.Json(new { error = "not_pending", detail = "This request was already decided." }, statusCode: 409);
+                assetId = rd.GetInt64(0); tag = rd.GetString(1); requester = rd.GetString(2); requesterId = rd.GetString(3);
+            }
+            if (!await AssetsAccess.InScope(db, assetId, await AssetsAccess.ScopeAsync(http, Acts.Delete), ct)) return Results.NotFound();
+            var isAdmin = u.IsInRole("admin") || u.FindFirstValue("role") == "admin";
+            if (!isAdmin && requesterId != "" && requesterId == u.FindFirstValue("sub")) return Results.Json(new { error = "forbidden", detail = "You cannot approve your own request; ask another approver." }, statusCode: 403);
+            var note = AgentsApi.Clip(AgentsApi.Str(body, "note"), 500).Trim();
+            await using var tx = await db.BeginTransactionAsync(ct);
+            if (verb == "approve")
+            {
+                await using var d = new NpgsqlCommand("delete from assets.assets where id = @i", db, tx); P(d, "i", assetId); await d.ExecuteNonQueryAsync(ct);
+            }
+            await using (var c = new NpgsqlCommand("update assets.delete_requests set status = @s, decided_by = @b, note = @n, decided_at = now() where id = @i", db, tx))
+            { P(c, "s", verb == "approve" ? "approved" : "rejected"); P(c, "b", who(u)); P(c, "n", note); P(c, "i", rid); await c.ExecuteNonQueryAsync(ct); }
+            await tx.CommitAsync(ct);
+            await audit.WriteAsync(verb == "approve" ? "assets.deleted" : "assets.delete_rejected", assetId.ToString(), $"{tag}, asked by {requester}" + (note == "" ? "" : ": " + note), ct: ct);
             return Results.Ok(new { ok = true });
         }));
 

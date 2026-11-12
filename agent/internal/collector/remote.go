@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -155,7 +156,11 @@ func winRemote(ctx context.Context, c config.Cred, host, script string, timeout 
 		if msg == "" {
 			msg = err.Error()
 		}
-		return out.String(), fmt.Errorf("PowerShell remoting to %s: %s", host, lastLines(msg, 3))
+		who := c.User
+		if who == "" {
+			who = "the collector's own account (no Windows login is saved for this computer)"
+		}
+		return out.String(), fmt.Errorf("PowerShell remoting to %s as %s: %s", host, who, WinHint(CleanCLIXML(msg)))
 	}
 	return out.String(), nil
 }
@@ -168,28 +173,80 @@ func winCreds(creds []config.Cred, ip string) []config.Cred {
 	return []config.Cred{{Name: "the collector's own account"}}
 }
 
-func winInventory(ctx context.Context, creds []config.Cred, host string) (*inventory.Inventory, error) {
-	var last error
-	for _, c := range winCreds(creds, host) {
-		out, err := winRemote(ctx, c, host, inventory.WindowsScript, 4*time.Minute)
-		if err != nil {
-			last = err
-			continue
+// hostsOf lists the names to try for a computer: its host name first (Kerberos and certificates need it), then its address.
+func hostsOf(host, ip string) []string {
+	var out []string
+	for _, h := range []string{host, ip} {
+		if h != "" && (len(out) == 0 || out[0] != h) {
+			out = append(out, h)
 		}
-		return inventory.ParseWindowsJSON([]byte(out))
+	}
+	return out
+}
+
+func winInventory(ctx context.Context, creds []config.Cred, hosts ...string) (*inventory.Inventory, error) {
+	var last error
+	for _, host := range hosts {
+		for _, c := range winCreds(creds, host) {
+			out, err := winRemote(ctx, c, host, inventory.WindowsScript, 4*time.Minute)
+			if err != nil {
+				last = err
+				continue
+			}
+			return inventory.ParseWindowsJSON([]byte(out))
+		}
 	}
 	return nil, last
 }
 
-func winInstall(ctx context.Context, creds []config.Cred, host, installURL string) (string, error) {
+func winInstall(ctx context.Context, creds []config.Cred, hosts []string, installURL string) (string, error) {
 	script := `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; iwr -UseBasicParsing '` + strings.ReplaceAll(installURL, "'", "''") + `' | iex`
 	var last error
-	for _, c := range winCreds(creds, host) {
-		out, err := winRemote(ctx, c, host, script, 6*time.Minute)
-		if err == nil {
-			return "installed by PowerShell remoting as " + c.Name + ": " + lastLines(out, 2), nil
+	for _, host := range hosts {
+		for _, c := range winCreds(creds, host) {
+			out, err := winRemote(ctx, c, host, script, 6*time.Minute)
+			if err == nil {
+				return "installed by PowerShell remoting as " + c.Name + ": " + lastLines(out, 2), nil
+			}
+			last = err
 		}
-		last = err
 	}
 	return "", last
+}
+
+var (
+	clixmlErr = regexp.MustCompile(`(?s)<S S="Error">(.*?)</S>`)
+	xmlEsc    = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&quot;", `"`, "&apos;", "'", "&amp;", "&")
+	xEsc      = regexp.MustCompile(`_x[0-9A-Fa-f]{4}_`)
+)
+
+// CleanCLIXML turns the serialized error text that powershell.exe writes ("#< CLIXML <Objs ...>") into the plain message.
+func CleanCLIXML(s string) string {
+	if !strings.Contains(s, "CLIXML") {
+		return s
+	}
+	var parts []string
+	for _, m := range clixmlErr.FindAllStringSubmatch(s, -1) {
+		parts = append(parts, m[1])
+	}
+	if len(parts) == 0 {
+		return s
+	}
+	t := xEsc.ReplaceAllString(xmlEsc.Replace(strings.Join(parts, " ")), " ")
+	return strings.Join(strings.Fields(t), " ")
+}
+
+// WinHint adds what to do about the usual reasons PowerShell remoting fails.
+func WinHint(msg string) string {
+	m := strings.ToLower(msg)
+	msg = trim(msg)
+	switch {
+	case strings.Contains(m, "access is denied") || strings.Contains(m, "logon failure") || strings.Contains(m, "unknown user name"):
+		return msg + " - the login was refused: save a Windows login with administrator rights under Assets > Discover > Credentials (use DOMAIN\\user for domain accounts)"
+	case strings.Contains(m, "trustedhosts") || strings.Contains(m, "kerberos"):
+		return msg + " - the computer is not in the domain: on the collector's computer run  Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value '<computer>' -Force  (or install by hand or Group Policy)"
+	case strings.Contains(m, "winrm") || strings.Contains(m, "connecting to remote server") || strings.Contains(m, "cannot connect"):
+		return msg + " - check that the computer is switched on and reachable from the collector, that WinRM is enabled on it (run  Enable-PSRemoting -Force  there) and that port 5985 is open in its firewall"
+	}
+	return msg
 }

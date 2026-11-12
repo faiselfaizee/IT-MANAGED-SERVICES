@@ -171,7 +171,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
             }));
         }
 
-        Open(r.MapPost("/collector/v1/checkin", async (JsonElement body, HttpContext http, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        Open(r.MapPost("/collector/v1/checkin", async (JsonElement body, HttpContext http, ITenantContext t, IConfiguration cfg, IAuditLog audit, CancellationToken ct) =>
         {
             await using var db = await AgentsApi.Open(t, ct);
             var col = await Auth(http, db, ct); if (col == null) return Results.Json(new { error = "collector_auth" }, statusCode: 401);
@@ -261,7 +261,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
             }
 
             // the work list
-            var assets = new List<object>(); foreach (var (id, a) in mine) assets.Add(new { id = id.ToString(), ip = a.Ip, host = a.Host, name = a.Name, monitor = a.Monitor == "" ? "ping" : a.Monitor });
+            var assets = new List<object>(); foreach (var (id, a) in mine) assets.Add(new { id = id.ToString(), ip = a.Ip, host = a.Host, name = a.Name, monitor = a.Monitor == "" ? "ping" : a.Monitor, logins = a.Monitor is "snmp" or "ssh" or "windows" ? LoginsFor(id) : Array.Empty<object>() });
             var checks = new Dictionary<string, List<object>>();
             await using (var c = new NpgsqlCommand("select s.id, s.asset_id, s.name, s.type, s.host, s.port, s.url, s.expect, s.status, s.insecure, s.dns, s.timeout_s, a.ip_address, a.dns_name, a.hostname from assets.service_checks s join assets.assets a on a.id = s.asset_id where a.collector_id = @i and a.monitor <> '' and s.enabled", db))
             {
@@ -274,11 +274,29 @@ chmod 755 /opt/deskask-collector/deskask-collector
                     l.Add(new { id = rd.GetInt32(0), name = rd.GetString(2), type, host, port = rd.GetInt32(5), url = rd.GetString(6), expect = rd.GetString(7), status = rd.GetString(8), insecure = rd.GetBoolean(9), dns = rd.GetString(10), timeoutS = rd.GetInt32(11) });
                 }
             }
+            // the logins saved under Assets > Discover > Credentials, sealed in the database; sent only to this collector, over its own authenticated connection
+            var saved = new List<(int? Company, object Login)>();
+            await using (var c = new NpgsqlCommand("select name, kind, username, secret, company_id from assets.creds where kind in ('windows','ssh','snmp','sshpw') order by id", db))
+            {
+                await using var rd = await c.ExecuteReaderAsync(ct);
+                while (await rd.ReadAsync(ct))
+                {
+                    string secret; try { secret = rd.GetString(3) == "" ? "" : SecretBox.Open(cfg, t.Require().Id, rd.GetString(3)); } catch (Exception) { continue; }
+                    saved.Add((rd.IsDBNull(4) ? null : rd.GetInt32(4), new { name = rd.GetString(0), kind = rd.GetString(1), user = rd.GetString(2), secret }));
+                }
+            }
+            var company = new Dictionary<long, int?>();
+            await using (var c = new NpgsqlCommand("select id, company_id from assets.assets where collector_id = @i", db))
+            {
+                AgentsApi.P(c, "i", col.Id); await using var rd = await c.ExecuteReaderAsync(ct);
+                while (await rd.ReadAsync(ct)) company[rd.GetInt64(0)] = rd.IsDBNull(1) ? null : rd.GetInt32(1);
+            }
+            object[] LoginsFor(long assetId) { company.TryGetValue(assetId, out var co); return saved.Where(x => x.Company == null || x.Company == co).Select(x => x.Login).ToArray(); }
             var deploys = new List<object>();
             await using (var c = new NpgsqlCommand("select d.asset_id, a.ip_address, a.hostname, a.os_family from assets.deploys d join assets.assets a on a.id = d.asset_id where d.collector_id = @i and d.status = 'queued'", db))
             {
                 AgentsApi.P(c, "i", col.Id); await using var rd = await c.ExecuteReaderAsync(ct);
-                while (await rd.ReadAsync(ct)) deploys.Add(new { asset = rd.GetInt64(0).ToString(), ip = rd.GetString(1), host = rd.GetString(2), platform = rd.GetString(3) });
+                while (await rd.ReadAsync(ct)) deploys.Add(new { asset = rd.GetInt64(0).ToString(), ip = rd.GetString(1), host = rd.GetString(2), platform = rd.GetString(3), logins = LoginsFor(rd.GetInt64(0)) });
             }
             string cidrs = ""; bool scanReq = false;
             await using (var c = new NpgsqlCommand("select scan_cidrs, scan_req from assets.collectors where id = @i", db)) { AgentsApi.P(c, "i", col.Id); await using var rd = await c.ExecuteReaderAsync(ct); if (await rd.ReadAsync(ct)) { cidrs = rd.GetString(0); scanReq = rd.GetBoolean(1); } }

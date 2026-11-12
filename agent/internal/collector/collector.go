@@ -74,18 +74,20 @@ func Install(ctx context.Context, server, token, name, version string) error {
 // ---- what the platform sends and what we send back
 
 type asset struct {
-	ID      string `json:"id"`
-	IP      string `json:"ip"`
-	Host    string `json:"host"`
-	Name    string `json:"name"`
-	Monitor string `json:"monitor"`
+	ID      string  `json:"id"`
+	IP      string  `json:"ip"`
+	Host    string  `json:"host"`
+	Name    string  `json:"name"`
+	Monitor string  `json:"monitor"`
+	Logins  []login `json:"logins"`
 }
 
 type deploy struct {
-	Asset    string `json:"asset"`
-	IP       string `json:"ip"`
-	Host     string `json:"host"`
-	Platform string `json:"platform"`
+	Asset    string  `json:"asset"`
+	IP       string  `json:"ip"`
+	Host     string  `json:"host"`
+	Platform string  `json:"platform"`
+	Logins   []login `json:"logins"`
 }
 
 type work struct {
@@ -309,7 +311,7 @@ func (r *Runner) readDevice(ctx context.Context, a asset, target string) (any, e
 	switch a.Monitor {
 	case "snmp":
 		var last error = errors.New("no SNMP login is saved on the collector for this address (collector-cred add --kind snmp --community ...)")
-		for _, c := range pick(r.Cfg.Creds, "snmp", target) {
+		for _, c := range pick(r.credsFor(a.Logins), "snmp", target) {
 			inv, err := SNMPInventory(target, c.Community, firstNonEmpty(a.Host, a.Name))
 			if err == nil {
 				return inv, nil
@@ -318,9 +320,9 @@ func (r *Runner) readDevice(ctx context.Context, a asset, target string) (any, e
 		}
 		return nil, last
 	case "ssh":
-		return sshInventory(ctx, r.Cfg.Creds, target)
+		return sshInventory(ctx, r.credsFor(a.Logins), target)
 	case "windows":
-		return winInventory(ctx, r.Cfg.Creds, firstNonEmpty(a.Host, target))
+		return winInventory(ctx, r.credsFor(a.Logins), hostsOf(a.Host, target)...)
 	}
 	return nil, fmt.Errorf("unknown monitor kind %q", a.Monitor)
 }
@@ -381,9 +383,9 @@ func (r *Runner) install(ctx context.Context, d deploy, token string) (string, e
 	}
 	base := strings.TrimRight(r.Cfg.Server, "/")
 	if kind == "windows" {
-		return winInstall(ctx, r.Cfg.Creds, firstNonEmpty(d.Host, target), base+"/agent/install.ps1?t="+url.QueryEscape(token))
+		return winInstall(ctx, r.credsFor(d.Logins), hostsOf(d.Host, target), base+"/agent/install.ps1?t="+url.QueryEscape(token))
 	}
-	return sshInstall(ctx, r.Cfg.Creds, target, base+"/agent/install.sh?t="+url.QueryEscape(token))
+	return sshInstall(ctx, r.credsFor(d.Logins), target, base+"/agent/install.sh?t="+url.QueryEscape(token))
 }
 
 // ---- scanning

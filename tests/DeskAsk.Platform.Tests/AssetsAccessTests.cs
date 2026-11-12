@@ -35,7 +35,46 @@ public class AssetsAccessTests : IClassFixture<WebApplicationFactory<Program>>
         {
             var c = await TestSupport.ClientFor(factory, who, Pw);
             foreach (var u in urls) Assert.Equal(HttpStatusCode.OK, (await c.GetAsync(u)).StatusCode);
-            Assert.Equal(HttpStatusCode.Forbidden, (await c.PostAsync("/api/assets", Json(new { name = "x" }))).StatusCode);   // nobody but an administrator changes assets yet
         }
+        var viewer = await TestSupport.ClientFor(factory, "view@acc.test", Pw);
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PostAsync("/api/assets", Json(new { name = "x" }))).StatusCode);
+    }
+
+    [PgFact]
+    public async Task EngineersEditButAskBeforeDeletingAndAnApproverDecides()
+    {
+        var admin = await TestSupport.AdminClient(factory);
+        await Sql("delete from identity.users where \"Email\" like '%@del.test'");
+        await Sql("delete from assets.delete_requests");
+        Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "eng@del.test", name = "eng", role = "engineer", password = Pw }))).StatusCode);
+        var eng = await TestSupport.ClientFor(factory, "eng@del.test", Pw);
+
+        var made = await eng.PostAsync("/api/assets", Json(new { name = "Reception PC", status = "in_use" }));
+        Assert.True(made.IsSuccessStatusCode, await made.Content.ReadAsStringAsync());
+        var id = JsonDocument.Parse(await made.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetInt64();
+        Assert.True((await eng.PutAsync($"/api/assets/{id}", Json(new { location = "Front desk" }))).IsSuccessStatusCode);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await eng.DeleteAsync($"/api/assets/{id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await eng.PostAsync($"/api/assets/{id}/delete-request", Json(new { reason = "" }))).StatusCode);
+        var ask = await eng.PostAsync($"/api/assets/{id}/delete-request", Json(new { reason = "Scrapped" }));
+        Assert.Equal(HttpStatusCode.Created, ask.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await eng.PostAsync($"/api/assets/{id}/delete-request", Json(new { reason = "again" }))).StatusCode);
+
+        // the asker sees the request but cannot decide it
+        var list = JsonDocument.Parse(await eng.GetStringAsync("/api/assets/delete-requests?status=pending")).RootElement.GetProperty("items");
+        Assert.Equal(1, list.GetArrayLength()); Assert.False(list[0].GetProperty("canDecide").GetBoolean());
+        var rid = list[0].GetProperty("id").GetInt32();
+        Assert.Equal(HttpStatusCode.Forbidden, (await eng.PostAsync($"/api/assets/delete-requests/{rid}/approve", Json(new { }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await eng.GetAsync($"/api/assets/{id}/device")).StatusCode);
+
+        // an administrator rejects once (the asset stays), then a second request is approved and the asset goes
+        Assert.True(JsonDocument.Parse(await admin.GetStringAsync("/api/assets/delete-requests?status=pending")).RootElement.GetProperty("items")[0].GetProperty("canDecide").GetBoolean());
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/assets/delete-requests/{rid}/reject", Json(new { note = "Still in use" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await eng.GetAsync($"/api/assets/{id}/device")).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await eng.PostAsync($"/api/assets/{id}/delete-request", Json(new { reason = "Scrapped for real" }))).StatusCode);
+        var rid2 = JsonDocument.Parse(await admin.GetStringAsync("/api/assets/delete-requests?status=pending")).RootElement.GetProperty("items")[0].GetProperty("id").GetInt32();
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/assets/delete-requests/{rid2}/approve", Json(new { }))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await eng.GetAsync($"/api/assets/{id}/device")).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync($"/api/assets/delete-requests/{rid2}/approve", Json(new { }))).StatusCode);
     }
 }
