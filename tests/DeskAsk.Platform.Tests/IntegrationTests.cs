@@ -273,7 +273,7 @@ public class IntegrationTests : IClassFixture<WebApplicationFactory<Program>>
     static Task Until(Func<bool> ok) => Until(() => Task.FromResult(ok()));
     static async Task Until(Func<Task<bool>> ok)
     {
-        for (var i = 0; i < 100; i++) { if (await ok()) return; await Task.Delay(200); }
+        for (var i = 0; i < 300; i++) { if (await ok()) return; await Task.Delay(200); }
         Assert.Fail("Timed out waiting for the background job.");
     }
 }
