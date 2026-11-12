@@ -47,7 +47,13 @@ public class InboundTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/platform/mail/inbound", Json(new { provider = "imap", host = "imap.example.test", port = 993, user = "support@in.test", password = "p4ss-word" }))).StatusCode);
         return admin;
     }
-    async Task Fetch(HttpClient admin) { Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/platform/mail/inbound/fetch", null)).StatusCode); await Until(async () => fake.Pending.Count == 0); await Task.Delay(1500); }
+    async Task Fetch(HttpClient admin)
+    {
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/platform/mail/inbound/fetch", null)).StatusCode);
+        await Until(async () => fake.Pending.Count == 0);
+        if (fake.Pending.Count > 0) Assert.Fail("the mailbox was not read: " + await Scalar<string>("select coalesce(string_agg(status || ' x' || attempts || ' ' || coalesce(last_error, '') || ' due ' || run_at, ' | '), 'no job') from jobs.queue where type = 'mail.fetch'"));
+        await Task.Delay(1500);
+    }
     static async Task<long> Ticket(HttpClient c, object body) => (await J(await c.PostAsync("/api/servicedesk/tickets", Json(body)))).GetProperty("id").GetInt64();
 
     [PgFact]
