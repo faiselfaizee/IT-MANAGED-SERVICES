@@ -29,14 +29,32 @@ internal static class ReportsApi
             var totals = new { opened = d.Opened, resolved = d.Resolved, backlogStart = d.BacklogStart, backlogEnd = d.BacklogEnd, avgFirstResponseHours = d.AvgFirst, avgResolutionHours = d.AvgSolve, respondMetPercent = d.RespondPct, resolveMetPercent = d.ResolvePct };
             return Results.Ok(new { month = m, from = start, to = end, companyId = co, company = companyName, totals, byPriority = d.ByPriority, byCategory = d.ByCategory, bySource = d.BySource, byRequester = d.ByRequester, byAsset = d.ByAsset, byCompany = d.ByCompany, tickets = d.Tickets, truncated = d.Tickets.Count >= 300, changes = d.Changes });
         }).RequireAuthorization().RequireModule(key);
+        r.MapGet("/api/servicedesk/reports/monthly.pdf", async (string? month, int? companyId, ClaimsPrincipal u, ITenantContext t, ICompanyDirectory companies, CancellationToken ct) =>
+        {
+            await using var db = await ServiceDeskModule.Open(t, ct);
+            var w = await ServiceDeskModule.WhoAsync(u, db, ct);
+            var ownCompany = w.Role == "cadmin" && w.CompanyId != null;
+            if (!(w.Staff || w.Role == "viewer" || ownCompany)) return Results.Json(new { error = "forbidden" }, statusCode: 403);
+            var m = month ?? DateTime.UtcNow.ToString("yyyy-MM", CultureInfo.InvariantCulture);
+            if (!DateTime.TryParseExact(m, "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var start)) return ServiceDeskModule.Bad("bad_month", "month must look like 2026-10");
+            var end = start.AddMonths(1); var co = ownCompany ? w.CompanyId : companyId;
+            string companyName = "All companies";
+            if (co is int ci) { var c0 = await companies.GetAsync(ci, ct); if (c0 == null) return ServiceDeskModule.Bad("bad_company", "That company does not exist."); companyName = c0.Name; }
+
+            var d = await Build(db, start, end, co, w.Staff || w.Role == "viewer", ct);
+            var bytes = ReportPdf.Render(companyName, start, d);
+            return Results.File(bytes, "application/pdf", "service-report-" + m + ".pdf");
+        }).RequireAuthorization().RequireModule(key);
     }
 
     internal sealed record Counted(string Name, long Count);
+    internal sealed record TicketLine(long Id, string Number, string Subject, string Status, string Priority, string Category, string Requester, DateTime CreatedAt, DateTime? DoneAt);
+    internal sealed record ChangeCount(long Completed, long Failed);
     internal sealed class ReportData
     {
         public long Opened, Resolved, BacklogStart, BacklogEnd; public double? AvgFirst, AvgSolve, RespondPct, ResolvePct;
         public List<Counted> ByPriority = new(), ByCategory = new(), BySource = new(), ByRequester = new(), ByAsset = new(), ByCompany = new();
-        public List<object> Tickets = new(); public object? Changes;
+        public List<TicketLine> Tickets = new(); public ChangeCount? Changes;
     }
 
     internal static async Task<ReportData> Build(NpgsqlConnection db, DateTime start, DateTime end, int? co, bool withChanges, CancellationToken ct)
@@ -88,12 +106,12 @@ internal static class ReportsApi
             await using (var c = Cmd($"select id, number, subject, status, priority, category, requester_name, created_at, {done} from servicedesk.tickets where {scope} and created_at >= @s and created_at < @e order by id limit 300"))
             {
                 await using var rd = await c.ExecuteReaderAsync(ct);
-                while (await rd.ReadAsync(ct)) tickets.Add(new { id = rd.GetInt64(0), number = rd.GetString(1), subject = rd.GetString(2), status = rd.GetString(3), priority = rd.GetString(4), category = rd.GetString(5), requester = rd.GetString(6), createdAt = rd.GetDateTime(7), doneAt = rd.IsDBNull(8) ? (DateTime?)null : rd.GetDateTime(8) });
+                while (await rd.ReadAsync(ct)) tickets.Add(new TicketLine(rd.GetInt64(0), rd.GetString(1), rd.GetString(2), rd.GetString(3), rd.GetString(4), rd.GetString(5), rd.GetString(6), rd.GetDateTime(7), rd.IsDBNull(8) ? null : rd.GetDateTime(8)));
             }
             if (withChanges)
             {
                 await using var c = Cmd($"select count(*) filter (where status = 'completed' or (status = 'closed' and closure_code in ('successful','successful_with_issues'))), count(*) filter (where status = 'failed' or (status = 'closed' and closure_code in ('unsuccessful','rolled_back'))) from servicedesk.changes where {scope} and status in ('completed','failed','closed') and updated_at >= @s and updated_at < @e");
-                await using var rd = await c.ExecuteReaderAsync(ct); await rd.ReadAsync(ct); d.Changes = new { completed = rd.GetInt64(0), failed = rd.GetInt64(1) };
+                await using var rd = await c.ExecuteReaderAsync(ct); await rd.ReadAsync(ct); d.Changes = new ChangeCount(rd.GetInt64(0), rd.GetInt64(1));
             }
         return d;
     }

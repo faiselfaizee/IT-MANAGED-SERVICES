@@ -235,6 +235,13 @@ public class IntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.OK, (await (await TestSupport.ClientFor(factory, "view2@int.test", Pw)).GetAsync("/api/servicedesk/reports/monthly?month=" + thisMonth)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await (await TestSupport.ClientFor(factory, "cust2@int.test", Pw)).GetAsync("/api/servicedesk/reports/monthly?month=" + thisMonth)).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/servicedesk/reports/monthly?month=2026-13")).StatusCode);
+        var pdf = await admin.GetAsync("/api/servicedesk/reports/monthly.pdf?month=" + thisMonth);
+        Assert.Equal(HttpStatusCode.OK, pdf.StatusCode); Assert.Equal("application/pdf", pdf.Content.Headers.ContentType!.MediaType);
+        var bytes = await pdf.Content.ReadAsByteArrayAsync(); var raw = Encoding.Latin1.GetString(bytes);
+        Assert.StartsWith("%PDF-1.4", raw); Assert.EndsWith("%%EOF\n", raw); Assert.Contains("Mail not syncing", raw); Assert.Contains("Service report", raw);
+        var xrefAt = int.Parse(raw[(raw.LastIndexOf("startxref\n") + 10)..].Split('\n')[0]); Assert.Equal("xref", raw.Substring(xrefAt, 4));
+        Assert.Equal(HttpStatusCode.Forbidden, (await (await TestSupport.ClientFor(factory, "cust2@int.test", Pw)).GetAsync("/api/servicedesk/reports/monthly.pdf?month=" + thisMonth)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/servicedesk/reports/monthly.pdf?month=2026-13")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/servicedesk/reports/monthly?month=" + thisMonth + "&companyId=99999")).StatusCode);
     }
 
