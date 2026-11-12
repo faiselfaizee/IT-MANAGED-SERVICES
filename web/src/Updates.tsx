@@ -6,17 +6,36 @@ import { Badge, Card, Err, Loading } from './ui';
 const TONE: Record<string, 'ok' | 'warn' | 'bad' | undefined> = { done: 'ok', running: 'warn', rolled_back: 'bad', failed: 'bad' };
 const LABEL: Record<string, string> = { done: 'Updated', running: 'Updating', rolled_back: 'Went back to the old version', failed: 'Failed' };
 
-/** Sends the file with progress; the server only drops it in the inbox and the updater service does the rest. */
-function upload(file: File, onProgress: (pct: number) => void): Promise<Rec> {
+const PIECE = 5 * 1024 * 1024;
+const hex = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+
+/** One piece (or the closing call) as its own small request, so a proxy with a time limit cannot cut the upload off. */
+function sendPiece(url: string, body: Blob): Promise<{ status: number; json: Rec }> {
   return new Promise((resolve, reject) => {
-    const x = new XMLHttpRequest();
-    x.open('POST', '/api/platform/updates?name=' + encodeURIComponent(file.name));
+    const x = new XMLHttpRequest(); x.open('POST', url);
     const t = accessToken(); if (t) x.setRequestHeader('authorization', 'Bearer ' + t);
-    x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)); };
-    x.onload = () => { let j: Rec = {}; try { j = JSON.parse(x.responseText); } catch { /* not json */ } if (x.status < 300) resolve(j); else reject(new Error(String(j.reason ?? j.error ?? `The server answered ${x.status}.`))); };
-    x.onerror = () => reject(new Error('The upload was interrupted.'));
-    x.send(file);
+    x.onload = () => { let j: Rec = {}; try { j = JSON.parse(x.responseText); } catch { /* not json */ } resolve({ status: x.status, json: j }); };
+    x.onerror = () => reject(new Error('The connection was interrupted.'));
+    x.send(body);
   });
+}
+
+/** Sends the file in pieces with progress; the server only drops it in the inbox and the updater service does the rest. */
+async function upload(file: File, onProgress: (pct: number) => void): Promise<Rec> {
+  const id = hex(); let at = 0; let failures = 0;
+  const base = `/api/platform/updates/part?upload=${id}`;
+  for (;;) {
+    const last = at + PIECE >= file.size; const body = file.slice(at, Math.min(file.size, at + PIECE));
+    const q = `${base}&at=${at}` + (last ? `&done=1&name=${encodeURIComponent(file.name)}` : '');
+    let r: { status: number; json: Rec };
+    try { r = await sendPiece(q, body); } catch (e) { if (++failures > 5) throw e; await new Promise((ok) => setTimeout(ok, 2000)); continue; }
+    if (r.status === 409 && r.json.error === 'out_of_order' && at > 0 && ++failures <= 5) { at = Number(r.json.have) || 0; continue; }   // the server has a different amount: carry on from there
+    if (r.status >= 500 && ++failures <= 5) { await new Promise((ok) => setTimeout(ok, 2000)); continue; }
+    if (r.status >= 300) throw new Error(String(r.json.reason ?? r.json.error ?? `The server answered ${r.status}.`));
+    failures = 0;
+    if (last) { onProgress(100); return r.json; }
+    at += body.size; onProgress(Math.round((at / file.size) * 100));
+  }
 }
 
 /** Admin page: put in a new release by uploading its .dkb file. No setup page, no other files. */

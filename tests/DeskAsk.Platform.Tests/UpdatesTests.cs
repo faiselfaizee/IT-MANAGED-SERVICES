@@ -14,6 +14,7 @@ public class UpdatesNotSetUpTests : IClassFixture<WebApplicationFactory<Program>
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.GetAsync("/api/platform/updates")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.PostAsync("/api/platform/updates?name=x.dkb", new ByteArrayContent(new byte[300]))).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.DeleteAsync("/api/platform/updates/aaaaaaaaaaaaaaaa")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anon.PostAsync("/api/platform/updates/part?upload=aaaaaaaaaaaaaaaaaaaaaaaa&at=0", new ByteArrayContent(new byte[10]))).StatusCode);
     }
 
     [PgFact]
@@ -22,5 +23,6 @@ public class UpdatesNotSetUpTests : IClassFixture<WebApplicationFactory<Program>
         var admin = await TestSupport.AdminClient(factory);
         Assert.Contains("\"installed\":false", await admin.GetStringAsync("/api/platform/updates"));
         Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync("/api/platform/updates?name=x.dkb", new ByteArrayContent(new byte[300]))).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync("/api/platform/updates/part?upload=aaaaaaaaaaaaaaaaaaaaaaaa&at=0", new ByteArrayContent(new byte[300]))).StatusCode);
     }
 }

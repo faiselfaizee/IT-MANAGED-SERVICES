@@ -115,6 +115,74 @@ public sealed class UpdatesModule : IPlatformModule
             return Results.Json(new { ok = true, id, sha256 = sha, size = total, note = "The updater verifies the signature before it changes anything." }, statusCode: 202);
         }).RequireAuthorization(p => p.RequireRole("admin"));
 
+        // The same upload in small pieces (the web page sends about 5 MB at a time), so no proxy or firewall with a time limit can cut it off:
+        // POST ?upload=<id>&at=<bytes already sent>[&done=1][&name=..&force=1]; the body is the next piece.
+        r.MapPost("/api/platform/updates/part", async (HttpContext http, IConfiguration cfg, IAuditLog audit, CancellationToken ct) =>
+        {
+            var dir = Dir(cfg);
+            if (dir == null || !Directory.Exists(Path.Combine(dir, "inbox"))) return Results.Json(new { error = "updates_not_set_up", reason = "The updater service is not set up on this server (Updates:Dir)." }, statusCode: 409);
+            if (!http.User.HasClaim("amr", "otp")) return Results.Json(new { error = "two_step_required", reason = "Sign in with two-step sign-in to upload an update." }, statusCode: 403);
+            var q = http.Request.Query; var id = q["upload"].ToString();
+            if (!IdRx.IsMatch(id) || !long.TryParse(q["at"], out var at) || at < 0 || at > MaxPackage) return Results.BadRequest(new { error = "bad_request" });
+            var done = q["done"] == "1";
+            var inbox = Path.Combine(dir, "inbox"); var folder = Path.Combine(inbox, id); var part = Path.Combine(folder, "package.dkb.part");
+            var lim = http.Features.Get<IHttpMaxRequestBodySizeFeature>();
+            if (lim != null && !lim.IsReadOnly) lim.MaxRequestBodySize = 33L << 20;
+
+            if (at == 0)
+            {
+                if (Directory.Exists(folder)) return Results.Json(new { error = "exists", reason = "This upload already started." }, statusCode: 409);
+                // one package at a time; pieces that were never finished do not count and are cleaned up after a day
+                foreach (var d in new DirectoryInfo(inbox).GetDirectories())
+                {
+                    if (!IdRx.IsMatch(d.Name)) continue;
+                    if (File.Exists(Path.Combine(d.FullName, "job.json")))
+                    { if (!File.Exists(Path.Combine(dir, "state", "jobs", d.Name + ".json"))) return Results.Json(new { error = "busy", reason = "Another package is waiting for the updater." }, statusCode: 409); }
+                    else if (d.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-1)) { try { d.Delete(true); } catch (Exception) { } }
+                }
+                Directory.CreateDirectory(folder);
+            }
+            else if (!Directory.Exists(folder) || File.Exists(Path.Combine(folder, "job.json"))) return Results.Json(new { error = "no_upload", reason = "This upload is not open. Start again." }, statusCode: 409);
+
+            long have = File.Exists(part) ? new FileInfo(part).Length : 0;
+            if (have != at) return Results.Json(new { error = "out_of_order", have }, statusCode: 409);
+            var ok = false;
+            try
+            {
+                long added = 0;
+                await using (var fs = new FileStream(part, FileMode.Append, FileAccess.Write, FileShare.None, 81920, true))
+                {
+                    var buf = new byte[81920]; int n;
+                    while ((n = await http.Request.Body.ReadAsync(buf.AsMemory(0, buf.Length), ct)) > 0)
+                    {
+                        added += n; if (at + added > MaxPackage) return Results.BadRequest(new { error = "too_large" });
+                        await fs.WriteAsync(buf.AsMemory(0, n), ct);
+                    }
+                }
+                var total = at + added;
+                if (!done) { ok = true; return Results.Ok(new { received = total }); }
+
+                var name = Regex.Replace(Path.GetFileName(q["name"].ToString()), @"[^A-Za-z0-9._ ()-]", "_");
+                if (name == "") name = "package.dkb";
+                if (!name.EndsWith(".dkb", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new { error = "not_a_bundle", reason = "Choose a .dkb release bundle." });
+                var head = new byte[2]; int got;
+                await using (var rs = new FileStream(part, FileMode.Open, FileAccess.Read, FileShare.Read)) got = await rs.ReadAsync(head.AsMemory(0, 2), ct);
+                if (total < 100 || got < 2 || head[0] != (byte)'P' || head[1] != (byte)'K') return Results.BadRequest(new { error = "not_a_bundle", reason = "This is not a release bundle." });
+                string sha;
+                await using (var rs = new FileStream(part, FileMode.Open, FileAccess.Read, FileShare.Read)) sha = Convert.ToHexString(await SHA256.HashDataAsync(rs, ct)).ToLowerInvariant();
+                File.Move(part, Path.Combine(folder, "package.dkb"));
+                var by = http.User.FindFirstValue("email") ?? http.User.FindFirstValue("sub") ?? "";
+                var job = JsonSerializer.Serialize(new { id, file = name, by, requested = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), force = q["force"] == "1" });
+                var tmp = Path.Combine(folder, "job.json.part");
+                await File.WriteAllTextAsync(tmp, job, new UTF8Encoding(false), ct);
+                File.Move(tmp, Path.Combine(folder, "job.json"));   // last: from now on the updater may take it
+                ok = true;
+                await audit.WriteAsync("update.uploaded", name, $"{total} bytes, SHA-256 {sha}", ct: ct);
+                return Results.Json(new { ok = true, id, sha256 = sha, size = total, note = "The updater verifies the signature before it changes anything." }, statusCode: 202);
+            }
+            finally { if (!ok && done) { try { Directory.Delete(folder, true); } catch (Exception) { } } }
+        }).RequireAuthorization(p => p.RequireRole("admin"));
+
         r.MapDelete("/api/platform/updates/{id}", async (string id, IConfiguration cfg, IAuditLog audit, CancellationToken ct) =>
         {
             var dir = Dir(cfg);
