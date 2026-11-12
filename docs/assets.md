@@ -73,7 +73,7 @@ One program, `deskask-agent`, does both jobs. The platform serves it from `agent
 **Not included yet:** live shell and remote-desktop messages from the server, SNMP v3, ONVIF or vendor-specific biometric and CCTV reading (those are found by scan and ping/port checks only), macOS.
 
 ## Saved logins for the controller
-Save the logins under **Assets > Discover > Credentials** (Windows user and password, Linux SSH password or private key, SNMP community). They are sealed in the customer's database and the platform sends them only to a controller, only with the work for a computer of that customer (or to every customer when the login has none). A login saved on the controller itself with `collector-cred` is tried first. When no Windows login exists the controller uses its own account, which is rarely enough; the log then says so and says what to fix (WinRM not enabled, port 5985 closed, TrustedHosts, refused login).
+Save the logins under **Assets > Credentials** (Windows user and password, Linux SSH password or private key, SNMP community). They are sealed in the customer's database and the platform sends them only to a controller, only with the work for a computer of that customer (or to every customer when the login has none). A login saved on the controller itself with `collector-cred` is tried first. When no Windows login exists the controller uses its own account, which is rarely enough; the log then says so and says what to fix (WinRM not enabled, port 5985 closed, TrustedHosts, refused login).
 
 ## Who may edit and delete assets
 - Administrators and engineers add and edit assets. Viewers only read.

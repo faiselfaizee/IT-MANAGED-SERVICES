@@ -242,7 +242,7 @@ func WinHint(msg string) string {
 	msg = trim(msg)
 	switch {
 	case strings.Contains(m, "access is denied") || strings.Contains(m, "logon failure") || strings.Contains(m, "unknown user name"):
-		return msg + " - the login was refused: save a Windows login with administrator rights under Assets > Discover > Credentials (use DOMAIN\\user for domain accounts)"
+		return msg + " - the login was refused: save a Windows login with administrator rights under Assets > Credentials (use DOMAIN\\user for domain accounts)"
 	case strings.Contains(m, "trustedhosts") || strings.Contains(m, "kerberos"):
 		return msg + " - the computer is not in the domain: on the collector's computer run  Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value '<computer>' -Force  (or install by hand or Group Policy)"
 	case strings.Contains(m, "winrm") || strings.Contains(m, "connecting to remote server") || strings.Contains(m, "cannot connect"):

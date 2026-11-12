@@ -250,7 +250,7 @@ func TestCleanCLIXMLAndHint(t *testing.T) {
 	if !strings.Contains(got, "Enable-PSRemoting") || !strings.Contains(got, "WinRM cannot complete the operation.") {
 		t.Fatalf("no readable message or hint: %s", got)
 	}
-	if !strings.Contains(WinHint("Access is denied."), "Assets > Discover > Credentials") {
+	if !strings.Contains(WinHint("Access is denied."), "Assets > Credentials") {
 		t.Fatal("no hint for a refused login")
 	}
 }

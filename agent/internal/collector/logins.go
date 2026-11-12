@@ -9,7 +9,7 @@ import (
 	"github.com/deskask/platform/agent/internal/config"
 )
 
-// login is a saved login the platform sends with the work for one computer or device (Assets > Discover > Credentials).
+// login is a saved login the platform sends with the work for one computer or device (Assets > Credentials).
 type login struct {
 	Name   string `json:"name"`
 	Kind   string `json:"kind"` // windows, ssh (private key), sshpw (SSH password), snmp (community in secret)

@@ -260,7 +260,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
                 await Log(db, col.Id, AgentsApi.Str(l, "l") ?? "info", m, ct);
             }
 
-            // the logins saved under Assets > Discover > Credentials, sealed in the database; sent only to this collector, over its own authenticated connection
+            // the logins saved under Assets > Credentials, sealed in the database; sent only to this collector, over its own authenticated connection
             var saved = new List<(int? Company, object Login)>();
             await using (var c = new NpgsqlCommand("select name, kind, username, secret, company_id from assets.creds where kind in ('windows','ssh','snmp','sshpw') order by id", db))
             {
