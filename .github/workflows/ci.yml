@@ -41,6 +41,7 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: GOOS=windows go build ./cmd/agent
+      - run: GOOS=linux GOARCH=arm64 go build ./cmd/agent
   e2e:
     runs-on: ubuntu-latest
     needs: [backend, agent]

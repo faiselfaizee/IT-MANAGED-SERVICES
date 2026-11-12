@@ -43,7 +43,10 @@ jobs:
           (cd updater && go build -o ../out/dkr ./cmd/deskask-release)
           for t in "linux amd64 " "windows amd64 .exe"; do set -- $t; \
             (cd updater && GOOS=$1 GOARCH=$2 go build -o ../out/tools/deskask-updater-$1-$2$3 ./cmd/deskask-updater); \
-            (cd agent && GOOS=$1 GOARCH=$2 go build -o ../out/tools/deskask-agent-$1-$2$3 ./cmd/agent); done
+            (cd agent && GOOS=$1 GOARCH=$2 go build -ldflags "-X main.version=$VERSION" -o ../out/tools/deskask-agent-$1-$2$3 ./cmd/agent); done
+          (cd agent && GOOS=linux GOARCH=arm64 go build -ldflags "-X main.version=$VERSION" -o ../out/tools/deskask-agent-linux-arm64 ./cmd/agent)
+          # the platform serves the agent (and the site collector, which is the same program) from agent-dist next to it
+          for d in out/host-linux-x64 out/host-win-x64; do mkdir -p $d/agent-dist; cp out/tools/deskask-agent-* $d/agent-dist/; echo "$VERSION" > $d/agent-dist/version.txt; done
           cp deploy/windows/install-windows.ps1 deploy/windows/deskask-setup.ps1 out/tools/
           echo "$VERSION" > out/version.txt
       - name: Sign and pack

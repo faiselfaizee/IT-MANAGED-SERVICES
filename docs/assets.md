@@ -54,3 +54,20 @@ A command, shell or remote-control session only starts when **all** of these are
 
 WinRM discovery of Windows computers needs the platform server to run on Windows; on Linux use the agent. SSH discovery needs `ssh` on the server.
 
+
+## General agent and site controller (collector)
+
+One program, `deskask-agent`, does both jobs. The platform serves it from `agent-dist` (filled by every release).
+
+**General agent** (Windows, Linux; desktops, laptops, servers). Reports CPU (model, sockets, cores, threads), RAM, disks (type, size, partitions, file system, free space), network cards (up/down, IP, MAC), installed applications with versions, OS, serial, antivirus and patches on Windows. Runs jobs, self-updates and rolls back if the new build never checks in.
+
+- Install on one machine: Assets > Enrolments > install script (`install.ps1` / `install.sh`), or `deskask-agent install --server URL --token dkat_...` as admin/root.
+- Check what it would report without enrolling: `deskask-agent inventory`.
+
+**Site controller.** Installed on one VM per customer network: `deskask-agent collector-install --server URL --token dkco_...`. It pings, scans (up to /22), reads SNMP v2c from printers, switches and firewalls, runs TCP/HTTP/SSL/DNS checks, and pushes the agent to machines.
+
+- Logins stay on the controller only: `deskask-agent collector-cred add --kind windows|ssh|snmp ...` (see `deskask-agent help`).
+- Push install: Linux over SSH (key or password), Windows over PowerShell remoting (WinRM). A Windows target needs the controller to run on Windows. The target downloads the agent itself using a one-day token.
+- No credentials or WinRM? Run the same `install.ps1` line from a Group Policy startup script or an Intune script, using an enrolment token.
+
+**Not included yet:** live shell and remote-desktop messages from the server, SNMP v3, ONVIF or vendor-specific biometric and CCTV reading (those are found by scan and ping/port checks only), macOS.
