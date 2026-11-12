@@ -130,6 +130,7 @@ public class MailTests : IClassFixture<WebApplicationFactory<Program>>
         var number = t.GetProperty("number").GetString()!;
         await Until(async () => smtp.Snapshot().Any(m => m.Contains(number)));
         Assert.Contains(smtp.Snapshot(), m => m.Contains(number) && m.Contains("Printer down"));
+        Assert.Contains(smtp.Snapshot(), m => m.Contains("text/html") && m.Contains("text/plain") && m.Contains("#/servicedesk/"));   // both versions, with a link to the ticket
         Assert.Equal("sent", await Scalar<string>("select status from mail.outbox where reference = '" + number + "' order by id limit 1"));
 
         // a staff reply mails the requester; an internal note does not
@@ -156,6 +157,44 @@ public class MailTests : IClassFixture<WebApplicationFactory<Program>>
         await Until(async () => await Scalar<string>($"select status from mail.outbox where id = {fid}") == "sent");
         Assert.Equal("sent", await Scalar<string>($"select status from mail.outbox where id = {fid}"));
         Assert.Equal(HttpStatusCode.NotFound, (await admin.PostAsync($"/api/platform/mail/outbox/{fid}/retry", null)).StatusCode);
+    }
+}
+
+public class TemplateTests : IClassFixture<WebApplicationFactory<Program>>
+{
+    static readonly string Pg = Environment.GetEnvironmentVariable("TEST_PG_CONNECTION") ?? "";
+    readonly WebApplicationFactory<Program> factory;
+    public TemplateTests(WebApplicationFactory<Program> f) => factory = f.WithWebHostBuilder(b => { TestSupport.Configure(b); b.UseSetting("Licensing:AllowUnlicensed", "true"); });
+    static StringContent Json(object o) => new(JsonSerializer.Serialize(o), Encoding.UTF8, "application/json");
+    static async Task<JsonElement> J(HttpResponseMessage r) => JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement.Clone();
+    static async Task Sql(string sql) { await using var db = new NpgsqlConnection(Pg); await db.OpenAsync(); await using var c = new NpgsqlCommand(sql, db); await c.ExecuteNonQueryAsync(); }
+
+    [PgFact]
+    public async Task TemplatesCanBeEditedPreviewedAndReset()
+    {
+        var admin = await TestSupport.AdminClient(factory);
+        await Sql("delete from core.settings where key = 'mail.templates'");
+        var list = (await J(await admin.GetAsync("/api/platform/mail/templates"))).GetProperty("items");
+        Assert.Contains(list.EnumerateArray(), t => t.GetProperty("key").GetString() == "ticket_reply" && !t.GetProperty("custom").GetBoolean());
+        // a typo in a name is refused, and so is an empty message
+        var bad = await admin.PutAsync("/api/platform/mail/templates/ticket_reply", Json(new { subject = "Re: {{number}}", body = "Hi {{requestor}}" }));
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode); Assert.Contains("requestor", (await J(bad)).GetProperty("detail").GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/platform/mail/templates/ticket_reply", Json(new { subject = "x", body = " " }))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.PutAsync("/api/platform/mail/templates/nope", Json(new { subject = "x", body = "y" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/platform/mail/templates/ticket_reply", Json(new { subject = "Update on {{number}}", body = "Dear {{requester}}, {{message}} {{link}}" }))).StatusCode);
+        var prev = await J(await admin.PostAsync("/api/platform/mail/templates/ticket_reply/preview", Json(new { subject = "Update on {{number}}", body = "Dear {{requester}}, {{message}}\n{{link}}" })));
+        Assert.Equal("Update on TKT-000123", prev.GetProperty("subject").GetString());
+        Assert.Contains("Dear Pat Morgan", prev.GetProperty("text").GetString());
+        Assert.Contains("https://", prev.GetProperty("text").GetString()); Assert.Contains("#/servicedesk/123", prev.GetProperty("text").GetString());
+        Assert.Contains("<a href=", prev.GetProperty("html").GetString());
+        // what people type is never turned into markup
+        var xss = await J(await admin.PostAsync("/api/platform/mail/templates/ticket_reply/preview", Json(new { subject = "s", body = "<script>alert(1)</script> {{requester}}" })));
+        Assert.DoesNotContain("<script>", xss.GetProperty("html").GetString());
+        var after = (await J(await admin.GetAsync("/api/platform/mail/templates"))).GetProperty("items").EnumerateArray().First(t => t.GetProperty("key").GetString() == "ticket_reply");
+        Assert.True(after.GetProperty("custom").GetBoolean()); Assert.Equal("Update on {{number}}", after.GetProperty("subject").GetString());
+        Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync("/api/platform/mail/templates/ticket_reply")).StatusCode);
+        var reset = (await J(await admin.GetAsync("/api/platform/mail/templates"))).GetProperty("items").EnumerateArray().First(t => t.GetProperty("key").GetString() == "ticket_reply");
+        Assert.False(reset.GetProperty("custom").GetBoolean());
     }
 }
 

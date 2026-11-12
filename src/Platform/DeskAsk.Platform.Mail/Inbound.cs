@@ -59,6 +59,7 @@ public interface IInboundFetcher
 public sealed class RealInboundFetcher : IInboundFetcher
 {
     const int Batch = 25;
+    public const int MaxFiles = 10, MaxFileBytes = 10 * 1024 * 1024;
 
     public Task FetchAsync(InboundConfig i, MailConfig mail, Func<InboundMail, Task<bool>> store, CancellationToken ct) =>
         i.Provider == "graph" ? GraphFetch(i, mail, store, ct) : ImapFetch(i, store, ct);
@@ -98,7 +99,14 @@ public sealed class RealInboundFetcher : IInboundFetcher
             var from = m.From.Mailboxes.FirstOrDefault();
             var auto = (m.Headers["Auto-Submitted"] is { } a && !a.Equals("no", StringComparison.OrdinalIgnoreCase)) || (m.Headers["Precedence"] is { } p && p.ToLowerInvariant() is "bulk" or "junk" or "list");
             var text = m.TextBody ?? InboundText.StripHtml(m.HtmlBody ?? "");
-            var mail = new InboundMail(string.IsNullOrWhiteSpace(m.MessageId) ? $"imap:{i.Host}:{uid.Id}:{m.Date.UtcTicks}" : m.MessageId, from?.Address ?? "", from?.Name ?? "", m.Subject ?? "", InboundText.Clean(text), m.Date == default ? DateTimeOffset.UtcNow : m.Date, auto);
+            var files = new List<InboundFile>();
+            foreach (var part in m.Attachments.OfType<MimePart>().Take(MaxFiles))
+            {
+                using var ms = new MemoryStream();
+                await part.Content.DecodeToAsync(ms, ct);
+                if (ms.Length > 0 && ms.Length <= MaxFileBytes) files.Add(new InboundFile(part.FileName ?? "attachment", part.ContentType.MimeType, ms.ToArray()));
+            }
+            var mail = new InboundMail(string.IsNullOrWhiteSpace(m.MessageId) ? $"imap:{i.Host}:{uid.Id}:{m.Date.UtcTicks}" : m.MessageId, from?.Address ?? "", from?.Name ?? "", m.Subject ?? "", InboundText.Clean(text), m.Date == default ? DateTimeOffset.UtcNow : m.Date, auto, files);
             if (await store(mail)) await f.AddFlagsAsync(uid, MessageFlags.Seen, true, ct);
         }
         await c.DisconnectAsync(true, ct);
@@ -129,7 +137,7 @@ public sealed class RealInboundFetcher : IInboundFetcher
     static async Task GraphFetch(InboundConfig i, MailConfig m, Func<InboundMail, Task<bool>> store, CancellationToken ct)
     {
         using var http = await GraphClient(m, ct);
-        var j = await GetJson(http, $"https://graph.microsoft.com/v1.0/users/{Box(i, m)}/mailFolders/inbox/messages?$filter=isRead eq false&$top={Batch}&$select=id,internetMessageId,subject,from,body,receivedDateTime", ct);
+        var j = await GetJson(http, $"https://graph.microsoft.com/v1.0/users/{Box(i, m)}/mailFolders/inbox/messages?$filter=isRead eq false&$top={Batch}&$select=id,internetMessageId,subject,from,body,receivedDateTime,hasAttachments", ct);
         foreach (var e in j.GetProperty("value").EnumerateArray())
         {
             string S(JsonElement x, string n) => x.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
@@ -137,8 +145,19 @@ public sealed class RealInboundFetcher : IInboundFetcher
             var id = S(e, "id");
             var body = e.TryGetProperty("body", out var b) ? S(b, "content") : "";
             var subject = S(e, "subject");
+            var files = new List<InboundFile>();
+            if (e.TryGetProperty("hasAttachments", out var ha) && ha.ValueKind == JsonValueKind.True)
+            {
+                var aj = await GetJson(http, $"https://graph.microsoft.com/v1.0/users/{Box(i, m)}/messages/{Uri.EscapeDataString(id)}/attachments?$top={MaxFiles}", ct);
+                foreach (var a in aj.GetProperty("value").EnumerateArray())
+                {
+                    if (S(a, "@odata.type") != "#microsoft.graph.fileAttachment" || (a.TryGetProperty("isInline", out var il) && il.ValueKind == JsonValueKind.True) || !a.TryGetProperty("contentBytes", out var cb) || cb.ValueKind != JsonValueKind.String) continue;
+                    var bytes = Convert.FromBase64String(cb.GetString()!);
+                    if (bytes.Length > 0 && bytes.Length <= MaxFileBytes) files.Add(new InboundFile(S(a, "name") is { Length: > 0 } fn ? fn : "attachment", S(a, "contentType") is { Length: > 0 } ct2 ? ct2 : "application/octet-stream", bytes));
+                }
+            }
             var mail = new InboundMail(S(e, "internetMessageId") is { Length: > 0 } mid ? mid : "graph:" + id, from.ValueKind == JsonValueKind.Object ? S(from, "address") : "", from.ValueKind == JsonValueKind.Object ? S(from, "name") : "",
-                subject, InboundText.Clean(body), DateTimeOffset.TryParse(S(e, "receivedDateTime"), out var at) ? at : DateTimeOffset.UtcNow, false);
+                subject, InboundText.Clean(body), DateTimeOffset.TryParse(S(e, "receivedDateTime"), out var at) ? at : DateTimeOffset.UtcNow, false, files);
             if (await store(mail))
             {
                 var req = new HttpRequestMessage(HttpMethod.Patch, $"https://graph.microsoft.com/v1.0/users/{Box(i, m)}/messages/{Uri.EscapeDataString(id)}") { Content = new StringContent("{\"isRead\":true}", Encoding.UTF8, "application/json") };
@@ -201,11 +220,17 @@ public sealed class MailFetchJob : IJobHandler
                 id = got;
             }
             if (ignore || handler == null) return true;
+            // files wait with the message until a person decides, or go to the ticket at once
+            foreach (var f in m.Files ?? Array.Empty<InboundFile>())
+            {
+                await using var fc = new NpgsqlCommand("insert into mail.inbox_files (inbox_id, name, content_type, data) values (@i, @n, @c, @d)", db);
+                fc.Parameters.AddWithValue("i", id); fc.Parameters.AddWithValue("n", f.Name); fc.Parameters.AddWithValue("c", f.ContentType); fc.Parameters.AddWithValue("d", f.Data); await fc.ExecuteNonQueryAsync(ct);
+            }
             try
             {
                 if (await handler.HandleAsync(m, ct) is { } number)
                 {
-                    await using var u = new NpgsqlCommand("update mail.inbox set status = 'converted', ticket_number = @n where id = @i", db); u.Parameters.AddWithValue("n", number); u.Parameters.AddWithValue("i", id); await u.ExecuteNonQueryAsync(ct);
+                    await using var u = new NpgsqlCommand("update mail.inbox set status = 'converted', ticket_number = @n where id = @i; delete from mail.inbox_files where inbox_id = @i", db); u.Parameters.AddWithValue("n", number); u.Parameters.AddWithValue("i", id); await u.ExecuteNonQueryAsync(ct);
                 }
             }
             catch (Exception e) when (e is not OperationCanceledException)
@@ -273,11 +298,11 @@ public static class InboundApi
         {
             await using var db = new NpgsqlConnection(t.Require().ConnectionString); await db.OpenAsync(ct);
             var st = http.Request.Query["status"].ToString(); if (st == "") st = "new";
-            await using var c = new NpgsqlCommand("select id, from_addr, from_name, subject, body, received_at, status, ticket_number from mail.inbox where (@s = 'all' or status = @s) order by id desc limit 100", db);
+            await using var c = new NpgsqlCommand("select id, from_addr, from_name, subject, body, received_at, status, ticket_number, (select count(*) from mail.inbox_files f where f.inbox_id = mail.inbox.id) from mail.inbox where (@s = 'all' or status = @s) order by id desc limit 100", db);
             c.Parameters.AddWithValue("s", st);
             var items = new List<object>();
             await using var rd = await c.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) items.Add(new { id = rd.GetInt64(0), from = rd.GetString(1), name = rd.GetString(2), subject = rd.GetString(3), body = rd.GetString(4), receivedAt = rd.GetDateTime(5), status = rd.GetString(6), ticket = rd.GetString(7) });
+            while (await rd.ReadAsync(ct)) items.Add(new { id = rd.GetInt64(0), from = rd.GetString(1), name = rd.GetString(2), subject = rd.GetString(3), body = rd.GetString(4), receivedAt = rd.GetDateTime(5), status = rd.GetString(6), ticket = rd.GetString(7), files = rd.GetInt64(8) });
             return Results.Ok(new { items });
         });
 
@@ -293,11 +318,19 @@ public static class InboundApi
                 if (await rd.ReadAsync(ct)) m = new InboundMail(rd.GetString(0), rd.GetString(1), rd.GetString(2), rd.GetString(3), rd.GetString(4), rd.GetDateTime(5));
             }
             if (m == null) return Results.NotFound(new { error = "not_found" });
+            var files = new List<InboundFile>();
+            await using (var fc = new NpgsqlCommand("select name, content_type, data from mail.inbox_files where inbox_id = @i order by id", db))
+            {
+                fc.Parameters.AddWithValue("i", id);
+                await using var fr = await fc.ExecuteReaderAsync(ct);
+                while (await fr.ReadAsync(ct)) files.Add(new InboundFile(fr.GetString(0), fr.GetString(1), (byte[])fr.GetValue(2)));
+            }
+            m = m with { Files = files };
             int? company = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("companyId", out var cv) && cv.ValueKind == JsonValueKind.Number && cv.TryGetInt32(out var ci) ? ci : null;
             string number;
             try { number = await handler.CreateTicketAsync(m, company, ct); }
             catch (InvalidOperationException e) { return Bad("cannot_convert", e.Message); }
-            await using (var u = new NpgsqlCommand("update mail.inbox set status = 'converted', ticket_number = @n where id = @i", db)) { u.Parameters.AddWithValue("n", number); u.Parameters.AddWithValue("i", id); await u.ExecuteNonQueryAsync(ct); }
+            await using (var u = new NpgsqlCommand("update mail.inbox set status = 'converted', ticket_number = @n where id = @i; delete from mail.inbox_files where inbox_id = @i", db)) { u.Parameters.AddWithValue("n", number); u.Parameters.AddWithValue("i", id); await u.ExecuteNonQueryAsync(ct); }
             await audit.WriteAsync("mail.inbox_converted", number, m.FromAddr, ct: ct);
             return Results.Ok(new { number });
         });
@@ -305,7 +338,7 @@ public static class InboundApi
         g.MapPost("/inbox/{id:long}/reject", async (long id, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
         {
             await using var db = new NpgsqlConnection(t.Require().ConnectionString); await db.OpenAsync(ct);
-            await using var c = new NpgsqlCommand("update mail.inbox set status = 'rejected' where id = @i and status = 'new'", db); c.Parameters.AddWithValue("i", id);
+            await using var c = new NpgsqlCommand("update mail.inbox set status = 'rejected' where id = @i and status = 'new'; delete from mail.inbox_files where inbox_id = @i and exists (select 1 from mail.inbox where id = @i and status = 'rejected')", db); c.Parameters.AddWithValue("i", id);
             if (await c.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound(new { error = "not_found" });
             await audit.WriteAsync("mail.inbox_rejected", id.ToString(), "", ct: ct);
             return Results.Ok(new { ok = true });

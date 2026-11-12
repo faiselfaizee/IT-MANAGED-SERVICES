@@ -226,14 +226,14 @@ public static class TicketsApi
         }));
 
         // ---------------------------------------------------------------- change fields (staff)
-        anyone(r.MapMethods("/api/servicedesk/tickets/{id:long}", new[] { "PATCH" }, async (long id, JsonElement b, ClaimsPrincipal u, ITenantContext t, ISettings s, ICompanyDirectory companies, IAssetDirectory assets, IUserDirectory users, IAuditLog audit, CancellationToken ct) =>
+        anyone(r.MapMethods("/api/servicedesk/tickets/{id:long}", new[] { "PATCH" }, async (long id, JsonElement b, ClaimsPrincipal u, ITenantContext t, ISettings s, ICompanyDirectory companies, IAssetDirectory assets, IUserDirectory users, IMailQueue mailq, IAuditLog audit, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
             var (found, number, status, w) = await Load(id, u, db, s, true, ct);
             if (found == null) return Results.NotFound();
             if (!w.Staff) return Forbidden("Only staff can change a ticket's details.");
             var sets = new List<string>(); var notes = new List<string>(); await using var c = new NpgsqlCommand { Connection = db }; P(c, "id", id);
-            var priorityChanged = false;
+            var priorityChanged = false; Guid? assignedTo = null;
             try
             {
                 if (b.ValueKind != JsonValueKind.Object) throw new FormatException("the body must be a JSON object");
@@ -254,7 +254,7 @@ public static class TicketsApi
                     {
                         var au = await users.GetAsync(ag, ct);
                         if (au == null || !au.Active || au.Role is not ("admin" or "engineer")) throw new FormatException("assigneeId must be an active engineer or administrator");
-                        sets.Add("assignee_id = @assignee, assignee_name = @assigneeName"); P(c, "assignee", ag); P(c, "assigneeName", au.Name); notes.Add("assigned to " + au.Name);
+                        assignedTo = ag; sets.Add("assignee_id = @assignee, assignee_name = @assigneeName"); P(c, "assignee", ag); P(c, "assigneeName", au.Name); notes.Add("assigned to " + au.Name);
                     }
                     else throw new FormatException("assigneeId must be an id or null");
                 }
@@ -293,6 +293,7 @@ public static class TicketsApi
             await Note(db, id, w, "system", string.Join("; ", notes) + ".", ct);
             await Event(db, id, "ticket.updated", new { changes = notes }, ct);
             await audit.WriteAsync("servicedesk.ticket_updated", number, string.Join("; ", notes), ct: ct);
+            if (assignedTo != null) await Tell(mailq, users, db, id, "assigned", "", w, ct);
             return Results.Ok(new { ok = true, changed = true });
         }));
 

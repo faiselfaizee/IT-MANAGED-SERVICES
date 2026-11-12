@@ -68,35 +68,45 @@ public sealed class ServiceDeskModule : IPlatformModule
     }
 
     /// <summary>
-    /// Tells the right person about a ticket by mail: the requester about the ticket opening, a reply from the team and its resolution; the assigned engineer about a customer's reply.
-    /// A person is never mailed about what they did themselves (except the opening confirmation). Mail trouble never fails the ticket action.
+    /// Tells the right person about a ticket by mail, using the customer's mail templates: the requester about the ticket opening, a reply from the team and its resolution;
+    /// the assigned engineer about a customer's reply and about an assignment. A person is never mailed about what they did themselves (except the opening confirmation).
+    /// Mail trouble never fails the ticket action.
     /// </summary>
     internal static async Task Tell(IMailQueue mail, IUserDirectory users, NpgsqlConnection db, long id, string kind, string text, Who by, CancellationToken ct)
     {
         try
         {
-            string number, subject, requester, status; Guid? assignee;
-            await using (var c = new NpgsqlCommand("select number, subject, requester_email, assignee_id, status from servicedesk.tickets where id = @i", db))
+            string number, subject, requester, requesterName, status, priority, company, description; Guid? assignee; string assigneeName;
+            await using (var c = new NpgsqlCommand("select number, subject, requester_email, requester_name, assignee_id, assignee_name, status, priority, company_name, description from servicedesk.tickets where id = @i", db))
             {
                 P(c, "i", id);
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 if (!await rd.ReadAsync(ct)) return;
-                number = rd.GetString(0); subject = rd.GetString(1); requester = rd.GetString(2); assignee = rd.IsDBNull(3) ? null : rd.GetGuid(3); status = rd.GetString(4);
+                number = rd.GetString(0); subject = rd.GetString(1); requester = rd.GetString(2); requesterName = rd.GetString(3); assignee = rd.IsDBNull(4) ? null : rd.GetGuid(4); assigneeName = rd.GetString(5);
+                status = rd.GetString(6); priority = rd.GetString(7); company = rd.GetString(8); description = rd.GetString(9);
             }
-            string? to = null, head = null;
+            string? to = null, template = null;
             switch (kind)
             {
-                case "created": to = requester; head = "We received your request"; break;
-                case "reply": to = requester; head = "New reply"; break;
-                case "resolved": to = requester; head = "Resolved"; break;
-                case "customer_reply": if (assignee is Guid g) to = (await users.GetAsync(g, ct))?.Email; head = "Customer replied"; break;
+                case "created": to = requester; template = "ticket_created"; break;
+                case "reply": to = requester; template = "ticket_reply"; break;
+                case "resolved": to = requester; template = "ticket_resolved"; break;
+                case "customer_reply": template = "ticket_customer_reply"; if (assignee is Guid g) to = (await users.GetAsync(g, ct))?.Email; break;
+                case "assigned": template = "ticket_assigned"; if (assignee is Guid g2) to = (await users.GetAsync(g2, ct))?.Email; break;
             }
-            if (string.IsNullOrWhiteSpace(to)) return;
+            if (string.IsNullOrWhiteSpace(to) || template == null) return;
             if (kind != "created" && string.Equals(to, by.Email, StringComparison.OrdinalIgnoreCase)) return;
+            if (text == "") text = description;
             var snippet = text.Length > 1500 ? text[..1500] + "…" : text;
-            var body = $"{head}: {subject}\nTicket {number} · status {status}\n\n{snippet}".TrimEnd();
-            await mail.EnqueueAsync(to, $"[{number}] {head}: {subject}", body, number, ct);
+            var values = new Dictionary<string, string>
+            {
+                ["number"] = number, ["subject"] = subject, ["status"] = StatusName(status), ["priority"] = char.ToUpperInvariant(priority[0]) + priority[1..], ["message"] = snippet,
+                ["requester"] = requesterName != "" ? requesterName : requester, ["company"] = company, ["assignee"] = assigneeName, ["by"] = by.Name, ["path"] = "#/servicedesk/" + id,
+            };
+            await mail.EnqueueTemplateAsync(template, to, values, number, ct);
         }
         catch (Exception e) when (e is not OperationCanceledException) { /* mail is best effort */ }
     }
+
+    static string StatusName(string s) => s switch { "open" => "Open", "progress" => "In progress", "hold" => "Awaiting customer", "resolved" => "Resolved", "closed" => "Closed", _ => s };
 }

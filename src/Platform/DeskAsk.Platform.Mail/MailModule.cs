@@ -36,13 +36,19 @@ public sealed class MailSchema : ITenantSchema
               ticket_number text not null default '', created_at timestamptz not null default now());
             create unique index if not exists inbox_message on mail.inbox (message_id);
             create index if not exists inbox_status on mail.inbox (status, id desc)"),
+        new(3, "html mail and incoming files", @"
+            alter table mail.outbox add column if not exists body_html text not null default '';
+            create table if not exists mail.inbox_files (
+              id bigserial primary key, inbox_id bigint not null references mail.inbox(id) on delete cascade,
+              name text not null, content_type text not null default 'application/octet-stream', data bytea not null);
+            create index if not exists inbox_files_inbox on mail.inbox_files (inbox_id)"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) => SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
 }
 
 /// <summary>How a customer sends mail. Passwords and secrets are stored encrypted and never sent back to the browser.</summary>
 public sealed record MailConfig(string Provider, string From, string FromName, string Host, int Port, string Security, string User, string Password,
-    string TenantId, string ClientId, string Secret)
+    string TenantId, string ClientId, string Secret, string PublicUrl = "")
 {
     public const string Key = "mail.config";
     public static readonly MailConfig None = new("none", "", "", "", 587, "starttls", "", "", "", "", "");
@@ -63,7 +69,7 @@ public static class MailSettings
             var p = dp.CreateProtector(Purpose);
             string Open(string n) { var x = T(n); if (x == "") return ""; try { return p.Unprotect(x); } catch { return ""; } }
             return new MailConfig(T("provider") is { Length: > 0 } pr ? pr : "none", T("from"), T("fromName"), T("host"), e.TryGetProperty("port", out var po) && po.TryGetInt32(out var pn) ? pn : 587,
-                T("security") is { Length: > 0 } sc ? sc : "starttls", T("user"), Open("password"), T("tenantId"), T("clientId"), Open("secret"));
+                T("security") is { Length: > 0 } sc ? sc : "starttls", T("user"), Open("password"), T("tenantId"), T("clientId"), Open("secret"), T("publicUrl"));
         }
         catch (JsonException) { return MailConfig.None; }
     }
@@ -74,7 +80,7 @@ public static class MailSettings
         return s.SetAsync(MailConfig.Key, JsonSerializer.Serialize(new
         {
             provider = c.Provider, from = c.From, fromName = c.FromName, host = c.Host, port = c.Port, security = c.Security, user = c.User,
-            password = c.Password == "" ? "" : p.Protect(c.Password), tenantId = c.TenantId, clientId = c.ClientId, secret = c.Secret == "" ? "" : p.Protect(c.Secret),
+            password = c.Password == "" ? "" : p.Protect(c.Password), tenantId = c.TenantId, clientId = c.ClientId, secret = c.Secret == "" ? "" : p.Protect(c.Secret), publicUrl = c.PublicUrl,
         }), ct);
     }
 }
@@ -83,19 +89,19 @@ public static class MailSender
 {
     static string OneLine(string s) => s.Replace("\r", " ").Replace("\n", " ").Trim();
 
-    public static async Task SendAsync(MailConfig c, string to, string subject, string body, CancellationToken ct)
+    public static async Task SendAsync(MailConfig c, string to, string subject, string body, CancellationToken ct, string? html = null)
     {
         subject = OneLine(subject);
-        if (c.Provider == "smtp") await Smtp(c, to, subject, body, ct);
-        else if (c.Provider == "graph") await Graph(c, to, subject, body, ct);
+        if (c.Provider == "smtp") await Smtp(c, to, subject, body, html, ct);
+        else if (c.Provider == "graph") await Graph(c, to, subject, body, html, ct);
         else throw new InvalidOperationException("Mail is not set up.");
     }
 
-    static async Task Smtp(MailConfig c, string to, string subject, string body, CancellationToken ct)
+    static async Task Smtp(MailConfig c, string to, string subject, string body, string? html, CancellationToken ct)
     {
         var m = new MimeMessage();
         m.From.Add(new MailboxAddress(c.FromName, c.From)); m.To.Add(MailboxAddress.Parse(to)); m.Subject = subject;
-        m.Body = new TextPart("plain") { Text = body };
+        m.Body = new BodyBuilder { TextBody = body, HtmlBody = string.IsNullOrEmpty(html) ? null : html }.ToMessageBody();
         using var smtp = new SmtpClient { Timeout = 20000 };
         var sec = c.Security switch { "ssl" => SecureSocketOptions.SslOnConnect, "none" => SecureSocketOptions.None, _ => SecureSocketOptions.StartTls };
         await smtp.ConnectAsync(c.Host, c.Port, sec, ct);
@@ -113,13 +119,13 @@ public static class MailSender
         return JsonDocument.Parse(tj).RootElement.GetProperty("access_token").GetString()!;
     }
 
-    static async Task Graph(MailConfig c, string to, string subject, string body, CancellationToken ct)
+    static async Task Graph(MailConfig c, string to, string subject, string body, string? html, CancellationToken ct)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         var access = await GraphToken(c, http, ct);
         var req = new HttpRequestMessage(HttpMethod.Post, $"https://graph.microsoft.com/v1.0/users/{Uri.EscapeDataString(c.From)}/sendMail")
         {
-            Content = new StringContent(JsonSerializer.Serialize(new { message = new { subject, body = new { contentType = "Text", content = body }, toRecipients = new[] { new { emailAddress = new { address = to } } } }, saveToSentItems = false }), Encoding.UTF8, "application/json"),
+            Content = new StringContent(JsonSerializer.Serialize(new { message = new { subject, body = new { contentType = string.IsNullOrEmpty(html) ? "Text" : "HTML", content = string.IsNullOrEmpty(html) ? body : html }, toRecipients = new[] { new { emailAddress = new { address = to } } } }, saveToSentItems = false }), Encoding.UTF8, "application/json"),
         };
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
         var res = await http.SendAsync(req, ct);
@@ -142,10 +148,30 @@ public sealed class MailQueue : IMailQueue
         var cfg = await MailSettings.LoadAsync(settings, dp, ct);
         if (!cfg.On) return false;
         await using var db = new NpgsqlConnection(tenant.Require().ConnectionString); await db.OpenAsync(ct);
-        await using var c = new NpgsqlCommand("insert into mail.outbox (to_addr, subject, body, reference) values (@t, @s, @b, @r)", db);
-        c.Parameters.AddWithValue("t", to); c.Parameters.AddWithValue("s", subject.Length > 300 ? subject[..300] : subject); c.Parameters.AddWithValue("b", body); c.Parameters.AddWithValue("r", reference ?? "");
+        await Insert(db, to, subject, body, "", reference, ct);
+        return true;
+    }
+
+    async Task Insert(NpgsqlConnection db, string to, string subject, string body, string html, string? reference, CancellationToken ct)
+    {
+        await using var c = new NpgsqlCommand("insert into mail.outbox (to_addr, subject, body, body_html, reference) values (@t, @s, @b, @h, @r)", db);
+        c.Parameters.AddWithValue("t", to); c.Parameters.AddWithValue("s", subject.Length > 300 ? subject[..300] : subject); c.Parameters.AddWithValue("b", body); c.Parameters.AddWithValue("h", html); c.Parameters.AddWithValue("r", reference ?? "");
         await c.ExecuteNonQueryAsync(ct);
         await jobs.EnqueueAsync(MailJob.JobType, "{}", null, "mail.send", ct);
+    }
+
+    public async Task<bool> EnqueueTemplateAsync(string template, string to, IReadOnlyDictionary<string, string> values, string? reference = null, CancellationToken ct = default)
+    {
+        to = (to ?? "").Trim();
+        if (to.Length == 0 || to.Length > 254 || !to.Contains('@') || to.Any(char.IsWhiteSpace)) return false;
+        var cfg = await MailSettings.LoadAsync(settings, dp, ct);
+        if (!cfg.On) return false;
+        var def = MailTemplates.Find(template); if (def == null) return false;
+        var (sub, body) = await MailTemplates.CurrentAsync(settings, def, ct);
+        var t = tenant.Require();
+        var (subject, text, html) = MailTemplates.Render(def, sub, body, values, MailTemplates.BaseUrl(cfg, t), cfg.FromName != "" ? cfg.FromName : t.Name);
+        await using var db = new NpgsqlConnection(t.ConnectionString); await db.OpenAsync(ct);
+        await Insert(db, to, subject, text, html, reference, ct);
         return true;
     }
 }
@@ -162,14 +188,14 @@ public sealed class MailJob : IJobHandler
         var cfg = await MailSettings.LoadAsync(job.Services.GetRequiredService<ISettings>(), job.Services.GetRequiredService<IDataProtectionProvider>(), ct);
         if (!cfg.On) return;   // leave the messages waiting until mail is set up
         await using var db = new NpgsqlConnection(job.Tenant.ConnectionString); await db.OpenAsync(ct);
-        var due = new List<(long id, string to, string subject, string body, int attempts)>();
-        await using (var c = new NpgsqlCommand("select id, to_addr, subject, body, attempts from mail.outbox where status = 'queued' and next_try_at <= now() order by id limit 20", db))
-        await using (var r = await c.ExecuteReaderAsync(ct)) while (await r.ReadAsync(ct)) due.Add((r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetInt32(4)));
+        var due = new List<(long id, string to, string subject, string body, string html, int attempts)>();
+        await using (var c = new NpgsqlCommand("select id, to_addr, subject, body, body_html, attempts from mail.outbox where status = 'queued' and next_try_at <= now() order by id limit 20", db))
+        await using (var r = await c.ExecuteReaderAsync(ct)) while (await r.ReadAsync(ct)) due.Add((r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetInt32(5)));
         foreach (var m in due)
         {
             try
             {
-                await MailSender.SendAsync(cfg, m.to, m.subject, m.body, ct);
+                await MailSender.SendAsync(cfg, m.to, m.subject, m.body, ct, m.html);
                 await using var u = new NpgsqlCommand("update mail.outbox set status = 'sent', sent_at = now(), attempts = attempts + 1, last_error = '' where id = @i", db); u.Parameters.AddWithValue("i", m.id); await u.ExecuteNonQueryAsync(ct);
             }
             catch (Exception e) when (e is not OperationCanceledException)
@@ -206,11 +232,12 @@ public sealed class MailModule : IPlatformModule
     {
         var g = r.MapGroup("/api/platform/mail").RequireAuthorization(p => p.RequireRole("admin"));
         InboundApi.Map(g);
+        TemplatesApi.Map(g);
 
         g.MapGet("/config", async (ISettings s, IDataProtectionProvider dp, CancellationToken ct) =>
         {
             var c = await MailSettings.LoadAsync(s, dp, ct);
-            return Results.Ok(new { provider = c.Provider, from = c.From, fromName = c.FromName, host = c.Host, port = c.Port, security = c.Security, user = c.User, hasPassword = c.Password != "", tenantId = c.TenantId, clientId = c.ClientId, hasSecret = c.Secret != "", on = c.On });
+            return Results.Ok(new { provider = c.Provider, from = c.From, fromName = c.FromName, host = c.Host, port = c.Port, security = c.Security, user = c.User, hasPassword = c.Password != "", tenantId = c.TenantId, clientId = c.ClientId, hasSecret = c.Secret != "", publicUrl = c.PublicUrl, on = c.On });
         });
 
         g.MapPut("/config", async (JsonElement b, ISettings s, IDataProtectionProvider dp, IAuditLog audit, CancellationToken ct) =>
@@ -223,8 +250,9 @@ public sealed class MailModule : IPlatformModule
                 if (provider is not ("none" or "smtp" or "graph")) return Bad("bad_provider", "provider must be none, smtp or graph");
                 var port = b.TryGetProperty("port", out var pv) && pv.ValueKind == JsonValueKind.Number && pv.TryGetInt32(out var pn) ? pn : old.Port;
                 var c = new MailConfig(provider, T("from", old.From, 254), T("fromName", old.FromName, 100), T("host", old.Host, 253), port, T("security", old.Security, 10), T("user", old.User, 254),
-                    T("password", old.Password, 500), T("tenantId", old.TenantId, 100), T("clientId", old.ClientId, 100), T("secret", old.Secret, 500));
+                    T("password", old.Password, 500), T("tenantId", old.TenantId, 100), T("clientId", old.ClientId, 100), T("secret", old.Secret, 500), T("publicUrl", old.PublicUrl, 200).TrimEnd('/'));
                 if (c.Security is not ("none" or "starttls" or "ssl")) return Bad("bad_security", "security must be none, starttls or ssl");
+                if (c.PublicUrl != "" && !(Uri.TryCreate(c.PublicUrl, UriKind.Absolute, out var pu) && pu.Scheme is "http" or "https")) return Bad("bad_public_url", "The public address must start with https:// (or http://).");
                 if (provider != "none" && !c.From.Contains('@')) return Bad("from_required", "Enter the address mail is sent from.");
                 if (provider == "smtp" && (c.Host == "" || c.Port is < 1 or > 65535)) return Bad("smtp_incomplete", "Enter the mail server and its port.");
                 if (provider == "graph" && (c.TenantId == "" || c.ClientId == "" || c.Secret == "")) return Bad("graph_incomplete", "Enter the tenant id, application id and secret.");

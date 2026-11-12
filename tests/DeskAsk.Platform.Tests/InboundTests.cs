@@ -94,6 +94,25 @@ public class InboundTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [PgFact]
+    public async Task FilesThatComeWithAReplyOrAConvertedMessageLandOnTheTicket()
+    {
+        var admin = await Start();
+        var id = await Ticket(admin, new { subject = "Scan issue", requesterName = "Pat", requesterEmail = "pat@acme.test" });
+        var no = await Scalar<string>($"select number from servicedesk.tickets where id = {id}");
+        var file = new InboundFile("scan.pdf", "application/pdf", new byte[] { 1, 2, 3, 4 });
+        fake.Pending.Add(new InboundMail("f1", "pat@acme.test", "Pat", $"Re: [{no}] Scan issue", "See attached", DateTimeOffset.UtcNow, false, new[] { file }));
+        fake.Pending.Add(new InboundMail("f2", "new@acme.test", "Nina", "New request", "Please see the file", DateTimeOffset.UtcNow, false, new[] { new InboundFile("photo.png", "image/png", new byte[] { 9, 9 }) }));
+        await Fetch(admin);
+        Assert.Equal(1L, await Scalar<long>($"select count(*) from servicedesk.attachments where ticket_id = {id} and name = 'scan.pdf' and size = 4"));
+        var waiting = (await J(await admin.GetAsync("/api/platform/mail/inbox"))).GetProperty("items").EnumerateArray().Single();
+        Assert.Equal(1, waiting.GetProperty("files").GetInt64());
+        var conv = await J(await admin.PostAsync($"/api/platform/mail/inbox/{waiting.GetProperty("id").GetInt64()}/convert", Json(new { })));
+        var number = conv.GetProperty("number").GetString();
+        Assert.Equal(1L, await Scalar<long>($"select count(*) from servicedesk.attachments a join servicedesk.tickets t on t.id = a.ticket_id where t.number = '{number}' and a.name = 'photo.png'"));
+        Assert.Equal(0L, await Scalar<long>("select count(*) from mail.inbox_files"));   // nothing is kept once the ticket has the file
+    }
+
+    [PgFact]
     public async Task OurOwnAndAutomaticMessagesNeverBecomeTickets()
     {
         var admin = await Start();

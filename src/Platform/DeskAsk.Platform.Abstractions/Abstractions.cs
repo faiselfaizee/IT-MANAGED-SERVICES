@@ -190,10 +190,15 @@ public interface IMailQueue
 {
     /// <summary>Queues a message. Returns false (and queues nothing) when the customer has not set up mail or the address is empty.</summary>
     Task<bool> EnqueueAsync(string to, string subject, string body, string? reference = null, CancellationToken ct = default);
+    /// <summary>Queues a message written from one of the customer's mail templates (they can edit the wording). Values replace {{name}} in the template; a "path" value (for example "#/servicedesk/5") becomes a full {{link}}.</summary>
+    Task<bool> EnqueueTemplateAsync(string template, string to, IReadOnlyDictionary<string, string> values, string? reference = null, CancellationToken ct = default);
 }
 
+/// <summary>A file that came with an incoming message.</summary>
+public sealed record InboundFile(string Name, string ContentType, byte[] Data);
+
 /// <summary>A message read from the customer's support mailbox.</summary>
-public sealed record InboundMail(string MessageId, string FromAddr, string FromName, string Subject, string Body, DateTimeOffset At, bool Auto = false);
+public sealed record InboundMail(string MessageId, string FromAddr, string FromName, string Subject, string Body, DateTimeOffset At, bool Auto = false, IReadOnlyList<InboundFile>? Files = null);
 
 /// <summary>What the Service Desk does with incoming mail (the Mail module reads the mailbox and hands each message over).</summary>
 public interface IInboundMailHandler

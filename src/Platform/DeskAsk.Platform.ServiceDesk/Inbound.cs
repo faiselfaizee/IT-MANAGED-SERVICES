@@ -30,6 +30,20 @@ public sealed class InboundHandler : IInboundMailHandler
         return (u, await c.ExecuteScalarAsync(ct) is int ci ? ci : null);
     }
 
+    /// <summary>Keeps the files that came with a message on the ticket (at most ten, each up to 10 MB).</summary>
+    static async Task SaveFiles(NpgsqlConnection db, long ticket, InboundMail m, bool internalFile, CancellationToken ct)
+    {
+        foreach (var f in (m.Files ?? Array.Empty<InboundFile>()).Take(10))
+        {
+            if (f.Data.Length == 0 || f.Data.Length > 10 * 1024 * 1024) continue;
+            var name = Path.GetFileName((f.Name ?? "").Replace('\\', '/')); if (name == "") name = "attachment"; if (name.Length > 200) name = name[^200..];
+            await using var c = new NpgsqlCommand("insert into servicedesk.attachments (ticket_id, name, content_type, size, data, by_name, internal) values (@t, @n, 'application/octet-stream', @s, @d, @b, @i)", db);
+            ServiceDeskModule.P(c, "t", ticket); ServiceDeskModule.P(c, "n", name); ServiceDeskModule.P(c, "s", f.Data.Length); ServiceDeskModule.P(c, "d", f.Data);
+            ServiceDeskModule.P(c, "b", m.FromName != "" ? m.FromName : m.FromAddr); ServiceDeskModule.P(c, "i", internalFile);
+            await c.ExecuteNonQueryAsync(ct);
+        }
+    }
+
     public async Task<string?> HandleAsync(InboundMail m, CancellationToken ct = default)
     {
         await using var db = new NpgsqlConnection(tenant.Require().ConnectionString); await db.OpenAsync(ct);
@@ -50,6 +64,7 @@ public sealed class InboundHandler : IInboundMailHandler
             {
                 await using (var c = new NpgsqlCommand("insert into servicedesk.comments (ticket_id, author_id, author_name, kind, body) values (@t, @a, @n, 'public', @b)", db))
                 { ServiceDeskModule.P(c, "t", id); ServiceDeskModule.P(c, "a", user?.Id); ServiceDeskModule.P(c, "n", user?.Name ?? (m.FromName != "" ? m.FromName : m.FromAddr)); ServiceDeskModule.P(c, "b", m.Body); await c.ExecuteNonQueryAsync(ct); }
+                await SaveFiles(db, id, m, false, ct);
                 if (staff)
                 {
                     await using var c = new NpgsqlCommand("update servicedesk.tickets set first_response_at = coalesce(first_response_at, now()), updated_at = now() where id = @i", db); ServiceDeskModule.P(c, "i", id); await c.ExecuteNonQueryAsync(ct);
@@ -91,6 +106,7 @@ public sealed class InboundHandler : IInboundMailHandler
         ServiceDeskModule.P(c, "rp", sla.Respond["medium"]); ServiceDeskModule.P(c, "rs", sla.Resolve["medium"]);
         long id; string number;
         await using (var rd = await c.ExecuteReaderAsync(ct)) { await rd.ReadAsync(ct); id = rd.GetInt64(0); number = rd.GetString(1); }
+        await SaveFiles(db, id, m, false, ct);
         await ServiceDeskModule.Event(db, id, "ticket.created", new { number, priority = "medium", company, mail = true }, ct);
         return number;
     }
