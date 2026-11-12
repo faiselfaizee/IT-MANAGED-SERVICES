@@ -37,6 +37,7 @@ public sealed class ServiceDeskModule : IPlatformModule
     {
         TicketsApi.Map(r, Key);
         SettingsApi.Map(r, Key);
+        ChangesApi.Map(r, Key);
     }
 
     // ---------------------------------------------------------------- shared helpers
