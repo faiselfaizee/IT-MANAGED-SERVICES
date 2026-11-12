@@ -50,21 +50,46 @@ function CheckForm({ id, init, onClose }: { id: string; init: Rec; onClose: (cha
       <button className="primary" disabled={f.busy} onClick={() => f.submit(() => api(init.id ? `/api/assets/${id}/checks/${init.id}` : `/api/assets/${id}/checks`, { method: init.id ? 'PUT' : 'POST', body: c }))}>Save</button></div></div></Modal>;
 }
 
-// ---------------------------------------------------------------- tickets (links until the Service Desk exists)
-export function Tickets({ id }: { id: string }) {
+// ---------------------------------------------------------------- tickets (real Service Desk tickets; old links when it is not licensed)
+export function Tickets({ id, d }: { id: string; d?: Rec }) {
+  const sd = useLoad<Rec>(`/api/servicedesk/tickets?assetId=${id}&take=100`); const [open, setOpen] = useState(false);
+  if (sd.error && !sd.data) return <LegacyTickets id={id} />;
+  const items = (sd.data?.items ?? []) as Rec[]; const active = items.filter((t) => !['resolved', 'closed'].includes(t.status)).length;
+  return <>
+    <div className="tools"><button className="primary" onClick={() => setOpen(true)}>Raise ticket</button>{sd.data && <span className="muted">{active} open of {sd.data.total}</span>}</div>
+    <Loading loading={sd.loading && !sd.data} error="" />
+    {sd.data && (items.length === 0 ? <Empty>No tickets for this asset.</Empty> : <table><thead><tr><th>Ticket</th><th>Subject</th><th>Priority</th><th>Status</th><th>Raised</th></tr></thead><tbody>
+      {items.map((t) => <tr key={t.id}><td className="mono"><a href={`#/servicedesk/${t.id}`}>{t.number}</a></td><td>{t.subject}<div className="muted">{t.assignee ? `Assigned to ${t.assignee}` : 'Not assigned'}</div></td><td>{t.priority}</td>
+        <td>{String(t.status).replace('_', ' ')}</td><td>{fmtDate(t.createdAt)} · {t.requester}</td></tr>)}</tbody></table>)}
+    {open && <TicketForm id={id} d={d} onClose={(ch) => { setOpen(false); if (ch) sd.reload(); }} />}
+  </>;
+}
+function TicketForm({ id, d, onClose }: { id: string; d?: Rec; onClose: (changed: boolean) => void }) {
+  const [subject, setSubject] = useState(''); const [pri, setPri] = useState('medium'); const [desc, setDesc] = useState(''); const f = useSubmit(() => onClose(true));
+  const companyId = d?.companyId ?? null;
+  return <Modal title="Raise a ticket for this asset" onClose={() => onClose(false)}><div className="form">
+    <Field label="Subject"><input value={subject} onChange={(e) => setSubject(e.target.value)} autoFocus /></Field>
+    <Field label="Priority"><select value={pri} onChange={(e) => setPri(e.target.value)}>{['low', 'medium', 'high', 'critical'].map((p) => <option key={p}>{p}</option>)}</select></Field>
+    <Field label="Details"><textarea rows={3} value={desc} onChange={(e) => setDesc(e.target.value)} /></Field>
+    <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button>
+      <button className="primary" disabled={f.busy || !subject.trim()} onClick={() => f.submit(() => api('/api/servicedesk/tickets', { body: { subject, priority: pri, description: desc, assetId: Number(id), ...(companyId ? { companyId } : {}) } }))}>Raise</button></div></div></Modal>;
+}
+
+// ---------------------------------------------------------------- old links (kept while the Service Desk is not licensed)
+function LegacyTickets({ id }: { id: string }) {
   const { data, error, loading, reload } = useLoad<Rec>(`/api/assets/${id}/tickets`); const [open, setOpen] = useState(false);
   return <>
     <div className="tools"><button className="primary" onClick={() => setOpen(true)}>Raise ticket</button>{data && <span className="muted">{data.openCount} open</span>}</div>
-    {data && !data.serviceDesk && <p className="note">The Service Desk module is not installed yet. Tickets raised here are kept as links on the asset and will move across when it is.</p>}
+    <p className="note">The Service Desk is not part of this licence. Tickets raised here are kept as links on the asset.</p>
     <Loading loading={loading && !data} error={error} />
     {data && (data.items.length === 0 ? <Empty>No tickets for this asset.</Empty> : <table><thead><tr><th>Ticket</th><th>Title</th><th>Priority</th><th>Status</th><th>Raised</th></tr></thead><tbody>
       {(data.items as Rec[]).map((t) => <tr key={t.id}><td className="mono">{t.ref}</td><td>{t.title}<div className="muted">{t.note}</div></td><td>{t.priority}</td>
         <td><select value={t.status} onChange={async (e) => { await api(`/api/assets/tickets/${t.id}`, { method: 'PATCH', body: { status: e.target.value } }); reload(); }}>{['open', 'in_progress', 'resolved', 'closed'].map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}</select></td>
         <td>{fmtDate(t.createdAt)} · {t.createdBy}</td></tr>)}</tbody></table>)}
-    {open && <TicketForm id={id} onClose={(ch) => { setOpen(false); if (ch) reload(); }} />}
+    {open && <LegacyForm id={id} onClose={(ch) => { setOpen(false); if (ch) reload(); }} />}
   </>;
 }
-function TicketForm({ id, onClose }: { id: string; onClose: (changed: boolean) => void }) {
+function LegacyForm({ id, onClose }: { id: string; onClose: (changed: boolean) => void }) {
   const [title, setTitle] = useState(''); const [pri, setPri] = useState('normal'); const [note, setNote] = useState(''); const f = useSubmit(() => onClose(true));
   return <Modal title="Raise a ticket" onClose={() => onClose(false)}><div className="form">
     <Field label="Title"><input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus /></Field>

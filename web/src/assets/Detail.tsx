@@ -30,7 +30,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
     {tab === 'network' && <Network d={d} />}
     {tab === 'checks' && <Checks id={id} />}
     {tab === 'apps' && <Apps id={id} />}
-    {tab === 'tickets' && <Tickets id={id} />}
+    {tab === 'tickets' && <Tickets id={id} d={d} />}
     {tab === 'logs' && <Logs id={id} />}
     {tab === 'commands' && <Commands id={id} d={d} />}
     {tab === 'shell' && <Shell id={id} d={d} />}

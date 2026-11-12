@@ -109,6 +109,7 @@ public static class TicketsApi
             if (a == "me") { P(c, "me", w.Id); where.Add("t.assignee_id = @me"); }
             else if (a == "none") where.Add("t.assignee_id is null");
             else if (Guid.TryParse(a, out var ag)) { P(c, "ag", ag); where.Add("t.assignee_id = @ag"); }
+            if (long.TryParse(q["assetId"], out var assetFilter)) { P(c, "asf", assetFilter); where.Add("t.asset_id = @asf"); }
             if (q["mine"] == "1") { P(c, "mine", w.Id); where.Add("t.requester_id = @mine"); }
             if (q["overdue"] == "1") where.Add("t.status not in ('resolved','closed') and t.paused_at is null and t.resolve_due < now()");
             if (q["q"].ToString().Trim() is { Length: > 0 } text)
