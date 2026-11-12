@@ -8,6 +8,9 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
+// The tests share one database and some of them run the background worker, which would pick up each other's jobs: run one test class at a time.
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
+
 public static class TestSupport
 {
     public const string Redirect = "http://localhost/cb";
