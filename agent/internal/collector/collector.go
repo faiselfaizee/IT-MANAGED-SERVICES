@@ -99,6 +99,7 @@ type work struct {
 		Cidrs []string `json:"cidrs"`
 		Now   bool     `json:"now"`
 	} `json:"scan"`
+	Update *updateInfo `json:"update"`
 }
 
 type healthRes struct {
@@ -151,6 +152,9 @@ type Runner struct {
 	InventoryEvery time.Duration
 	ScanEvery      time.Duration
 
+	// Exit ends the program so the service manager starts it again (replaced in tests).
+	Exit func(code int)
+
 	cl       *client.Client
 	mu       sync.Mutex
 	pending  report
@@ -161,7 +165,7 @@ type Runner struct {
 }
 
 func NewRunner(cfg config.Collector, version string) *Runner {
-	return &Runner{Cfg: cfg, Version: version, InventoryEvery: 6 * time.Hour, ScanEvery: 24 * time.Hour, lastInv: map[string]time.Time{},
+	return &Runner{Cfg: cfg, Version: version, Exit: os.Exit, InventoryEvery: 6 * time.Hour, ScanEvery: 24 * time.Hour, lastInv: map[string]time.Time{},
 		cl: &client.Client{Server: cfg.Server, IDHeader: "X-Collector-Id", ID: cfg.CollectorID, Key: cfg.Key}}
 }
 
@@ -175,6 +179,7 @@ func (r *Runner) logf(level, format string, a ...any) {
 
 // Run checks in with the platform again and again until ctx ends.
 func (r *Runner) Run(ctx context.Context) error {
+	checkUpdateGuard(r.Version, r.Exit)
 	failures := 0
 	for ctx.Err() == nil {
 		w, err := r.CheckIn(ctx)
@@ -191,6 +196,10 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		case err == nil:
 			failures = 0
+			markUpdateHealthy()
+			if w.Update != nil {
+				go r.selfUpdate(ctx, w.Update.Version)
+			}
 			if w.PollSeconds >= 15 {
 				wait = time.Duration(w.PollSeconds) * time.Second
 			}

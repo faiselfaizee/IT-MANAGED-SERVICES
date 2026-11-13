@@ -238,9 +238,10 @@ func winInstall(ctx context.Context, creds []config.Cred, hosts []string, instal
 }
 
 var (
-	clixmlErr = regexp.MustCompile(`(?s)<S S="Error">(.*?)</S>`)
-	xmlEsc    = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&quot;", `"`, "&apos;", "'", "&amp;", "&")
-	xEsc      = regexp.MustCompile(`_x[0-9A-Fa-f]{4}_`)
+	clixmlErr  = regexp.MustCompile(`(?s)<S S="Error">(.*?)</S>`)
+	xmlEsc     = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&quot;", `"`, "&apos;", "'", "&amp;", "&")
+	xEsc       = regexp.MustCompile(`_x[0-9A-Fa-f]{4}_`)
+	connecting = regexp.MustCompile(`^\[[^\]]*\]\s*Connecting to remote server \S+ failed with the following error message\s*:\s*`)
 )
 
 // CleanCLIXML turns the serialized error text that powershell.exe writes ("#< CLIXML <Objs ...>") into the plain message.
@@ -256,7 +257,10 @@ func CleanCLIXML(s string) string {
 		return s
 	}
 	t := xEsc.ReplaceAllString(xmlEsc.Replace(strings.Join(parts, " ")), " ")
-	return strings.Join(strings.Fields(t), " ")
+	t = strings.Join(strings.Fields(t), " ")
+	t = connecting.ReplaceAllString(t, "") // "[host] Connecting to remote server host failed with the following error message :"
+	t = strings.ReplaceAll(t, "For more information, see the about_Remote_Troubleshooting Help topic.", "")
+	return strings.TrimSpace(t)
 }
 
 // WinHint adds what to do about the usual reasons PowerShell remoting fails.

@@ -149,8 +149,8 @@ func contains(l []string, s string) bool {
 }
 
 func trim(s string) string {
-	if len(s) > 200 {
-		return s[:200]
+	if len(s) > 480 {
+		return s[:480]
 	}
 	return s
 }

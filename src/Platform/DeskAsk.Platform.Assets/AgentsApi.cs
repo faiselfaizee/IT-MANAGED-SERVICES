@@ -155,8 +155,8 @@ chmod 755 /opt/deskask-agent/deskask-agent
         await using var a = new NpgsqlCommand("update assets.assets set last_seen = now() where id = @i", db); P(a, "i", assetId); await a.ExecuteNonQueryAsync(ct);
     }
 
-    sealed record UpdateInfo(string version, string platform);
-    static UpdateInfo? UpdateFor(IConfiguration cfg, string? have, string platform)
+    internal sealed record UpdateInfo(string version, string platform);
+    internal static UpdateInfo? UpdateFor(IConfiguration cfg, string? have, string platform)
     {
         var v = AgentVersion(cfg); if (v == "" || string.IsNullOrEmpty(have) || v == have) return null;
         var pf = platform == "windows" ? "windows" : "linux";

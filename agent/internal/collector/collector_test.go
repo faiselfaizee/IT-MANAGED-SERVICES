@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -295,5 +297,29 @@ func TestWinReachNamesTheProblemWhenNoWinRMPortAnswers(t *testing.T) {
 	_, err = winReach(context.Background(), "127.0.0.1")
 	if err == nil || !strings.Contains(err.Error(), "Enable-PSRemoting") {
 		t.Fatalf("no explanation: %v", err)
+	}
+}
+
+func TestCleanCLIXMLDropsTheBoilerplate(t *testing.T) {
+	raw := `#< CLIXML
+<Objs><S S="Error">[PC1] Connecting to remote server PC1 failed with the following error message : WinRM cannot complete the operation. Verify that the computer is accessible. For more information, see the about_Remote_Troubleshooting Help topic._x000D__x000A_</S></Objs>`
+	got := CleanCLIXML(raw)
+	if !strings.HasPrefix(got, "WinRM cannot complete the operation.") || strings.Contains(got, "about_Remote") || strings.Contains(got, "[PC1]") {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestUpdateGuardGoesBackAfterThreeStartsWithoutACheckIn(t *testing.T) {
+	t.Setenv("DESKASK_CONFIG_DIR", t.TempDir())
+	if err := os.WriteFile(filepath.Join(config.Dir(), pendingFile), []byte("3"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code := -1
+	checkUpdateGuard("9.9.9", func(c int) { code = c })
+	if code != 3 {
+		t.Fatalf("exit code %d", code)
+	}
+	if b, _ := os.ReadFile(filepath.Join(config.Dir(), doneFile)); strings.TrimSpace(string(b)) != "9.9.9" {
+		t.Fatal("the failed version was not remembered")
 	}
 }

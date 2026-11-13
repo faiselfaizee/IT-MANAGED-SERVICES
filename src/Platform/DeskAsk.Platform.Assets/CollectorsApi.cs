@@ -165,6 +165,15 @@ chmod 755 /opt/deskask-collector/deskask-collector
             var f = AgentsApi.AgentFile(cfg, platform); if (f == null) return Results.NotFound(new { error = "no_agent_file", detail = "The collector for " + platform + " is not on this server." });
             return Results.File(f, "application/octet-stream", Path.GetFileName(f));
         }));
+        // the collector fetches its own new program over its authenticated connection (same file the install page serves)
+        Open(r.MapGet("/collector/v1/binary", async (HttpContext http, ITenantContext t, IConfiguration cfg, CancellationToken ct) =>
+        {
+            await using var db = await AgentsApi.Open(t, ct);
+            if (await Auth(http, db, ct) == null) return Results.Json(new { error = "collector_auth" }, statusCode: 401);
+            var pf = http.Request.Query["platform"] == "windows" ? "windows" : AgentsApi.LinuxFlavour(http);
+            var f = AgentsApi.AgentFile(cfg, pf); if (f == null) return Results.NotFound(new { error = "no_agent_file" });
+            return Results.File(f, "application/octet-stream", Path.GetFileName(f));
+        }));
         foreach (var (kind, file) in new[] { ("ps1", "install.ps1"), ("sh", "install.sh"), ("upgrade-ps1", "upgrade.ps1"), ("upgrade-sh", "upgrade.sh") })
         {
             var k2 = kind;
@@ -259,7 +268,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
             {
                 if (!long.TryParse(AgentsApi.Str(d, "asset"), out var aid) || !mine.ContainsKey(aid)) continue;
                 await using var c = new NpgsqlCommand("update assets.deploys set status = @s, message = @m, at = now() where asset_id = @a and collector_id = @c", db);
-                AgentsApi.P(c, "s", Flag(d, "ok") ? "done" : "failed"); AgentsApi.P(c, "m", AgentsApi.Clip(AgentsApi.Str(d, "message"), 300)); AgentsApi.P(c, "a", aid); AgentsApi.P(c, "c", col.Id); await c.ExecuteNonQueryAsync(ct);
+                AgentsApi.P(c, "s", Flag(d, "ok") ? "done" : "failed"); AgentsApi.P(c, "m", AgentsApi.Clip(AgentsApi.Str(d, "message"), 480)); AgentsApi.P(c, "a", aid); AgentsApi.P(c, "c", col.Id); await c.ExecuteNonQueryAsync(ct);
             }
             foreach (var l in Items(body, "log", 300))
             {
@@ -307,7 +316,8 @@ chmod 755 /opt/deskask-collector/deskask-collector
             }
             string cidrs = ""; bool scanReq = false;
             await using (var c = new NpgsqlCommand("select scan_cidrs, scan_req from assets.collectors where id = @i", db)) { AgentsApi.P(c, "i", col.Id); await using var rd = await c.ExecuteReaderAsync(ct); if (await rd.ReadAsync(ct)) { cidrs = rd.GetString(0); scanReq = rd.GetBoolean(1); } }
-            return Results.Ok(new { pollSeconds = 60, assets, checks, deploys, scan = new { cidrs = cidrs.Split(new[] { ',', ' ', '\n' }, StringSplitOptions.RemoveEmptyEntries), now = scanReq } });
+            return Results.Ok(new { pollSeconds = 60, assets, checks, deploys, scan = new { cidrs = cidrs.Split(new[] { ',', ' ', '\n' }, StringSplitOptions.RemoveEmptyEntries), now = scanReq },
+                update = AgentsApi.UpdateFor(cfg, AgentsApi.Str(body, "version"), AgentsApi.Str(body, "platform") ?? "linux") });
         }));
 
         // ================================================================ admin side

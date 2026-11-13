@@ -87,3 +87,6 @@ A running WinRM service is not the same as remoting being ready. Before it start
 - `winrm enumerate winrm/config/listener` must list a listener.
 - The login must belong to the target's Administrators group; use `DOMAIN\user` for a domain account and `.\user` for a local one.
 - Outside a domain, the collector's computer must trust the target: `Set-Item WSMan:\localhost\Client\TrustedHosts -Value '<computer>' -Force`.
+
+## Updating the controller
+From v2.8.4 on the controller updates itself: when the server holds a newer `agent-dist` build than the controller reports, the controller downloads it over its own connection, checks that it starts, swaps it and restarts; it goes back to the old program if the new one never checks in. A controller installed before that (v2.7.0 or v2.8.x) has to be upgraded once by hand: Assets > Agents & collectors > the controller's install commands > "Upgrade an existing install". The version shown on that page tells which build it runs.
