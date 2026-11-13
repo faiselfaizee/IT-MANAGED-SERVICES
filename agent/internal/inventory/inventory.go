@@ -89,6 +89,8 @@ type Inventory struct {
 	Domain     string      `json:"domain,omitempty"`
 	LastPatch  string      `json:"last_patch_date,omitempty"` // yyyy-mm-dd
 	IsServer   bool        `json:"is_server"`
+	// Extra holds tables beyond the computer itself, such as the virtual machines of a Hyper-V, KVM or Proxmox host.
+	Extra map[string]any `json:"hardware_extra,omitempty"`
 }
 
 // Collect gathers everything it can. A part that cannot be read is left empty; one failing command never stops the rest.

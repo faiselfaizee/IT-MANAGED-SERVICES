@@ -381,6 +381,17 @@ func hostOnly(t string) string {
 	return t
 }
 
+// apiReaders are the hypervisors read through their own management API, by read mode (the login kind has the same name).
+var apiReaders = map[string]struct {
+	name string
+	read func(ctx context.Context, host, user, pass string) (map[string]any, error)
+}{
+	"vmware":  {"VMware", VMwareInventory},
+	"nutanix": {"Nutanix", NutanixInventory},
+	"proxmox": {"Proxmox VE", ProxmoxInventory},
+	"xen":     {"XCP-ng / Citrix Hypervisor", XenInventory},
+}
+
 // readNowGap keeps "Read now" from starting a second read while the first is still running.
 const readNowGap = 2 * time.Minute
 
@@ -402,14 +413,18 @@ func (r *Runner) readDevice(ctx context.Context, a asset, target string) (any, e
 		return winInventory(ctx, r.credsFor(a.Logins), hostsOf(a.Host, target)...)
 	case "bmc":
 		return redfishWith(ctx, r.credsFor(a.Logins), target)
-	case "vmware":
-		var last error = errors.New("no VMware login is saved for this customer: add one under Assets > Credentials (hardware category VMware and Nutanix, used for VMware vCenter or ESXi)")
-		for _, c := range pick(r.credsFor(a.Logins), "vmware", target) {
-			inv, err := VMwareInventory(ctx, target, c.User, c.Password)
+	case "vmware", "nutanix", "proxmox", "xen":
+		h := apiReaders[a.Monitor]
+		var last error = fmt.Errorf("no %s login is saved for this customer: add one under Assets > Credentials (hardware category Hypervisors, used for %s)", h.name, h.name)
+		for _, c := range pick(r.credsFor(a.Logins), a.Monitor, hostOnly(target)) {
+			inv, err := h.read(ctx, target, c.User, c.Password)
 			if err == nil {
 				return inv, nil
 			}
-			last = fmt.Errorf("VMware login %q: %v", c.Name, err)
+			last = fmt.Errorf("%s login %q: %v", h.name, c.Name, err)
+			if !errors.Is(err, errVsLogin) && !errors.Is(err, errHvLogin) {
+				break // the system itself is the problem, another password will not help
+			}
 		}
 		return nil, last
 	}

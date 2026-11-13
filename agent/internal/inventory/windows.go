@@ -61,6 +61,21 @@ if ($av.Count -eq 0) {
   if ($mp) { $av += [pscustomobject]@{ name = 'Microsoft Defender'; enabled = [bool]$mp.AntivirusEnabled; up_to_date = ($mp.AntivirusSignatureAge -le 7); state = ''; definitions = "$($mp.AntivirusSignatureVersion)" } }
 }
 
+# Hyper-V: the virtual machines of this host
+$vms = @()
+if (Get-Command Get-VM -ErrorAction SilentlyContinue) {
+  foreach ($v in @(Get-VM)) {
+    $ips = @($v.NetworkAdapters | ForEach-Object { $_.IPAddresses } | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' })
+    $disk = [int64]0
+    foreach ($h in @($v.HardDrives)) { if ($h.Path) { $vh = Get-VHD -Path $h.Path; if ($vh) { $disk += [int64]$vh.FileSize } } }
+    $mem = [int64]$v.MemoryAssigned; if ($mem -eq 0) { $mem = [int64]$v.MemoryStartup }
+    $power = "$($v.State)"; if ($v.State -eq 'Running') { $power = 'On' } elseif ($v.State -eq 'Off') { $power = 'Off' }
+    $vms += [pscustomobject]@{ name = "$($v.Name)"; power = $power; ip = ($ips -join ', '); cpus = [int]$v.ProcessorCount; memory_bytes = $mem; disk_bytes = $disk; generation = [int]$v.Generation; uptime_s = [int64]$v.Uptime.TotalSeconds; host = "$env:COMPUTERNAME" }
+  }
+}
+$extra = $null
+if ($vms.Count -gt 0 -or (Get-Command Get-VM -ErrorAction SilentlyContinue)) { $extra = [pscustomobject]@{ platform = 'hyperv'; api = "Microsoft Hyper-V on $($os.Caption)"; vms = @($vms) } }
+
 $patch = Get-HotFix | Where-Object { $_.InstalledOn } | Sort-Object InstalledOn -Descending | Select-Object -First 1
 $first = $cpus | Select-Object -First 1
 $dns = "$($cs.DNSHostName)"; if ($cs.PartOfDomain -and $cs.Domain) { $dns = "$($cs.DNSHostName).$($cs.Domain)" }
@@ -75,6 +90,7 @@ $domainType = 'workgroup'; $domain = "$($cs.Workgroup)"; if ($cs.PartOfDomain) {
   ram_bytes = [int64]$cs.TotalPhysicalMemory; uptime_s = [int64]((Get-Date) - $os.LastBootUpTime).TotalSeconds
   disks = $disks; nics = $nics; installed_apps = $apps; antivirus = $av
   domain_type = $domainType; domain = $domain; last_patch_date = (Fmt $patch.InstalledOn); is_server = ($os.ProductType -ne 1)
+  hardware_extra = $extra
 } | ConvertTo-Json -Depth 6 -Compress
 `
 
@@ -116,6 +132,11 @@ func ParseWindowsJSON(b []byte) (*Inventory, error) {
 	var inv Inventory
 	if err := json.Unmarshal(fixed, &inv); err != nil {
 		return nil, err
+	}
+	if inv.Extra != nil { // a host with one virtual machine: PowerShell may print it as a bare object
+		if v, ok := inv.Extra["vms"].(map[string]any); ok {
+			inv.Extra["vms"] = []any{v}
+		}
 	}
 	return &inv, nil
 }

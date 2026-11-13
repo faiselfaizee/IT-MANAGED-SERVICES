@@ -32,7 +32,7 @@ func (r *Runner) credsFor(l []login) []config.Cred {
 			}
 		case "snmp":
 			out = append(out, config.Cred{Name: x.Name, Kind: "snmp", Community: x.Secret})
-		case "vmware", "bmc":
+		case "vmware", "bmc", "nutanix", "proxmox", "xen":
 			out = append(out, config.Cred{Name: x.Name, Kind: x.Kind, User: x.User, Password: x.Secret})
 		}
 	}

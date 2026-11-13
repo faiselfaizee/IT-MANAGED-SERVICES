@@ -22,6 +22,7 @@ echo '##SPEED'; for n in /sys/class/net/*; do echo "$(basename $n)=$(cat $n/spee
 echo '##DPKG'; dpkg-query -W -f='${binary:Package}\t${Version}\t${Maintainer}\t${db:Status-Abbrev}\n' 2>/dev/null
 echo '##RPM'; rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{VENDOR}\t%{INSTALLTIME}\n' 2>/dev/null
 echo '##TARGET'; systemctl get-default 2>/dev/null
+` + HypervisorScript + `
 echo '##END'
 `
 
@@ -131,6 +132,7 @@ func ParseLinuxRemote(out string) *Inventory {
 		inv.Apps = append(inv.Apps, ParseTabular(s["RPM"], false)...)
 	}
 	inv.IsServer = firstLine(s["TARGET"]) != "graphical.target"
+	inv.Extra = HypervisorExtra(s, inv.Hostname)
 	for _, d := range inv.Disks {
 		inv.TotalDisk += d.SizeBytes
 	}

@@ -183,4 +183,47 @@ public class VmwareReadTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/{esx}/monitor", Json(new { mode = "ping", collectorId = cid, bmc = "" }))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync($"/api/assets/{esx}/read-now", Json(new { }))).StatusCode);
     }
+
+    [PgFact]
+    public async Task EachHypervisorGetsOnlyItsOwnLoginsAndAHyperVHostsAgentReportsItsMachines()
+    {
+        var api = await TestSupport.AdminClient(factory);
+        await api.GetAsync("/api/assets/types");
+        await Sql("truncate assets.collectors, assets.creds, assets.shells, assets.rc_log, assets.jobs, assets.agent_q, assets.agents, assets.enroll_tokens, assets.amc, assets.rentals, assets.history, assets.assets, assets.companies, assets.types restart identity cascade");
+        var co = (await J(await api.PostAsync("/api/assets/companies", Json(new { name = "Acme Ltd" })))).GetProperty("id").GetInt32();
+        var tok = (await J(await api.PostAsync("/api/assets/collectors/tokens", Json(new { companyId = co, label = "HQ" })))).GetProperty("token").GetString()!;
+        var anon = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var en = await J(await anon.PostAsync("/collector/v1/enroll", Json(new { token = tok, name = "HQ", hostname = "COL-1", platform = "windows", version = "2.12.0" })));
+        var cid = en.GetProperty("collectorId").GetString()!;
+        var col = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        col.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", en.GetProperty("key").GetString()); col.DefaultRequestHeaders.Add("X-Collector-Id", cid);
+        foreach (var (name, kind) in new[] { ("PVE token", "proxmox"), ("Prism", "nutanix"), ("XCP", "xen"), ("ESXi", "vmware") })
+            Assert.True((await api.PostAsync("/api/assets/discover/creds", Json(new { name, kind, category = "virtualization", username = kind == "proxmox" ? "audit@pve!deskask" : "u", secret = "s", companyId = co }))).IsSuccessStatusCode);
+        await col.PostAsync("/collector/v1/checkin", Json(new { found = new object[] { new { ip = "10.0.0.5", hostname = "pve01", open = new[] { 22, 8006 }, mac = "" }, new { ip = "10.0.0.6", hostname = "ntnx", open = new[] { 9440 }, mac = "" }, new { ip = "10.0.0.7", hostname = "xcp01", open = new[] { 443 }, mac = "" } } }));
+        await api.PostAsync($"/api/assets/collectors/{cid}/adopt", Json(new { ips = new[] { "10.0.0.5", "10.0.0.6", "10.0.0.7" } }));
+        var ids = (await J(await api.GetAsync("/api/assets"))).GetProperty("items").EnumerateArray().ToDictionary(x => x.GetProperty("name").GetString()!, x => x.GetProperty("id").GetInt64());
+        foreach (var (n, mode) in new[] { ("pve01", "proxmox"), ("ntnx", "nutanix"), ("xcp01", "xen") })
+            Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/{ids[n]}/monitor", Json(new { mode, collectorId = cid }))).StatusCode);
+        var work = (await J(await col.PostAsync("/collector/v1/checkin", Json(new { })))).GetProperty("assets").EnumerateArray().ToDictionary(x => x.GetProperty("id").GetString()!, x => x);
+        Assert.Equal(new[] { "PVE token" }, work[ids["pve01"].ToString()].GetProperty("logins").EnumerateArray().Select(l => l.GetProperty("name").GetString()));
+        Assert.Equal(new[] { "Prism" }, work[ids["ntnx"].ToString()].GetProperty("logins").EnumerateArray().Select(l => l.GetProperty("name").GetString()));
+        Assert.Equal(new[] { "XCP" }, work[ids["xcp01"].ToString()].GetProperty("logins").EnumerateArray().Select(l => l.GetProperty("name").GetString()));
+
+        // a Proxmox read lands like any other: containers and VMs on the Hardware tab
+        var pve = new { schema = 1, hostname = "pve01", os_name = "Proxmox VE", os_version = "8.2.4", ram_bytes = 137438953472L, hardware_extra = new { platform = "proxmox", api = "Proxmox VE 8.2.4",
+            vms = new object[] { new { name = "pihole", kind = "Container", power = "On" }, new { name = "win2022", kind = "VM", power = "Off" } } } };
+        await col.PostAsync("/collector/v1/checkin", Json(new { results = new { inventories = new object[] { new { asset = ids["pve01"].ToString(), raw = pve } } } }));
+        var dev = await J(await api.GetAsync($"/api/assets/{ids["pve01"]}/device"));
+        Assert.Equal("Container", dev.GetProperty("hardware").GetProperty("vms")[0].GetProperty("kind").GetString());
+        Assert.Equal("Proxmox VE", dev.GetProperty("system").GetProperty("os").GetString());
+
+        // an agent on a Hyper-V host reports its virtual machines with its normal inventory
+        var et = (await J(await api.PostAsync("/api/assets/enrolments", Json(new { companyId = co })))).GetProperty("token").GetString()!;
+        var agent = await J(await anon.PostAsync("/agent/v1/enroll", Json(new { token = et, platform = "windows", version = "2.12.0", inventory = new { schema = 1, hostname = "HV01", os_family = "windows", serial_number = "SN-HV0001",
+            hardware_extra = new { platform = "hyperv", api = "Microsoft Hyper-V on Windows Server 2022", vms = new object[] { new { name = "DC01", power = "On", cpus = 2, memory_bytes = 4294967296L, host = "HV01" } } } } })));
+        var hv = long.Parse(agent.GetProperty("assetId").GetString()!);
+        dev = await J(await api.GetAsync($"/api/assets/{hv}/device"));
+        Assert.Equal("DC01", dev.GetProperty("hardware").GetProperty("vms")[0].GetProperty("name").GetString());
+        Assert.Contains("Hyper-V", dev.GetProperty("hardware").GetProperty("api").GetString());
+    }
 }

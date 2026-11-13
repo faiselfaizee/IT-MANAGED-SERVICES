@@ -4,9 +4,9 @@ import { Act, Empty, Err, Field, Loading, Modal, useSubmit } from '../ui';
 
 /** What a login is for. The first five read computers and install the agent; the rest read servers, hypervisors and network gear. */
 const KINDS: [string, string][] = [['windows', 'Windows (user and password)'], ['sshpw', 'Linux (user and SSH password)'], ['ssh', 'Linux (user and SSH private key)'],
-  ['snmp', 'Printer, switch or firewall (SNMP community)'], ['bmc', 'Server management (iLO, iDRAC, XClarity, IMM)'], ['vmware', 'VMware vCenter or ESXi'], ['nutanix', 'Nutanix Prism'],
+  ['snmp', 'Printer, switch or firewall (SNMP community)'], ['bmc', 'Server management (iLO, iDRAC, XClarity, IMM)'], ['vmware', 'VMware vCenter or ESXi'], ['nutanix', 'Nutanix Prism Element'], ['proxmox', 'Proxmox VE (API token or user)'], ['xen', 'XCP-ng or Citrix Hypervisor'],
   ['netssh', 'Network device (SSH user and password)'], ['netapi', 'Network device (API token or key)']];
-const CATEGORIES: [string, string][] = [['', 'Any hardware'], ['computer', 'Computers and laptops'], ['server', 'Physical servers'], ['virtualization', 'VMware and Nutanix'],
+const CATEGORIES: [string, string][] = [['', 'Any hardware'], ['computer', 'Computers and laptops'], ['server', 'Physical servers'], ['virtualization', 'Hypervisors (VMware, Nutanix, Proxmox, XCP-ng)'],
   ['firewall', 'Firewalls'], ['switch', 'Switches'], ['wireless', 'Access points and controllers'], ['printer', 'Printers'], ['other', 'Other']];
 const DEFAULT_KIND: Record<string, string> = { computer: 'windows', server: 'bmc', virtualization: 'vmware', firewall: 'netssh', switch: 'netssh', wireless: 'netssh', printer: 'snmp' };
 const VENDORS = ['HPE iLO', 'Dell iDRAC', 'Lenovo XClarity', 'IBM IMM', 'VMware', 'Nutanix', 'Fortinet FortiGate', 'Cisco', 'Cisco Meraki', 'HPE Aruba', 'Ubiquiti', 'Sophos', 'SonicWall', 'Palo Alto'];

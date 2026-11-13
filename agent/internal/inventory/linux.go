@@ -45,6 +45,7 @@ func collectLinux(ctx context.Context) (*Inventory, error) {
 	inv.Apps = collectLinuxApps(ctx)
 	inv.LastPatch = lastPatchLinux()
 	inv.IsServer = strings.TrimSpace(run(ctx, "systemctl", "get-default")) != "graphical.target"
+	inv.Extra = HypervisorExtra(Sections(run(ctx, "sh", "-c", HypervisorScript)), inv.Hostname)
 	return inv, nil
 }
 

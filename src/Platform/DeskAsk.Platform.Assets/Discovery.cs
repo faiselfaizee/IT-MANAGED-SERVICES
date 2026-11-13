@@ -110,7 +110,7 @@ public static class DiscoveryApi
     const string WinRm = "$ErrorActionPreference='Stop'\n$sec=ConvertTo-SecureString $env:DK_PW -AsPlainText -Force; $cred=New-Object System.Management.Automation.PSCredential($env:DK_USER,$sec)\n$o=@{ComputerName=$env:DK_HOST;Credential=$cred;FilePath=$env:DK_SCRIPT;ErrorAction='Stop'}\nif($env:DK_SSL -eq '1'){$o.UseSSL=$true;$o.SessionOption=New-PSSessionOption -SkipCACheck -SkipCNCheck}\nInvoke-Command @o";
 
     /// <summary>What a saved login is for: computers, servers' management controllers, hypervisors, and network gear.</summary>
-    public static readonly string[] CredKinds = { "windows", "ssh", "sshpw", "snmp", "login", "bmc", "vmware", "nutanix", "netssh", "netapi" };
+    public static readonly string[] CredKinds = { "windows", "ssh", "sshpw", "snmp", "login", "bmc", "vmware", "nutanix", "proxmox", "xen", "netssh", "netapi" };
     /// <summary>The hardware category a login belongs to; empty means any.</summary>
     public static readonly string[] CredCategories = { "", "computer", "server", "virtualization", "firewall", "switch", "wireless", "printer", "other" };
 

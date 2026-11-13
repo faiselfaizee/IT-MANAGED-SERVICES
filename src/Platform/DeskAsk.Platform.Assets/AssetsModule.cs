@@ -229,6 +229,9 @@ public sealed class AssetsSchema : ITenantSchema
             alter table assets.assets add column if not exists bmc_address text not null default '';
             alter table assets.assets add column if not exists bmc_extra jsonb not null default '{}';
             alter table assets.assets add column if not exists bmc_at timestamptz"),
+        new(15, "logins for Proxmox VE and XCP-ng / Citrix Hypervisor", @"
+            alter table assets.creds drop constraint if exists creds_kind_check;
+            alter table assets.creds add constraint creds_kind_check check (kind in ('windows','ssh','sshpw','snmp','login','bmc','vmware','nutanix','proxmox','xen','netssh','netapi'))"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {

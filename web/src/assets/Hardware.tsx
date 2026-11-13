@@ -3,13 +3,19 @@ import { api, useInterval, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Empty, Err, Field, ago, fmtBytes, fmtDate } from '../ui';
 
 /** How a controller reads a device: only whether it answers, or its details too. */
-export const MODES: [string, string][] = [['', 'Not watched'], ['ping', 'Ping only'], ['device', 'Ping and ports (no login)'], ['windows', 'Windows (WinRM)'],
-  ['ssh', 'Linux (SSH)'], ['snmp', 'Printer, switch or firewall (SNMP)'], ['vmware', 'VMware ESXi or vCenter'], ['bmc', 'Server management (iLO, iDRAC, XClarity)']];
-const READING = ['windows', 'ssh', 'snmp', 'vmware', 'bmc'];
+export const MODES: [string, string][] = [['', 'Not watched'], ['ping', 'Ping only'], ['device', 'Ping and ports (no login)'], ['windows', 'Windows or Hyper-V host (WinRM)'],
+  ['ssh', 'Linux, KVM or Proxmox host (SSH)'], ['snmp', 'Printer, switch or firewall (SNMP)'], ['vmware', 'VMware ESXi or vCenter'], ['nutanix', 'Nutanix (Prism Element)'], ['proxmox', 'Proxmox VE (API)'],
+  ['xen', 'XCP-ng or Citrix Hypervisor'], ['bmc', 'Server management (iLO, iDRAC, XClarity)']];
+const READING = ['windows', 'ssh', 'snmp', 'vmware', 'nutanix', 'proxmox', 'xen', 'bmc'];
+/** Modes that read a hypervisor or a server in depth, so the Hardware tab is shown. */
+export const DEEP = ['vmware', 'nutanix', 'proxmox', 'xen', 'bmc'];
 const LOGIN_HINT: Record<string, string> = {
-  vmware: 'Uses the VMware logins saved under Credentials for this customer (hardware category VMware and Nutanix). A read-only account is enough.',
+  vmware: 'Uses the VMware logins saved under Credentials for this customer (hardware category Hypervisors). A read-only account is enough.',
+  nutanix: 'Use the Prism Element (cluster) address, port 9440. Uses the Nutanix logins saved under Credentials for this customer; a viewer account is enough.',
+  proxmox: 'Port 8006. Uses the Proxmox logins saved under Credentials: an API token (user name like audit@pve!deskask, the token secret as password, PVEAuditor role) or a user and password.',
+  xen: "Use the pool master's address. Uses the XCP-ng logins saved under Credentials for this customer (a read-only role is enough).",
   bmc: 'For an iLO, iDRAC or XClarity address added as its own asset. Uses the server management logins saved under Credentials for this customer (hardware category Physical servers).',
-  snmp: 'Uses the SNMP communities saved under Credentials for this customer.', windows: 'Uses the Windows logins saved under Credentials for this customer.', ssh: 'Uses the Linux logins saved under Credentials for this customer.',
+  snmp: 'Uses the SNMP communities saved under Credentials for this customer.', windows: 'Uses the Windows logins saved under Credentials for this customer. A Hyper-V host also lists its virtual machines.', ssh: 'Uses the Linux logins saved under Credentials for this customer. A KVM (libvirt) or Proxmox host also lists its virtual machines.',
 };
 
 /** Which controller watches this device and how; "Read now" asks it to read the details at once. */
@@ -54,7 +60,7 @@ export function Hardware({ d }: { d: Rec }) {
   const procs = (h.processors ?? []) as Rec[], dimms = (h.memory_modules ?? []) as Rec[], drives = (h.drives ?? []) as Rec[], ctrls = (h.storage_controllers ?? []) as Rec[];
   const psu = (h.power_supplies ?? []) as Rec[], sensors = (h.sensors ?? []) as Rec[], gpus = (h.gpus ?? []) as Rec[], hosts = (h.hosts ?? []) as Rec[], ds = (h.datastores ?? []) as Rec[], vms = (h.vms ?? []) as Rec[];
   const [all, setAll] = useState(false);
-  if (![psu, sensors, gpus, hosts, ds, vms, procs, dimms, drives].some((x) => x.length)) return <Empty>No hardware details yet. Under Overview, choose a controller and how to read this device (VMware, or server management), or enter its management address, then press Read now.</Empty>;
+  if (![psu, sensors, gpus, hosts, ds, vms, procs, dimms, drives].some((x) => x.length)) return <Empty>No hardware details yet. Under Overview, choose a controller and how to read this device (a hypervisor, or server management), or enter its management address, then press Read now.</Empty>;
   const bmc = (h.bmc ?? null) as Rec | null;
   const bad = sensors.filter((s) => s.state !== 'OK');
   const st = (h.host_state ?? {}) as Rec;
@@ -77,14 +83,14 @@ export function Hardware({ d }: { d: Rec }) {
       <table><thead><tr><th>Sensor</th><th>Type</th><th>State</th><th className="num">Reading</th></tr></thead><tbody>
         {(all ? sensors : sensors.slice(0, 12)).map((s, i) => <tr key={i}><td>{s.name}</td><td>{s.type}</td><td><Badge tone={STATE_TONE[s.state]}>{s.state}</Badge></td><td className="num">{s.reading}</td></tr>)}</tbody></table>
       {sensors.length > 12 && <button onClick={() => setAll(!all)}>{all ? 'Show fewer' : `Show all ${sensors.length}`}</button>}</Card>}
-    {hosts.length > 0 && <Card title={`Hosts (${hosts.length})`}><table><thead><tr><th>Host</th><th>Hardware</th><th>Serial</th><th>Processor</th><th className="num">Memory</th><th>ESXi</th><th>State</th></tr></thead><tbody>
-      {hosts.map((x, i) => <tr key={i}><td>{x.name}</td><td>{[x.vendor, x.model].filter(Boolean).join(' ')}</td><td className="mono">{x.serial}</td><td>{x.cpu}<div className="muted">{x.sockets} sockets, {x.cores} cores</div></td>
+    {hosts.length > 0 && <Card title={`Hosts (${hosts.length})`}><table><thead><tr><th>Host</th><th>Hardware</th><th>Serial</th><th>Processor</th><th className="num">Memory</th><th>Software</th><th>State</th></tr></thead><tbody>
+      {hosts.map((x, i) => <tr key={i}><td>{x.name}{x.address || x.ipmi ? <div className="muted">{[x.address, x.ipmi ? `IPMI ${x.ipmi}` : ''].filter(Boolean).join(' · ')}</div> : null}</td><td>{[x.vendor, x.model].filter(Boolean).join(' ')}</td><td className="mono">{x.serial}</td><td>{x.cpu}<div className="muted">{x.sockets} sockets, {x.cores} cores</div></td>
         <td className="num">{fmtBytes(num(x.ram_bytes))}</td><td>{x.esxi}</td><td><Badge tone={STATE_TONE[String(x.health)] ?? STATE_TONE[String(x.state)]}>{x.state}</Badge></td></tr>)}</tbody></table></Card>}
     {ds.length > 0 && <Card title={`Datastores (${ds.length})`}><table><thead><tr><th>Datastore</th><th>Type</th><th className="num">Size</th><th className="num">Free</th><th className="num">Used</th></tr></thead><tbody>
       {ds.map((x, i) => <tr key={i}><td>{x.name}{x.accessible === false && <> <Badge tone="bad">not accessible</Badge></>}</td><td>{x.type}</td><td className="num">{fmtBytes(num(x.capacity_bytes))}</td><td className="num">{fmtBytes(num(x.free_bytes))}</td>
         <td className="num">{num(x.capacity_bytes) ? Math.round((1 - num(x.free_bytes) / num(x.capacity_bytes)) * 100) + '%' : ''}</td></tr>)}</tbody></table></Card>}
     {vms.length > 0 && <Card title={`Virtual machines (${vms.length}, ${vms.filter((v) => v.power === 'On').length} running)`}><table><thead><tr><th>Name</th><th>Power</th><th>Guest OS</th><th>IP</th><th className="num">CPUs</th><th className="num">Memory</th><th className="num">Disk used</th>{hosts.length > 0 && <th>Host</th>}</tr></thead><tbody>
-      {vms.map((v, i) => <tr key={i}><td>{v.name}{v.guest_name && v.guest_name !== v.name ? <div className="muted">{v.guest_name}</div> : null}</td><td><Badge tone={v.power === 'On' ? 'ok' : undefined}>{v.power}</Badge></td><td>{v.guest_os}</td>
+      {vms.map((v, i) => <tr key={i}><td>{v.name}{v.guest_name && v.guest_name !== v.name ? <div className="muted">{v.guest_name}</div> : null}</td><td><Badge tone={v.power === 'On' ? 'ok' : undefined}>{v.power}</Badge>{v.kind === 'Container' ? <> <Badge>container</Badge></> : null}</td><td>{v.guest_os}</td>
         <td className="mono">{v.ip}</td><td className="num">{v.cpus}</td><td className="num">{fmtBytes(num(v.memory_bytes))}</td><td className="num">{fmtBytes(num(v.disk_bytes))}</td>{hosts.length > 0 && <td>{v.host}</td>}</tr>)}</tbody></table></Card>}
   </>;
 }

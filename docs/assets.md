@@ -170,7 +170,7 @@ The site controller reads ESXi hosts and vCenter through the vSphere web service
 
 **Set up**
 1. On the host, create a read-only account. In the ESXi Host Client: *Manage > Security & users > Users > Add user*, then *Host > Actions > Permissions*, give the user the **Read-only** role. For vCenter, create the user in vCenter and give it **Read-only** at the top level (propagate to children).
-2. **Assets > Credentials > Add credential**: the host's customer, hardware category **VMware and Nutanix**, used for **VMware vCenter or ESXi**, user name and password. The customer's own logins are tried before shared ones, and only VMware logins are sent for VMware devices.
+2. **Assets > Credentials > Add credential**: the host's customer, hardware category **Hypervisors**, used for **VMware vCenter or ESXi**, user name and password. The customer's own logins are tried before shared ones, and only VMware logins are sent for VMware devices.
 3. Make sure the controller reaches the host on port 443.
 4. Add the host as an asset (from the scan, by IP is fine). On its **Overview**, in **Read by a controller**, choose the controller and **VMware ESXi or vCenter**, then **Save**. The controller reads it within seconds; **Read now** reads again at any time. After that it is read every six hours.
 
@@ -204,3 +204,24 @@ The controller reads a server's management controller through **Redfish** (`http
 - Network ports with link state, speed and MAC; the management controller's model and firmware.
 
 Everything shows on the **Hardware** tab and goes into the full export and the PDF. A failed read is written to the Logs tab, for example "the management controller refused the login", "has no Redfish service (/redfish/v1): is this an iLO, iDRAC or XClarity address, and is Redfish enabled?" or "cannot reach ... on port 443". Tested against simulated iDRAC and iLO answers only.
+
+## Other hypervisors: Nutanix, Proxmox VE, XCP-ng, Hyper-V, KVM (v2.12.0)
+
+All of them fill the same **Hardware** tab as VMware: hosts, storage and virtual machines, plus the export and the PDF. Logins go under **Assets > Credentials** with the hardware category **Hypervisors** (formerly "VMware and Nutanix"); each read mode receives only its own kind of login, the customer's own first.
+
+| Product | How it is read | Read as | Login (Used for) |
+|---|---|---|---|
+| **Nutanix** | Prism Element REST API v2, port 9440 (use the cluster address) | Nutanix (Prism Element) | Nutanix Prism Element; a *Viewer* account is enough |
+| **Proxmox VE** | Proxmox API, port 8006 | Proxmox VE (API) | Proxmox VE: an **API token** (user `audit@pve!deskask`, password = token secret, role *PVEAuditor* on `/`) or a user and password (`root` means `root@pam`) |
+| **XCP-ng / Citrix Hypervisor** | XAPI on port 443 (use the **pool master**) | XCP-ng or Citrix Hypervisor | XCP-ng or Citrix Hypervisor; a read-only role is enough |
+| **Microsoft Hyper-V** | the agent on the host, or the controller over WinRM | (agent) or Windows or Hyper-V host | Windows login, as for any Windows computer |
+| **KVM / libvirt**, Proxmox without API | the agent on the host, or the controller over SSH (`virsh`, `qm`, `pct`) | (agent) or Linux, KVM or Proxmox host | Linux login |
+
+**What is read**
+- **Nutanix:** cluster name and AOS version; each node with block model, serial, block serial, processor, sockets, cores, memory, hypervisor version, address, **IPMI address** and state; storage containers with free space; VMs with power, host, IPs, vCPUs, memory and disk. A single-node cluster fills the asset's identity.
+- **Proxmox VE:** version; each node's processor, sockets, cores, threads and memory; **physical disks** with model, serial, size, type and SMART health; storage (local and shared); **VMs and containers** (marked) with power, node, CPUs, memory and disk; templates left out. A single node fills the asset's identity and network ports.
+- **XCP-ng:** each host's maker, model, serial, BIOS, processor and memory; storage repositories; VMs with power, host, IPs, guest OS, vCPUs and memory (templates, snapshots and the control domain left out).
+- **Hyper-V:** every VM with power, IPs, CPUs, memory, disk used and generation, beside the host's normal inventory. Nothing to set up when the agent is installed.
+- **KVM / libvirt:** every domain with state, CPUs, memory and IP (when libvirt knows it). **Proxmox through the agent:** `qm list` and `pct list` (name, state, memory, disk).
+
+For the physical side of any of these hosts (power supplies, memory modules, drives), add its **Management address** (iLO, iDRAC, XClarity) as described above. Tested against simulated answers only.

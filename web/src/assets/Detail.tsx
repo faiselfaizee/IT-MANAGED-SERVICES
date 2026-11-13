@@ -5,7 +5,7 @@ import { Act, Badge, Card, Dl, Empty, Err, Field, Loading, Meter, Modal, ago, fm
 import { Checks, Commands, Ise, RemoteControl, Shell, Tickets } from './DetailOps';
 import { AgentInstall } from './AgentInstall';
 import { AgentUpdate } from './AgentUpdate';
-import { Hardware, Watch } from './Hardware';
+import { DEEP, Hardware, Watch } from './Hardware';
 
 const TABS = [
   ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['tickets', 'Tickets'],
@@ -15,7 +15,7 @@ const TABS = [
 /** The Hardware tab appears for devices a controller reads in depth (VMware today). */
 function tabsFor(d: Rec): (readonly [string, string])[] {
   const hw = d.hardware && Object.keys(d.hardware).length > 0;
-  if (!hw && !['vmware', 'bmc'].includes(d.watch?.mode) && !d.watch?.bmc) return [...TABS];
+  if (!hw && !DEEP.includes(d.watch?.mode) && !d.watch?.bmc) return [...TABS];
   const t: (readonly [string, string])[] = [...TABS]; t.splice(3, 0, ['hardware', 'Hardware']); return t;
 }
 

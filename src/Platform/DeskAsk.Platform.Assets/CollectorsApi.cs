@@ -18,11 +18,11 @@ namespace DeskAsk.Platform.Assets;
 /// </summary>
 public static class CollectorsApi
 {
-    static readonly string[] Monitors = { "ping", "windows", "ssh", "snmp", "vmware", "bmc", "device" };
+    static readonly string[] Monitors = { "ping", "windows", "ssh", "snmp", "vmware", "nutanix", "proxmox", "xen", "bmc", "device" };
     /// <summary>The modes in which the controller reads the device's details, not only whether it answers.</summary>
-    static readonly string[] Reading = { "windows", "ssh", "snmp", "vmware", "bmc" };
+    static readonly string[] Reading = { "windows", "ssh", "snmp", "vmware", "nutanix", "proxmox", "xen", "bmc" };
     /// <summary>Login kinds sent only for their own read mode, with the hardware category they are filed under first.</summary>
-    static readonly Dictionary<string, string> OwnKinds = new() { ["vmware"] = "virtualization", ["bmc"] = "server" };
+    static readonly Dictionary<string, string> OwnKinds = new() { ["vmware"] = "virtualization", ["nutanix"] = "virtualization", ["proxmox"] = "virtualization", ["xen"] = "virtualization", ["bmc"] = "server" };
     static IResult Bad(string error, string? detail = null) => AgentsApi.Bad(error, detail);
 
     sealed record Col(string Id, int? Company, string Name, string Platform, string Version, string MonitorDefault, string Cidrs, bool ScanReq);
@@ -400,7 +400,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
 
             // the logins saved under Assets > Credentials, sealed in the database; sent only to this collector, over its own authenticated connection
             var saved = new List<(int? Company, string Kind, string Category, object Login)>();
-            await using (var c = new NpgsqlCommand("select name, kind, username, secret, company_id, category from assets.creds where kind in ('windows','ssh','snmp','sshpw','vmware','bmc') order by id", db))
+            await using (var c = new NpgsqlCommand("select name, kind, username, secret, company_id, category from assets.creds where kind in ('windows','ssh','snmp','sshpw','vmware','nutanix','proxmox','xen','bmc') order by id", db))
             {
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 while (await rd.ReadAsync(ct))
@@ -595,7 +595,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
             string bmc = "";
             await using (var q = new NpgsqlCommand("select monitor, collector_id, bmc_address from assets.assets where id = @i", db))
             { AgentsApi.P(q, "i", id); await using var rd = await q.ExecuteReaderAsync(ct); if (!await rd.ReadAsync(ct)) return Results.NotFound(); mode = rd.GetString(0); col = rd.GetString(1); bmc = rd.GetString(2); }
-            if (col == "" || !(Reading.Contains(mode) || bmc != "")) return Bad("not_read", "Choose a controller and a way to read this device first (Windows, Linux SSH, SNMP, VMware or server management), or enter its management address.");
+            if (col == "" || !(Reading.Contains(mode) || bmc != "")) return Bad("not_read", "Choose a controller and a way to read this device first (Windows, Linux, SNMP, a hypervisor or server management), or enter its management address.");
             await using (var c = new NpgsqlCommand("update assets.assets set read_req = true where id = @i", db)) { AgentsApi.P(c, "i", id); await c.ExecuteNonQueryAsync(ct); }
             await Wake(db, hub, t, col, ct);
             return Results.Ok(new { ok = true });
