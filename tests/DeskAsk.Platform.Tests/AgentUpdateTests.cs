@@ -57,7 +57,7 @@ public class AgentUpdateTests : IClassFixture<WebApplicationFactory<Program>>
         // the home page counts
         var sum = await J(await api.GetAsync("/api/assets/summary"));
         Assert.Equal(1, sum.GetProperty("agents").GetProperty("updateDue").GetInt64()); Assert.Equal(1, sum.GetProperty("agents").GetProperty("none").GetInt64());
-        Assert.Equal(0, sum.GetProperty("agents").GetProperty("online").GetInt64()); Assert.Equal(1, sum.GetProperty("compliance").GetProperty("unknown").GetInt64());
+        Assert.Equal(0, sum.GetProperty("agents").GetProperty("online").GetInt64()); Assert.Equal(1, sum.GetProperty("compliance").GetProperty("nonCompliant").GetInt64()); Assert.Equal(1, sum.GetProperty("compliance").GetProperty("antivirusOff").GetInt64()); // no antivirus reported: "Not detected"
 
         // press Update agent now: the agent is told to update even a version it put back before, and the log says so
         await agent.GetAsync("/agent/v1/poll?wait=0&v=2.8.6"); // drain
