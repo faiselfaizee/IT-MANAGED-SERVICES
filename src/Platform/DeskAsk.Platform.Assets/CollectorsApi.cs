@@ -110,8 +110,8 @@ public static class CollectorsApi
         }
         if (queued > 0)
         {
+            // no wake-up needed: this runs inside a check-in, whose answer already carries the queued installs
             await Log(db, col.Id, "info", "Automatic install: " + queued + " computer(s) added and queued for the agent.", ct);
-            await Wake(db, hub, t, col.Id, ct);
         }
     }
 

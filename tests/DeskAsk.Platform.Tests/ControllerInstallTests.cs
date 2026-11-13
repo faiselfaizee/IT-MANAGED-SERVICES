@@ -133,19 +133,17 @@ public class ControllerInstallTests : IClassFixture<WebApplicationFactory<Progra
         // with a saved login, a Windows computer is added and queued; the printer is not touched
         Assert.Equal(HttpStatusCode.OK, (await api.PostAsync("/api/assets/discover/creds", Json(new { name = "Domain admin", kind = "windows", username = "CORP\\svc", secret = "S3cret-Pw!" }))).StatusCode);
         await col.GetAsync("/collector/v1/wait?wait=1"); // drain
-        await col.PostAsync("/collector/v1/checkin", Json(new { found = scan(("192.168.7.40", "PC40", new[] { 135, 445, 5985 }), ("192.168.7.41", "prn1", new[] { 9100, 80 })) }));
+        var w = await J(await col.PostAsync("/collector/v1/checkin", Json(new { found = scan(("192.168.7.40", "PC40", new[] { 135, 445, 5985 }), ("192.168.7.41", "prn1", new[] { 9100, 80 })) })));
         var assets = await api.GetStringAsync("/api/assets");
         Assert.Contains("PC40", assets); Assert.DoesNotContain("prn1", assets);
-        Assert.True((await J(await col.GetAsync("/collector/v1/wait?wait=5"))).GetProperty("now").GetBoolean()); // the controller is woken for the install
-        var w = await J(await col.PostAsync("/collector/v1/checkin", Json(new { })));
-        Assert.Equal(1, w.GetProperty("deploys").GetArrayLength());
+        Assert.Equal(1, w.GetProperty("deploys").GetArrayLength()); // the same answer that reports the scan already carries the install
         var d = w.GetProperty("deploys")[0];
         Assert.Equal("192.168.7.40", d.GetProperty("ip").GetString()); Assert.Equal("windows", d.GetProperty("platform").GetString()); Assert.Equal(1, d.GetProperty("logins").GetArrayLength());
         var aid = long.Parse(d.GetProperty("asset").GetString()!);
         Assert.Contains("added automatically (Windows)", Texts(await J(await api.GetAsync($"/api/assets/{aid}/agent-install/log"))));
 
         // a second scan does not add it again
-        await col.PostAsync("/collector/v1/checkin", Json(new { found = scan(("192.168.7.40", "PC40", new[] { 135, 445, 5985 })) }));
-        Assert.Equal(0, (await J(await col.PostAsync("/collector/v1/checkin", Json(new { })))).GetProperty("deploys").GetArrayLength());
+        var again = await J(await col.PostAsync("/collector/v1/checkin", Json(new { found = scan(("192.168.7.40", "PC40", new[] { 135, 445, 5985 })) })));
+        Assert.Equal(0, again.GetProperty("deploys").GetArrayLength());
     }
 }
