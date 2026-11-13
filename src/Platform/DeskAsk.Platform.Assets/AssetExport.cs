@@ -107,6 +107,7 @@ public static class AssetExport
     /// <summary>The extra hardware tables a controller may send, in the order they are shown.</summary>
     public static readonly (string Key, string Title)[] HardwareTables =
     {
+        ("processors", "Processors"), ("memory_modules", "Memory modules"), ("storage_controllers", "Storage controllers"), ("drives", "Physical drives"),
         ("power_supplies", "Power supplies"), ("sensors", "Hardware sensors"), ("gpus", "Graphics cards"), ("hosts", "Hosts"), ("datastores", "Datastores"), ("vms", "Virtual machines"),
     };
 

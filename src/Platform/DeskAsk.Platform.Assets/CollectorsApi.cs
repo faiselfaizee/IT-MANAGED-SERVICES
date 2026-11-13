@@ -18,9 +18,11 @@ namespace DeskAsk.Platform.Assets;
 /// </summary>
 public static class CollectorsApi
 {
-    static readonly string[] Monitors = { "ping", "windows", "ssh", "snmp", "vmware", "device" };
+    static readonly string[] Monitors = { "ping", "windows", "ssh", "snmp", "vmware", "bmc", "device" };
     /// <summary>The modes in which the controller reads the device's details, not only whether it answers.</summary>
-    static readonly string[] Reading = { "windows", "ssh", "snmp", "vmware" };
+    static readonly string[] Reading = { "windows", "ssh", "snmp", "vmware", "bmc" };
+    /// <summary>Login kinds sent only for their own read mode, with the hardware category they are filed under first.</summary>
+    static readonly Dictionary<string, string> OwnKinds = new() { ["vmware"] = "virtualization", ["bmc"] = "server" };
     static IResult Bad(string error, string? detail = null) => AgentsApi.Bad(error, detail);
 
     sealed record Col(string Id, int? Company, string Name, string Platform, string Version, string MonitorDefault, string Cidrs, bool ScanReq);
@@ -61,6 +63,9 @@ public static class CollectorsApi
     }
 
     /// <summary>Tells the controller to check in now instead of at the end of its minute (it waits on /collector/v1/wait).</summary>
+    /// <summary>An IP address, or a host name of letters, digits, dots and dashes (optionally with :port).</summary>
+    static bool BmcAddressOk(string s) => s.Length <= 120 && (System.Net.IPAddress.TryParse(s, out _) || System.Text.RegularExpressions.Regex.IsMatch(s, @"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:\d{1,5})?$"));
+
     static async Task Wake(NpgsqlConnection db, AgentHub hub, ITenantContext t, string collectorId, CancellationToken ct)
     {
         await using var c = new NpgsqlCommand("update assets.collectors set wake_req = true where id = @i", db); AgentsApi.P(c, "i", collectorId); await c.ExecuteNonQueryAsync(ct);
@@ -304,11 +309,11 @@ chmod 755 /opt/deskask-collector/deskask-collector
             var res = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("results", out var rs) && rs.ValueKind == JsonValueKind.Object ? rs : default;
 
             // assets this collector looks after
-            var mine = new Dictionary<long, (string Ip, string Host, string Name, string Monitor, bool? Up, bool ReadReq)>();
-            await using (var c = new NpgsqlCommand("select id, ip_address, hostname, name, monitor, check_up, read_req from assets.assets where collector_id = @i", db))
+            var mine = new Dictionary<long, (string Ip, string Host, string Name, string Monitor, bool? Up, bool ReadReq, string Bmc)>();
+            await using (var c = new NpgsqlCommand("select id, ip_address, hostname, name, monitor, check_up, read_req, bmc_address from assets.assets where collector_id = @i", db))
             {
                 AgentsApi.P(c, "i", col.Id); await using var rd = await c.ExecuteReaderAsync(ct);
-                while (await rd.ReadAsync(ct)) mine[rd.GetInt64(0)] = (rd.GetString(1), rd.GetString(2), rd.GetString(3), rd.GetString(4), rd.IsDBNull(5) ? null : rd.GetBoolean(5), rd.GetBoolean(6));
+                while (await rd.ReadAsync(ct)) mine[rd.GetInt64(0)] = (rd.GetString(1), rd.GetString(2), rd.GetString(3), rd.GetString(4), rd.IsDBNull(5) ? null : rd.GetBoolean(5), rd.GetBoolean(6), rd.GetString(7));
             }
             long AssetOf(JsonElement e) { var s = AgentsApi.Str(e, "asset") ?? ""; return long.TryParse(s, out var l) && mine.ContainsKey(l) ? l : 0; }
 
@@ -328,6 +333,13 @@ chmod 755 /opt/deskask-collector/deskask-collector
                     await tx.CommitAsync(ct);
                 }
                 catch (Exception e) { await Log(db, col.Id, "warn", "Inventory for asset " + id + " rejected: " + e.Message, ct); }
+            }
+            // what a server's management controller reported: its own tables, and identity the main read left empty
+            foreach (var bm in Items(res, "bmc", 200))
+            {
+                var id = AssetOf(bm); if (id == 0 || !bm.TryGetProperty("raw", out var raw) || raw.ValueKind != JsonValueKind.Object) continue;
+                try { await AssetsDevice.ApplyBmc(db, id, Inventory.Normalize(raw), "collector " + col.Name, ct); }
+                catch (Exception e) { await Log(db, col.Id, "warn", "Management controller data for asset " + id + " rejected: " + e.Message, ct); }
             }
             foreach (var er in Items(res, "errors", 200))
             {
@@ -388,7 +400,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
 
             // the logins saved under Assets > Credentials, sealed in the database; sent only to this collector, over its own authenticated connection
             var saved = new List<(int? Company, string Kind, string Category, object Login)>();
-            await using (var c = new NpgsqlCommand("select name, kind, username, secret, company_id, category from assets.creds where kind in ('windows','ssh','snmp','sshpw','vmware') order by id", db))
+            await using (var c = new NpgsqlCommand("select name, kind, username, secret, company_id, category from assets.creds where kind in ('windows','ssh','snmp','sshpw','vmware','bmc') order by id", db))
             {
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 while (await rd.ReadAsync(ct))
@@ -407,11 +419,13 @@ chmod 755 /opt/deskask-collector/deskask-collector
             object[] LoginsFor(long assetId, string mode = "")
             {
                 company.TryGetValue(assetId, out var co);
-                return saved.Where(x => (x.Company == null || x.Company == co) && (mode == "vmware" ? x.Kind == "vmware" : x.Kind != "vmware"))
-                    .OrderBy(x => x.Company == null ? 1 : 0).ThenBy(x => mode == "vmware" && x.Category != "virtualization" ? 1 : 0).Select(x => x.Login).ToArray();
+                var own = OwnKinds.TryGetValue(mode, out var cat);
+                return saved.Where(x => (x.Company == null || x.Company == co) && (own ? x.Kind == mode : !OwnKinds.ContainsKey(x.Kind)))
+                    .OrderBy(x => x.Company == null ? 1 : 0).ThenBy(x => own && x.Category != cat ? 1 : 0).Select(x => x.Login).ToArray();
             }
             // the work list
-            var assets = new List<object>(); foreach (var (id, a) in mine) assets.Add(new { id = id.ToString(), ip = a.Ip, host = a.Host, name = a.Name, monitor = a.Monitor == "" ? "ping" : a.Monitor, logins = Reading.Contains(a.Monitor) ? LoginsFor(id, a.Monitor) : Array.Empty<object>(), readNow = a.ReadReq && Reading.Contains(a.Monitor) });
+            var assets = new List<object>(); foreach (var (id, a) in mine) assets.Add(new { id = id.ToString(), ip = a.Ip, host = a.Host, name = a.Name, monitor = a.Monitor == "" ? "ping" : a.Monitor, logins = Reading.Contains(a.Monitor) ? LoginsFor(id, a.Monitor) : Array.Empty<object>(), readNow = a.ReadReq && (Reading.Contains(a.Monitor) || a.Bmc != ""),
+                bmc = a.Bmc, bmcLogins = a.Bmc != "" ? LoginsFor(id, "bmc") : Array.Empty<object>() });
             var checks = new Dictionary<string, List<object>>();
             await using (var c = new NpgsqlCommand("select s.id, s.asset_id, s.name, s.type, s.host, s.port, s.url, s.expect, s.status, s.insecure, s.dns, s.timeout_s, a.ip_address, a.dns_name, a.hostname from assets.service_checks s join assets.assets a on a.id = s.asset_id where a.collector_id = @i and a.monitor <> '' and s.enabled", db))
             {
@@ -555,15 +569,18 @@ chmod 755 /opt/deskask-collector/deskask-collector
         {
             var mode = AgentsApi.Str(body, "mode") ?? ""; var col = AgentsApi.Str(body, "collectorId") ?? "";
             if (mode != "" && !Monitors.Contains(mode)) return Bad("bad_input", "mode must be empty or one of " + string.Join(", ", Monitors));
-            if (mode == "") col = "";
+            var bmcIn = AgentsApi.Str(body, "bmc"); var bmc = (bmcIn ?? "").Trim();
+            if (bmc != "" && !BmcAddressOk(bmc)) return Bad("bad_input", "The management address must be an IP address or a host name, for example 192.168.31.50 or idrac-esx01.acme.local.");
+            if (mode == "" && bmc == "") col = "";
+            if (col == "" && bmc != "") return Bad("bad_input", "Choose the controller that reads the management address.");
             await using var db = await AgentsApi.Open(t, ct);
             if (col != "")
             {
                 await using var q = new NpgsqlCommand("select 1 from assets.collectors where id = @i", db); AgentsApi.P(q, "i", col);
                 if (await q.ExecuteScalarAsync(ct) == null) return Bad("bad_input", "collector not found");
             }
-            await using var c = new NpgsqlCommand("update assets.assets set monitor = @m, collector_id = @c, read_req = @rr, updated_at = now() where id = @i", db); AgentsApi.P(c, "m", mode); AgentsApi.P(c, "c", col); AgentsApi.P(c, "i", id);
-            AgentsApi.P(c, "rr", Reading.Contains(mode));
+            await using var c = new NpgsqlCommand("update assets.assets set monitor = @m, collector_id = @c, read_req = @rr, bmc_address = coalesce(@b, bmc_address), updated_at = now() where id = @i", db); AgentsApi.P(c, "m", mode); AgentsApi.P(c, "c", col); AgentsApi.P(c, "i", id);
+            AgentsApi.P(c, "rr", Reading.Contains(mode) || bmc != ""); AgentsApi.P(c, "b", bmcIn == null ? null : bmc);
             if (await c.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound();
             if (col != "") await Wake(db, hub, t, col, ct); // the controller reads it within seconds
             await audit.WriteAsync("assets.monitor_set", id.ToString(), mode == "" ? "off" : mode + " via " + col, ct: ct);
@@ -575,9 +592,10 @@ chmod 755 /opt/deskask-collector/deskask-collector
         {
             await using var db = await AgentsApi.Open(t, ct);
             string mode = "", col = "";
-            await using (var q = new NpgsqlCommand("select monitor, collector_id from assets.assets where id = @i", db))
-            { AgentsApi.P(q, "i", id); await using var rd = await q.ExecuteReaderAsync(ct); if (!await rd.ReadAsync(ct)) return Results.NotFound(); mode = rd.GetString(0); col = rd.GetString(1); }
-            if (col == "" || !Reading.Contains(mode)) return Bad("not_read", "Choose a controller and a way to read this device first (Windows, Linux SSH, SNMP or VMware).");
+            string bmc = "";
+            await using (var q = new NpgsqlCommand("select monitor, collector_id, bmc_address from assets.assets where id = @i", db))
+            { AgentsApi.P(q, "i", id); await using var rd = await q.ExecuteReaderAsync(ct); if (!await rd.ReadAsync(ct)) return Results.NotFound(); mode = rd.GetString(0); col = rd.GetString(1); bmc = rd.GetString(2); }
+            if (col == "" || !(Reading.Contains(mode) || bmc != "")) return Bad("not_read", "Choose a controller and a way to read this device first (Windows, Linux SSH, SNMP, VMware or server management), or enter its management address.");
             await using (var c = new NpgsqlCommand("update assets.assets set read_req = true where id = @i", db)) { AgentsApi.P(c, "i", id); await c.ExecuteNonQueryAsync(ct); }
             await Wake(db, hub, t, col, ct);
             return Results.Ok(new { ok = true });

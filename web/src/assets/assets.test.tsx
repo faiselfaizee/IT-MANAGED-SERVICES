@@ -193,3 +193,32 @@ test('the overview lets an administrator choose the controller and read mode, an
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(posts.some(([u, b]) => u === '/api/assets/7/monitor' && b.includes('"mode":"snmp"') && b.includes('"collectorId":"c1"'))).toBe(true));
 });
+
+test('a server read as VMware can also have its iDRAC read, and the physical details show on the same asset', async () => {
+  const esx = device({ name: 'esx02', agent: { id: '', online: false, lastSeen: null, source: 'collector', inventoryAt: null },
+    watch: { mode: 'vmware', collectorId: 'c1', collector: 'Site A', readRequested: false, up: true, checkedAt: null, bmc: '', bmcReadAt: null },
+    hardware: { api: 'VMware ESXi 8.0.2', bmc_api: '15G Monolithic 7.00.00.171 (Redfish 1.17.0)', bmc: { model: '15G Monolithic', firmware: '7.00', state: 'OK' },
+      memory_modules: [{ slot: 'DIMM.Socket.A2', size_bytes: 137438953472, type: 'DDR4', speed_mhz: 3200, manufacturer: 'Hynix', part: 'HMAA8GR7', state: 'OK' },
+        { slot: 'DIMM.Socket.A10', size_bytes: 137438953472, type: 'DDR4', speed_mhz: 3200, manufacturer: 'Hynix', part: '', state: 'Critical' }],
+      drives: [{ name: 'SSD 0', model: 'MZ7LH960', manufacturer: 'SAMSUNG', media: 'SSD', protocol: 'SATA', size_bytes: 960197124096, serial: 'S1', controller: 'PERC H755 Front', state: 'OK' }],
+      storage_controllers: [{ name: 'PERC H755 Front', firmware: '52.16.1' }],
+      processors: [{ socket: 'CPU.Socket.1', model: 'Xeon Gold 6338', cores: 32, threads: 64, max_mhz: 4000, state: 'OK' }],
+      vms: [{ name: 'SQL01', power: 'On', cpus: 8, memory_bytes: 1, disk_bytes: 1 }] } });
+  const posts: [string, string][] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const u = String(url); if (init?.method === 'POST') posts.push([u, String(init.body)]);
+    if (u.startsWith('/api/assets/7/device')) return new Response(JSON.stringify(esx), { status: 200 });
+    if (u.startsWith('/api/assets/collectors')) return new Response(JSON.stringify({ items: [{ id: 'c1', name: 'Site A', online: true }] }), { status: 200 });
+    return new Response('{"ok":true}', { status: 200 });
+  }));
+  location.hash = '#/assets/7'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('Read by a controller')).toBeTruthy());
+  fireEvent.change(screen.getByLabelText('Management address (iLO, iDRAC, XClarity)'), { target: { value: '192.168.31.50' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(posts.some(([u, b]) => u === '/api/assets/7/monitor' && b.includes('"bmc":"192.168.31.50"') && b.includes('"mode":"vmware"'))).toBe(true));
+  cleanup(); location.hash = '#/assets/7/hardware'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('Memory modules (2, 256 GB)')).toBeTruthy());
+  expect(screen.getByText('Physical drives (1)')).toBeTruthy(); expect(screen.getByText(/PERC H755 Front \(firmware 52.16.1\)/)).toBeTruthy();
+  expect(screen.getByText(/Management controller: 15G Monolithic/)).toBeTruthy();
+  expect(screen.getByText('Virtual machines (1, 1 running)')).toBeTruthy();
+});

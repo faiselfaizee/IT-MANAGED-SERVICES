@@ -108,4 +108,79 @@ public class VmwareReadTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync($"/api/assets/{aid}/read-now", Json(new { }))).StatusCode);
         Assert.Equal(0, (await J(await col.PostAsync("/collector/v1/checkin", Json(new { })))).GetProperty("assets")[0].GetProperty("logins").GetArrayLength());
     }
+
+    [PgFact]
+    public async Task AServersManagementControllerIsReadBesideTheMainReadAndMergedIntoTheSameAsset()
+    {
+        var api = await TestSupport.AdminClient(factory);
+        await api.GetAsync("/api/assets/types");
+        await Sql("truncate assets.collectors, assets.creds, assets.shells, assets.rc_log, assets.jobs, assets.agent_q, assets.agents, assets.enroll_tokens, assets.amc, assets.rentals, assets.history, assets.assets, assets.companies, assets.types restart identity cascade");
+        var co = (await J(await api.PostAsync("/api/assets/companies", Json(new { name = "Acme Ltd" })))).GetProperty("id").GetInt32();
+        var tok = (await J(await api.PostAsync("/api/assets/collectors/tokens", Json(new { companyId = co, label = "HQ" })))).GetProperty("token").GetString()!;
+        var anon = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var en = await J(await anon.PostAsync("/collector/v1/enroll", Json(new { token = tok, name = "HQ controller", hostname = "COL-1", platform = "windows", version = "2.11.0" })));
+        var cid = en.GetProperty("collectorId").GetString()!;
+        var col = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        col.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", en.GetProperty("key").GetString()); col.DefaultRequestHeaders.Add("X-Collector-Id", cid);
+        async Task Cred(object o) => Assert.True((await api.PostAsync("/api/assets/discover/creds", Json(o))).IsSuccessStatusCode);
+        await Cred(new { name = "Acme iDRAC (other)", kind = "bmc", category = "other", username = "root2", secret = "b0", companyId = co });
+        await Cred(new { name = "Acme iDRAC", kind = "bmc", category = "server", vendor = "Dell iDRAC", username = "root", secret = "calvin", companyId = co });
+        await Cred(new { name = "Acme ESXi", kind = "vmware", category = "virtualization", username = "audit", secret = "p1", companyId = co });
+
+        await col.PostAsync("/collector/v1/checkin", Json(new { found = new object[] { new { ip = "192.168.31.21", hostname = "", open = new[] { 443, 902 }, mac = "" }, new { ip = "192.168.31.60", hostname = "", open = new[] { 443, 623 }, mac = "" } } }));
+        await api.PostAsync($"/api/assets/collectors/{cid}/adopt", Json(new { ips = new[] { "192.168.31.21", "192.168.31.60" } }));
+        var items = (await J(await api.GetAsync("/api/assets"))).GetProperty("items").EnumerateArray().ToList();
+        var esx = items.Single(x => x.GetProperty("name").GetString()!.Contains("31.21")).GetProperty("id").GetInt64();
+        var ilo = items.Single(x => x.GetProperty("name").GetString()!.Contains("31.60")).GetProperty("id").GetInt64();
+
+        // a bad address and a missing controller are refused
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync($"/api/assets/{esx}/monitor", Json(new { mode = "vmware", collectorId = cid, bmc = "not an address!" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync($"/api/assets/{esx}/monitor", Json(new { mode = "", collectorId = "", bmc = "192.168.31.50" }))).StatusCode);
+
+        // the ESXi host gets its iDRAC address; the other device is an iLO read on its own
+        Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/{esx}/monitor", Json(new { mode = "vmware", collectorId = cid, bmc = "192.168.31.50" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/{ilo}/monitor", Json(new { mode = "bmc", collectorId = cid }))).StatusCode);
+        var work = (await J(await col.PostAsync("/collector/v1/checkin", Json(new { })))).GetProperty("assets").EnumerateArray().ToList();
+        var we = work.Single(x => x.GetProperty("id").GetString() == esx.ToString());
+        Assert.Equal("192.168.31.50", we.GetProperty("bmc").GetString()); Assert.True(we.GetProperty("readNow").GetBoolean());
+        Assert.Equal(new[] { "Acme ESXi" }, we.GetProperty("logins").EnumerateArray().Select(l => l.GetProperty("name").GetString()));
+        Assert.Equal(new[] { "Acme iDRAC", "Acme iDRAC (other)" }, we.GetProperty("bmcLogins").EnumerateArray().Select(l => l.GetProperty("name").GetString())); // filed under Physical servers first
+        var wi = work.Single(x => x.GetProperty("id").GetString() == ilo.ToString());
+        Assert.Equal("bmc", wi.GetProperty("monitor").GetString()); Assert.Equal("Acme iDRAC", wi.GetProperty("logins")[0].GetProperty("name").GetString()); Assert.Equal("", wi.GetProperty("bmc").GetString());
+
+        // the VMware read, then the iDRAC read for the same asset
+        var vmware = new { schema = 1, hostname = "esx02.acme.local", make = "Dell Inc.", model = "PowerEdge R750", serial_number = "", cpu = new { model = "Xeon Gold 6338", count = 2, total_cores = 64 },
+            hardware_extra = new { platform = "vmware", api = "VMware ESXi 8.0.2", vms = new object[] { new { name = "SQL01", power = "On" } }, power_supplies = new object[] { new { name = "PS from ESXi", state = "OK" } } } };
+        var idrac = new { schema = 1, make = "Dell Inc.", model = "PowerEdge R750 (iDRAC)", serial_number = "CN7792", bios_version = "1.11.2", ram_bytes = 274877906944L, cpu = new { model = "Intel Xeon Gold 6338", count = 2, total_cores = 64, logical = 128 },
+            hardware_extra = new { platform = "redfish", api = "15G Monolithic 7.00.00.171 (Redfish 1.17.0)", host_state = new { power = "On", overall = "Warning" },
+                memory_modules = new object[] { new { slot = "DIMM.Socket.A2", size_bytes = 137438953472L, state = "OK" }, new { slot = "DIMM.Socket.A10", size_bytes = 137438953472L, state = "Critical" } },
+                drives = new object[] { new { name = "SSD 0", model = "MZ7LH960", media = "SSD", size_bytes = 960197124096L, state = "OK" } },
+                power_supplies = new object[] { new { name = "PS1 Status", model = "1400W", state = "OK", reading = "312 W out" }, new { name = "PS2 Status", state = "Critical", reading = "" } } } };
+        Assert.Equal(HttpStatusCode.OK, (await col.PostAsync("/collector/v1/checkin", Json(new { results = new { inventories = new object[] { new { asset = esx.ToString(), raw = vmware } }, bmc = new object[] { new { asset = esx.ToString(), raw = idrac } } } }))).StatusCode);
+
+        var dev = await J(await api.GetAsync($"/api/assets/{esx}/device"));
+        Assert.Equal("PowerEdge R750", dev.GetProperty("identity").GetProperty("model").GetString()); // the main read wins where it has a value
+        Assert.Equal("CN7792", dev.GetProperty("identity").GetProperty("serial").GetString());       // filled from the iDRAC where it was empty
+        Assert.Equal("1.11.2", dev.GetProperty("identity").GetProperty("bios").GetString());
+        Assert.Equal(274877906944L, dev.GetProperty("identity").GetProperty("ramBytes").GetInt64());
+        var hw = dev.GetProperty("hardware");
+        Assert.Equal("SQL01", hw.GetProperty("vms")[0].GetProperty("name").GetString());              // VMware tables kept
+        Assert.Equal(2, hw.GetProperty("memory_modules").GetArrayLength());                            // iDRAC tables added
+        Assert.Equal("PS2 Status", hw.GetProperty("power_supplies")[1].GetProperty("name").GetString()); // the iDRAC's power supplies replace ESXi's
+        Assert.Equal("VMware ESXi 8.0.2", hw.GetProperty("api").GetString()); Assert.Contains("Redfish", hw.GetProperty("bmc_api").GetString());
+        Assert.Equal("192.168.31.50", dev.GetProperty("watch").GetProperty("bmc").GetString());
+        Assert.NotEqual(JsonValueKind.Null, dev.GetProperty("watch").GetProperty("bmcReadAt").ValueKind);
+
+        // the next VMware read keeps the iDRAC tables; the export shows both
+        await col.PostAsync("/collector/v1/checkin", Json(new { results = new { inventories = new object[] { new { asset = esx.ToString(), raw = vmware } } } }));
+        Assert.Equal(2, (await J(await api.GetAsync($"/api/assets/{esx}/device"))).GetProperty("hardware").GetProperty("memory_modules").GetArrayLength());
+        var csv = await (await api.GetAsync($"/api/assets/{esx}/export.csv")).Content.ReadAsStringAsync();
+        foreach (var s in new[] { ",Memory modules,", ",Physical drives,", ",Virtual machines,", "DIMM.Socket.A10", "PS2 Status" }) Assert.Contains(s, csv);
+
+        // a device read only through its management address can still be read now; clearing the address stops it
+        Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/{esx}/monitor", Json(new { mode = "ping", collectorId = cid, bmc = "192.168.31.50" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/{esx}/read-now", Json(new { }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/{esx}/monitor", Json(new { mode = "ping", collectorId = cid, bmc = "" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync($"/api/assets/{esx}/read-now", Json(new { }))).StatusCode);
+    }
 }

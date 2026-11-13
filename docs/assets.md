@@ -183,3 +183,24 @@ The site controller reads ESXi hosts and vCenter through the vSphere web service
 **When it fails** the reason is written to the asset's Logs tab, for example "the VMware login was refused", "did not answer like VMware ESXi or vCenter (HTTP 404); check the address and that port 443 reaches the host", or "this login sees no host: give it the Read-only role".
 
 **Limits.** The controller accepts the host's self-signed certificate (it talks to it on the customer's own network). What ESXi reports for power supplies depends on the server vendor's drivers; reading the server's iLO or iDRAC (next release) fills the gaps. Not tested on a real ESXi host yet, only against a simulated one.
+
+## Reading physical servers: iLO, iDRAC, XClarity, IMM (v2.11.0)
+
+The controller reads a server's management controller through **Redfish** (`https://<address>/redfish/v1`, port 443): HPE iLO 4 (firmware 2.30 or later), iLO 5 and 6; Dell iDRAC 8 (2.40 or later) and 9; Lenovo XClarity Controller; IBM/Lenovo IMM2 with Redfish firmware.
+
+**Logins.** **Assets > Credentials > Add credential**: the customer, hardware category **Physical servers**, used for **Server management (iLO, iDRAC, XClarity, IMM)**. A read-only account is enough (iLO: *Login* privilege only; iDRAC: *Read Only* role; XClarity: *Read-only*). Logins filed under Physical servers are tried first; another login is tried only when the controller refuses one.
+
+**Two ways to use it**
+1. **The management address is its own asset.** Add the iLO or iDRAC address (from the scan is fine) and on its Overview choose **Server management (iLO, iDRAC, XClarity)** under *Read by a controller*. The asset gets the server's identity and every table below.
+2. **A server you already have** (an ESXi host read as VMware, a Windows or Linux server with the agent): on its Overview, enter the **Management address** in *Read by a controller*, pick the controller and Save. The controller reads the management controller as well; its tables are added to the same asset, and identity fields the main read left empty (serial number, BIOS, memory) are filled in. Nothing is duplicated. For an agent computer leave *Read as* on "Not watched (the agent reports)".
+
+**What is read**
+- Identity: maker, model, serial number, BIOS version, processor model, sockets, cores and threads, memory.
+- **Processors** per socket (model, cores, threads, maximum speed, state).
+- **Memory modules** per slot (size, type, speed, maker, part number, serial, state; empty slots left out).
+- **Physical drives** behind the RAID controller (model, SSD or HDD, protocol, size, serial, state) and the **storage controllers** with firmware.
+- **Power supplies** (model, serial, rated and current watts, input voltage, firmware, state), **fans**, **temperatures** and **power use**; problems are listed first.
+- **Graphics cards** (from the processor list and the PCIe devices, shown once).
+- Network ports with link state, speed and MAC; the management controller's model and firmware.
+
+Everything shows on the **Hardware** tab and goes into the full export and the PDF. A failed read is written to the Logs tab, for example "the management controller refused the login", "has no Redfish service (/redfish/v1): is this an iLO, iDRAC or XClarity address, and is Redfish enabled?" or "cannot reach ... on port 443". Tested against simulated iDRAC and iLO answers only.

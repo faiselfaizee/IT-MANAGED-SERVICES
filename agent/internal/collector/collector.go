@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"runtime"
@@ -81,6 +82,9 @@ type asset struct {
 	Monitor string  `json:"monitor"`
 	Logins  []login `json:"logins"`
 	ReadNow bool    `json:"readNow"` // someone pressed "Read now" on the device page
+	// Bmc is the address of the server's management controller (iLO, iDRAC, XClarity), read in addition to the main read.
+	Bmc       string  `json:"bmc"`
+	BmcLogins []login `json:"bmcLogins"`
 }
 
 type deploy struct {
@@ -129,6 +133,7 @@ type logLine struct {
 type results struct {
 	Health      []healthRes   `json:"health"`
 	Inventories []invRes      `json:"inventories"`
+	Bmc         []invRes      `json:"bmc"` // what a server's management controller reported, merged into the asset
 	Errors      []errRes      `json:"errors"`
 	Checks      []CheckResult `json:"checks"`
 }
@@ -317,7 +322,16 @@ func (r *Runner) watch(ctx context.Context, a asset, checks []CheckDef) {
 	if due {
 		r.lastInv[key] = time.Now() // claimed now so a slow read is not started twice
 	}
+	bkey := a.ID + "|bmc|" + a.Bmc
+	bsince := time.Since(r.lastInv[bkey])
+	bdue := a.Bmc != "" && (bsince >= r.InventoryEvery || a.ReadNow && bsince >= readNowGap)
+	if bdue {
+		r.lastInv[bkey] = time.Now()
+	}
 	r.mu.Unlock()
+	if bdue {
+		r.readBmc(ctx, a, bkey)
+	}
 	if !due || a.Monitor == "ping" || a.Monitor == "device" || a.Monitor == "" {
 		return
 	}
@@ -330,6 +344,41 @@ func (r *Runner) watch(ctx context.Context, a asset, checks []CheckDef) {
 		return
 	}
 	r.pending.Results.Inventories = append(r.pending.Results.Inventories, invRes{a.ID, raw})
+}
+
+// readBmc reads the management controller of a server that is also read another way (VMware, Windows, an agent).
+func (r *Runner) readBmc(ctx context.Context, a asset, key string) {
+	raw, err := redfishWith(ctx, r.credsFor(a.BmcLogins), a.Bmc)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err != nil {
+		delete(r.lastInv, key)
+		r.pending.Results.Errors = append(r.pending.Results.Errors, errRes{a.ID, "Management controller " + a.Bmc + ": " + err.Error()})
+		return
+	}
+	r.pending.Results.Bmc = append(r.pending.Results.Bmc, invRes{a.ID, raw})
+}
+
+func redfishWith(ctx context.Context, creds []config.Cred, target string) (map[string]any, error) {
+	var last error = errors.New("no server management login is saved for this customer: add one under Assets > Credentials (hardware category Physical servers, used for Server management)")
+	for _, c := range pick(creds, "bmc", hostOnly(target)) {
+		inv, err := RedfishInventory(ctx, target, c.User, c.Password)
+		if err == nil {
+			return inv, nil
+		}
+		last = fmt.Errorf("login %q: %v", c.Name, err)
+		if !errors.Is(err, errRfLogin) {
+			break // the controller itself is the problem, another password will not help
+		}
+	}
+	return nil, last
+}
+
+func hostOnly(t string) string {
+	if h, _, err := net.SplitHostPort(t); err == nil {
+		return h
+	}
+	return t
 }
 
 // readNowGap keeps "Read now" from starting a second read while the first is still running.
@@ -351,6 +400,8 @@ func (r *Runner) readDevice(ctx context.Context, a asset, target string) (any, e
 		return sshInventory(ctx, r.credsFor(a.Logins), target)
 	case "windows":
 		return winInventory(ctx, r.credsFor(a.Logins), hostsOf(a.Host, target)...)
+	case "bmc":
+		return redfishWith(ctx, r.credsFor(a.Logins), target)
 	case "vmware":
 		var last error = errors.New("no VMware login is saved for this customer: add one under Assets > Credentials (hardware category VMware and Nutanix, used for VMware vCenter or ESXi)")
 		for _, c := range pick(r.credsFor(a.Logins), "vmware", target) {

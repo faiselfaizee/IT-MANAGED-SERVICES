@@ -90,6 +90,49 @@ public static class AssetsDevice
         await History(db, id, actor, "inventory", JsonSerializer.Serialize(new { source }), ct, tx);
     }
 
+    /// <summary>What a server's management controller (iLO, iDRAC, XClarity) reported, for a device that is also read another way:
+    /// its own tables are kept apart, and identity is filled in only where the main read left it empty.</summary>
+    public static async Task ApplyBmc(NpgsqlConnection db, long id, NormInv n, string actor, CancellationToken ct)
+    {
+        string? serial = n.Serial;
+        if (serial != null)
+        {
+            await using var chk = new NpgsqlCommand("select 1 from assets.assets where lower(serial) = lower(@s) and id <> @i", db);
+            P(chk, "s", serial); P(chk, "i", id);
+            if (await chk.ExecuteScalarAsync(ct) != null) serial = null;
+        }
+        await using var c = new NpgsqlCommand(@"update assets.assets set bmc_extra = coalesce(@hx::jsonb, '{}'), bmc_at = now(), read_req = false,
+            manufacturer = coalesce(nullif(manufacturer, ''), @make, manufacturer), model = coalesce(nullif(model, ''), @model, model), serial = coalesce(nullif(serial, ''), @serial, serial),
+            bios_version = coalesce(nullif(bios_version, ''), @bios, bios_version), cpu_make = coalesce(nullif(cpu_make, ''), @cm, cpu_make), cpu_model = coalesce(nullif(cpu_model, ''), @cmo, cpu_model),
+            cpu_socket = coalesce(nullif(cpu_socket, ''), @cs, cpu_socket),
+            total_cpu = case when coalesce(total_cpu, 0) = 0 then coalesce(@tc, total_cpu) else total_cpu end, cpu_cores = case when coalesce(cpu_cores, 0) = 0 then coalesce(@cc, cpu_cores) else cpu_cores end,
+            logical_processors = case when coalesce(logical_processors, 0) = 0 then coalesce(@lp, logical_processors) else logical_processors end,
+            ram_bytes = case when coalesce(ram_bytes, 0) = 0 then coalesce(@ram, ram_bytes) else ram_bytes end,
+            category = case when category = '' then 'IT hardware' else category end
+            where id = @id", db);
+        c.Parameters.Add(new NpgsqlParameter("hx", NpgsqlDbType.Text) { Value = (object?)n.Extra ?? DBNull.Value });
+        P(c, "make", n.Make); P(c, "model", n.Model); P(c, "serial", serial); P(c, "bios", n.BiosVersion); P(c, "cm", n.CpuMake); P(c, "cmo", n.CpuModel); P(c, "cs", n.CpuSocket);
+        P(c, "tc", (int?)n.TotalCpu); P(c, "cc", (int?)n.CpuCores); P(c, "lp", (int?)n.Logical); P(c, "ram", n.Ram); P(c, "id", id);
+        await c.ExecuteNonQueryAsync(ct);
+        await History(db, id, actor, "inventory", JsonSerializer.Serialize(new { source = "management controller" }), ct);
+    }
+
+    /// <summary>The hardware tables of the main read, with the management controller's on top (they describe the physical server better).</summary>
+    internal static JsonElement MergeHardware(string main, string bmc)
+    {
+        var m = System.Text.Json.Nodes.JsonNode.Parse(main) as System.Text.Json.Nodes.JsonObject ?? new();
+        if (System.Text.Json.Nodes.JsonNode.Parse(bmc) is System.Text.Json.Nodes.JsonObject b && b.Count > 0)
+        {
+            foreach (var (k, v) in b.ToList())
+            {
+                if (k is "platform") continue;
+                var key = k == "api" && m.ContainsKey("api") ? "bmc_api" : k == "host_state" && m.ContainsKey("host_state") ? "bmc_state" : k;
+                b.Remove(k); m[key] = v;
+            }
+        }
+        return JsonSerializer.SerializeToElement(m);
+    }
+
     const string DeviceSql = @"select a.id, a.tag, a.name, a.status, a.category, a.company_id, c.name, a.manufacturer, a.model, a.serial, a.bios_version,
         a.cpu_make, a.cpu_model, a.cpu_socket, a.total_cpu, a.cpu_cores, a.cores_per_cpu, a.logical_processors, a.ram_bytes, a.total_storage_bytes,
         a.hostname, a.dns_name, a.ip_address, a.domain_type, a.domain_workgroup, a.os_family, a.os_name, a.os_version, a.antivirus_status, a.antivirus, a.last_patch_date,
@@ -98,7 +141,7 @@ public static class AssetsDevice
         exists (select 1 from assets.amc m where m.asset_ids @> to_jsonb(a.id) and (m.end_date is null or m.end_date >= current_date)),
         (select m.title from assets.amc m where m.asset_ids @> to_jsonb(a.id) and (m.end_date is null or m.end_date >= current_date) order by m.end_date desc nulls first limit 1),
         exists (select 1 from assets.rentals m where m.asset_ids @> to_jsonb(a.id) and (m.end_date is null or m.end_date >= current_date)),
-        a.hw_extra::text, a.monitor, a.collector_id, coalesce(col.name, ''), a.read_req, a.check_up, a.checked_at
+        a.hw_extra::text, a.monitor, a.collector_id, coalesce(col.name, ''), a.read_req, a.check_up, a.checked_at, a.bmc_extra::text, a.bmc_address, a.bmc_at
         from assets.assets a left join assets.companies c on c.id = a.company_id left join assets.collectors col on col.id = a.collector_id where a.id = @i";
 
     static async Task<object?> Device(NpgsqlConnection db, long id, int offlineSec, CancellationToken ct)
@@ -120,8 +163,8 @@ public static class AssetsDevice
             ownership = new { location = S(37), assignedTo = S(38), purchaseDate = Dt(39), warrantyEnd = Dt(40), underAmc = r.GetBoolean(46), amc = S(47), rented = r.GetBoolean(48), notes = S(41) },
             remote = new { assetAllows = r.GetBoolean(32), companyAllows = r.GetBoolean(45) },
             storage = Clone(r.GetString(42)), network = Clone(r.GetString(43)), connectedIps = Clone(r.GetString(44)),
-            hardware = Clone(r.GetString(49)),
-            watch = new { mode = S(50), collectorId = S(51), collector = S(52), readRequested = r.GetBoolean(53), up = r.IsDBNull(54) ? (bool?)null : r.GetBoolean(54), checkedAt = T(55) }
+            hardware = MergeHardware(r.GetString(49), r.GetString(56)),
+            watch = new { mode = S(50), collectorId = S(51), collector = S(52), readRequested = r.GetBoolean(53), up = r.IsDBNull(54) ? (bool?)null : r.GetBoolean(54), checkedAt = T(55), bmc = S(57), bmcReadAt = T(58) }
         };
     }
 

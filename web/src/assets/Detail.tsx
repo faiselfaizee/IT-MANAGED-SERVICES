@@ -15,7 +15,7 @@ const TABS = [
 /** The Hardware tab appears for devices a controller reads in depth (VMware today). */
 function tabsFor(d: Rec): (readonly [string, string])[] {
   const hw = d.hardware && Object.keys(d.hardware).length > 0;
-  if (!hw && d.watch?.mode !== 'vmware') return [...TABS];
+  if (!hw && !['vmware', 'bmc'].includes(d.watch?.mode) && !d.watch?.bmc) return [...TABS];
   const t: (readonly [string, string])[] = [...TABS]; t.splice(3, 0, ['hardware', 'Hardware']); return t;
 }
 
@@ -74,7 +74,7 @@ function Overview({ id, d, reload, admin }: { id: string; d: Rec; reload: () => 
       {!a.id && <AgentInstall id={id} onDone={reload} />}
       {a.id && <AgentUpdate id={id} admin={admin} onDone={reload} />}
     </Card>
-    {admin && !a.id && <Watch id={id} d={d} onChange={reload} />}
+    {admin && <Watch id={id} d={d} onChange={reload} />}
   </div>;
 }
 

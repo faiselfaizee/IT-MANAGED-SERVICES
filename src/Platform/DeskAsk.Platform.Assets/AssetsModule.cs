@@ -225,6 +225,10 @@ public sealed class AssetsSchema : ITenantSchema
         new(13, "hardware read by a controller (VMware, later servers and network gear) and read now", @"
             alter table assets.assets add column if not exists hw_extra jsonb not null default '{}';
             alter table assets.assets add column if not exists read_req boolean not null default false"),
+        new(14, "a server's management controller (iLO, iDRAC, XClarity) read beside the main read", @"
+            alter table assets.assets add column if not exists bmc_address text not null default '';
+            alter table assets.assets add column if not exists bmc_extra jsonb not null default '{}';
+            alter table assets.assets add column if not exists bmc_at timestamptz"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {

@@ -208,7 +208,10 @@ func TestVMwareWrongPasswordIsExplained(t *testing.T) {
 }
 
 func TestVMwareNotAVsphereAddress(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) { w.WriteHeader(404); fmt.Fprint(w, "<html>not here</html>") }))
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
+		w.WriteHeader(404)
+		fmt.Fprint(w, "<html>not here</html>")
+	}))
 	defer srv.Close()
 	_, err := VMwareInventory(context.Background(), srv.URL, "a", "b")
 	if err == nil || !strings.Contains(err.Error(), "VMware") {
