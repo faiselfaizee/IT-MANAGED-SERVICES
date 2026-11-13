@@ -90,3 +90,10 @@ A running WinRM service is not the same as remoting being ready. Before it start
 
 ## Updating the controller
 From v2.8.4 on the controller updates itself: when the server holds a newer `agent-dist` build than the controller reports, the controller downloads it over its own connection, checks that it starts, swaps it and restarts; it goes back to the old program if the new one never checks in. A controller installed before that (v2.7.0 or v2.8.x) has to be upgraded once by hand: Assets > Agents & collectors > the controller's install commands > "Upgrade an existing install". The version shown on that page tells which build it runs.
+
+## "The WinRM client cannot process the request"
+This is the TrustedHosts error. Windows only uses Kerberos when it connects by computer name inside a domain; connecting by IP address, or to a computer outside the domain, needs the target in the connecting computer's TrustedHosts list (or HTTPS on port 5986). From v2.8.6 the controller adds the target to its own TrustedHosts list and tries again (it runs as SYSTEM). Discover > Fetch details runs on the DeskAsk server, which first tries the computer name found by reverse DNS; if that fails, run on the DeskAsk server as administrator:
+
+    Set-Item WSMan:\localhost\Client\TrustedHosts -Value '192.168.31.*' -Concatenate -Force
+
+For a local account on the target, enter the user as `COMPUTERNAME\Administrator`, and on the target allow remote admin rights for local accounts (`winrm quickconfig` does this with LocalAccountTokenFilterPolicy).

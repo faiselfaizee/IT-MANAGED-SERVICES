@@ -109,6 +109,40 @@ public static class DiscoveryApi
     }
     const string WinRm = "$ErrorActionPreference='Stop'\n$sec=ConvertTo-SecureString $env:DK_PW -AsPlainText -Force; $cred=New-Object System.Management.Automation.PSCredential($env:DK_USER,$sec)\n$o=@{ComputerName=$env:DK_HOST;Credential=$cred;FilePath=$env:DK_SCRIPT;ErrorAction='Stop'}\nif($env:DK_SSL -eq '1'){$o.UseSSL=$true;$o.SessionOption=New-PSSessionOption -SkipCACheck -SkipCNCheck}\nInvoke-Command @o";
 
+    /// <summary>Turns powershell.exe error output (CLIXML or console text wrapped over several lines) into one readable sentence.</summary>
+    public static string CleanError(string err)
+    {
+        var s = err ?? "";
+        if (s.Contains("CLIXML"))
+        {
+            var parts = System.Text.RegularExpressions.Regex.Matches(s, "<S S=\"Error\">(.*?)</S>", System.Text.RegularExpressions.RegexOptions.Singleline).Select(m => m.Groups[1].Value);
+            s = string.Concat(parts);
+            s = System.Text.RegularExpressions.Regex.Replace(s, "_x([0-9A-Fa-f]{4})_", m => ((char)Convert.ToInt32(m.Groups[1].Value, 16)).ToString());
+            s = System.Net.WebUtility.HtmlDecode(s);
+        }
+        var lines = s.Split('\n').Select(l => l.Trim()).Where(l => l != "" && !l.StartsWith("+ ") && !l.StartsWith("At line:") && !l.StartsWith("CategoryInfo") && !l.StartsWith("FullyQualifiedErrorId")).ToList();
+        s = string.Join(" ", lines);
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"^\[[^\]]*\]\s*Connecting to remote server \S+ failed with the following error message\s*:\s*", "");
+        var cut = s.IndexOf("For more information, see the about_Remote_Troubleshooting", StringComparison.OrdinalIgnoreCase); if (cut > 0) s = s[..cut];
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
+        return s == "" ? "unknown error" : AgentsApi.Clip(s, 600);
+    }
+
+    /// <summary>Adds what to do next for the usual WinRM failures. <paramref name="from"/> names the computer that runs the remoting.</summary>
+    public static string WinHint(string msg, string from)
+    {
+        var m = msg.ToLowerInvariant();
+        if (m.Contains("access is denied") || m.Contains("logon failure") || m.Contains("user name or password"))
+            return msg + " - the login was refused: use an account in the target's Administrators group (DOMAIN\\user, or COMPUTER\\user for a local account).";
+        if (m.Contains("trustedhosts") || m.Contains("kerberos") || m.Contains("cannot process the request"))
+            return msg + " - the target is reached by IP address or is outside the domain, so Windows needs it listed as trusted: on " + from + " run as administrator  Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value '<address or name>' -Concatenate -Force";
+        if (m.Contains("cannot be resolved") || m.Contains("network path was not found"))
+            return msg + " - the name cannot be found from " + from + ": use the IP address or fix DNS.";
+        if (m.Contains("winrm") || m.Contains("cannot connect"))
+            return msg + " - run  Enable-PSRemoting -Force  on the target and check its firewall allows port 5985 from " + from + ".";
+        return msg;
+    }
+
     static JsonElement ParseCollected(string o)
     {
         var t = o.Trim(); var i = t.LastIndexOf("\n{", StringComparison.Ordinal); var s = i >= 0 ? t[(i + 1)..] : t;
@@ -125,14 +159,22 @@ public static class DiscoveryApi
             try
             {
                 await File.WriteAllTextAsync(script, Resource("collect-windows.ps1"));
-                var env = new Dictionary<string, string> { ["DK_HOST"] = host, ["DK_USER"] = username, ["DK_PW"] = secret, ["DK_SCRIPT"] = script };
-                var r = await Exec("powershell.exe", new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", WinRm }, 180000, env);
-                if (!r.Ok)
+                // A host name lets Kerberos work between domain computers; an IP address needs TrustedHosts or HTTPS.
+                var names = new List<string>();
+                if (System.Net.IPAddress.TryParse(host, out _))
                 {
-                    var line = r.Err.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l != "") ?? "unknown error";
-                    throw new InvalidOperationException("WinRM failed: " + AgentsApi.Clip(line, 300) + ". Check that WinRM is enabled (winrm quickconfig) and the account is an administrator.");
+                    try { var n = (await System.Net.Dns.GetHostEntryAsync(host)).HostName; if (!string.IsNullOrWhiteSpace(n) && n != host) names.Add(n); } catch { }
                 }
-                return ParseCollected(r.Out);
+                names.Add(host);
+                string last = "unknown error";
+                foreach (var name in names)
+                {
+                    var env = new Dictionary<string, string> { ["DK_HOST"] = name, ["DK_USER"] = username, ["DK_PW"] = secret, ["DK_SCRIPT"] = script };
+                    var r = await Exec("powershell.exe", new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", WinRm }, 180000, env);
+                    if (r.Ok) return ParseCollected(r.Out);
+                    last = "WinRM to " + name + " as " + username + " failed: " + WinHint(CleanError(r.Err), "the DeskAsk server");
+                }
+                throw new InvalidOperationException(last);
             }
             finally { try { File.Delete(script); } catch { } }
         }

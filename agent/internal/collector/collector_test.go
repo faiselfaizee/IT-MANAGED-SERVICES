@@ -323,3 +323,16 @@ func TestUpdateGuardGoesBackAfterThreeStartsWithoutACheckIn(t *testing.T) {
 		t.Fatal("the failed version was not remembered")
 	}
 }
+
+func TestNeedsTrustSpotsTheTrustedHostsError(t *testing.T) {
+	msg := "The WinRM client cannot process the request. If the authentication scheme is different from Kerberos, or if the client computer is not joined to a domain, then HTTPS transport must be used or the destination machine must be added to the TrustedHosts configuration setting."
+	if !needsTrust(msg) {
+		t.Fatal("TrustedHosts error not recognised")
+	}
+	if needsTrust("Access is denied.") {
+		t.Fatal("access denied is not a TrustedHosts error")
+	}
+	if !strings.Contains(WinHint(msg), "TrustedHosts -Value") {
+		t.Fatal("hint missing")
+	}
+}

@@ -167,6 +167,10 @@ func winRemote(ctx context.Context, c config.Cred, host, script string, timeout 
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	return winRemoteOnce(ctx, c, host, script, ssl, false)
+}
+
+func winRemoteOnce(ctx context.Context, c config.Cred, host, script string, ssl, retried bool) (string, error) {
 	cmd := exec.CommandContext(ctx, "powershell.exe", inventory.PowerShellArgs(remoteWrapper)...)
 	cmd.Env = append(os.Environ(), "DK_HOST="+host, "DK_SCRIPT="+script, "DK_USER="+c.User, "DK_PW="+c.Password)
 	if ssl {
@@ -179,6 +183,13 @@ func winRemote(ctx context.Context, c config.Cred, host, script string, timeout 
 		if msg == "" {
 			msg = err.Error()
 		}
+		// Reaching a computer by IP address, or one outside the domain, needs it in TrustedHosts.
+		// The collector runs as SYSTEM, so it adds the target once and tries again.
+		if c.User != "" && !retried && needsTrust(CleanCLIXML(msg)) {
+			if terr := trustHost(ctx, host); terr == nil {
+				return winRemoteOnce(ctx, c, host, script, ssl, true)
+			}
+		}
 		who := c.User
 		if who == "" {
 			who = "the collector's own account (no Windows login is saved for this computer)"
@@ -186,6 +197,22 @@ func winRemote(ctx context.Context, c config.Cred, host, script string, timeout 
 		return out.String(), fmt.Errorf("PowerShell remoting to %s as %s: %s", host, who, WinHint(CleanCLIXML(msg)))
 	}
 	return out.String(), nil
+}
+
+func needsTrust(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "trustedhosts") || strings.Contains(m, "cannot process the request")
+}
+
+const trustScript = `$h=$env:DK_HOST; $cur=[string](Get-Item WSMan:\localhost\Client\TrustedHosts).Value
+if($cur -eq '*' -or (($cur -split ',') | ForEach-Object { $_.Trim() }) -contains $h){ exit 0 }
+Set-Item WSMan:\localhost\Client\TrustedHosts -Value $h -Concatenate -Force`
+
+// trustHost adds one computer to this computer's WinRM TrustedHosts list (needs administrator rights).
+func trustHost(ctx context.Context, host string) error {
+	cmd := exec.CommandContext(ctx, "powershell.exe", inventory.PowerShellArgs(trustScript)...)
+	cmd.Env = append(os.Environ(), "DK_HOST="+host)
+	return cmd.Run()
 }
 
 // winCreds returns the saved Windows logins for an address, or one empty login (the collector's own account) when none is saved.
@@ -270,8 +297,8 @@ func WinHint(msg string) string {
 	switch {
 	case strings.Contains(m, "access is denied") || strings.Contains(m, "logon failure") || strings.Contains(m, "unknown user name"):
 		return msg + " - the login was refused: save a Windows login with administrator rights under Assets > Credentials (use DOMAIN\\user for domain accounts)"
-	case strings.Contains(m, "trustedhosts") || strings.Contains(m, "kerberos"):
-		return msg + " - the computer is not in the domain: on the collector's computer run  Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value '<computer>' -Force  (or install by hand or Group Policy)"
+	case strings.Contains(m, "trustedhosts") || strings.Contains(m, "kerberos") || strings.Contains(m, "cannot process the request"):
+		return msg + " - the target is reached by IP address or is outside the domain and could not be added to TrustedHosts automatically: on the collector's computer run as administrator  Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value '<address or name>' -Concatenate -Force"
 	case strings.Contains(m, "winrm") || strings.Contains(m, "connecting to remote server") || strings.Contains(m, "cannot connect"):
 		return msg + " - the collector reached the WinRM port but PowerShell remoting did not start: run  Enable-PSRemoting -Force  on that computer, check that it accepts the login's account (administrators group) and that the date and time are right on both computers"
 	}
