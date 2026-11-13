@@ -3,6 +3,7 @@ import { whoAmI, type WhoAmI } from './api';
 import { signOut } from './auth';
 import { LOOKS, currentLook, setLook } from './look';
 import { Icon, Logo } from './chrome';
+import { Ring } from './Rings';
 import { useHash, useLoad, type Rec } from './http';
 
 export const MODULES = ['Service Desk', 'Assets', 'Monitoring', 'AD Manager', 'Vault', 'Backup'];
@@ -21,38 +22,59 @@ const Mail = lazy(() => import('./Mail'));
 const Updates = lazy(() => import('./Updates'));
 const ServiceDeskApp = lazy(() => import('./servicedesk/ServiceDeskApp'));
 
-function Home({ who, live, assets }: { who: WhoAmI | null; live: boolean; assets: boolean }) {
+export function Home({ who, live, assets }: { who: WhoAmI | null; live: boolean; assets: boolean }) {
   const sum = useLoad<Rec>(live && assets ? '/api/assets/summary' : null);
   const s = sum.data;
   const desk = useLoad<Rec>(live ? '/api/servicedesk/summary' : null);
+  const d = desk.data;
+  const ag = (s?.agents ?? {}) as Rec, co = (s?.compliance ?? {}) as Rec, wa = (s?.warranty ?? {}) as Rec;
+  const n = (v: unknown) => Number(v ?? 0);
+  const openAll = d ? n(d.open) + n(d.progress) + n(d.hold) : 0;
   return <>
     <header className="hero">
       {who ? <h1>Welcome, {who.name}</h1> : <h1>&nbsp;</h1>}
       <p>Your IT operations in one place.</p>
     </header>
     <div className="tiles">
-      {assets && <a className="tile tile-main" href="#/assets">
-        <span className="chip"><Icon name="Assets" size={22} /></span>
-        <h2>Assets</h2>
-        <p className="muted">Every device, licence and contract, with QR labels, agents and discovery.</p>
-        {s ? <dl className="stats">
-          <div><dt>Assets</dt><dd>{s.total ?? 0}</dd></div>
-          <div><dt>In use</dt><dd>{s.byStatus?.in_use ?? 0}</dd></div>
-          <div><dt>Warranty ends within 30 days</dt><dd>{s.warrantyEndsIn30Days ?? 0}</dd></div>
-        </dl> : null}
-        <span className="open">Open Assets</span>
-      </a>}
-      <a className="tile tile-main" href="#/servicedesk">
-        <span className="chip"><Icon name="Service Desk" size={22} /></span>
-        <h2>Service Desk</h2>
-        <p className="muted">Tickets with service levels, customer sign-in and a full conversation history.</p>
-        {desk.data ? <dl className="stats">
-          <div><dt>Open</dt><dd>{(desk.data.open ?? 0) + (desk.data.progress ?? 0)}</dd></div>
-          <div><dt>Unassigned</dt><dd>{desk.data.unassigned ?? 0}</dd></div>
-          <div><dt>Overdue</dt><dd>{desk.data.overdue ?? 0}</dd></div>
-        </dl> : null}
-        <span className="open">Open Service Desk</span>
-      </a>
+      {assets && <section className="tile tile-wide" aria-labelledby="t-assets">
+        <div className="tile-head"><span className="chip"><Icon name="Assets" size={22} /></span>
+          <div><h2 id="t-assets"><a href="#/assets">Assets</a></h2><p className="muted">{s ? `${n(s.total)} assets, ${n(s.total) - n(s.byStatus?.retired) - n(s.byStatus?.lost)} in service` : 'Every device, licence and contract'}</p></div>
+          <a className="open" href="#/assets">Open Assets</a></div>
+        {s && <div className="rings">
+          <Ring title="Agents" unit="devices" empty="No devices in service yet." parts={[
+            { key: 'on', label: 'Live', value: n(ag.online), tone: 'ok', href: '#/assets?agent=online' },
+            { key: 'due', label: 'Live, update due', value: n(ag.updateDue), tone: 'warn', href: '#/assets?agent=update' },
+            { key: 'off', label: 'Not reporting', value: n(ag.offline), tone: 'bad', href: '#/assets?agent=offline' },
+            { key: 'none', label: 'No agent', value: n(ag.none), tone: 'none', href: '#/assets?agent=none' }]} />
+          <Ring title="Compliance" unit="with agent" empty="No device reports through an agent yet." parts={[
+            { key: 'c', label: 'Compliant', value: n(co.compliant), tone: 'ok' },
+            { key: 'nc', label: 'Not compliant', value: n(co.nonCompliant), tone: 'bad' },
+            { key: 'u', label: 'No data yet', value: n(co.unknown), tone: 'none' }]} />
+          <Ring title="Warranty" unit="devices" empty="No devices in service yet." parts={[
+            { key: 'ok', label: 'Covered', value: n(wa.covered), tone: 'ok' },
+            { key: 'soon', label: 'Ends within 30 days', value: n(wa.endingSoon), tone: 'warn' },
+            { key: 'x', label: 'Expired', value: n(wa.expired), tone: 'bad' },
+            { key: 'u', label: 'Not recorded', value: n(wa.unknown), tone: 'none' }]} />
+        </div>}
+        {s && n(co.nonCompliant) > 0 && <p className="muted tile-foot">Compliant means antivirus on and patches from the last 30 days. {n(co.antivirusOff)} with antivirus off, {n(co.patchesOlderThan30Days)} with older patches.</p>}
+      </section>}
+      <section className="tile tile-wide" aria-labelledby="t-desk">
+        <div className="tile-head"><span className="chip"><Icon name="Service Desk" size={22} /></span>
+          <div><h2 id="t-desk"><a href="#/servicedesk">Service Desk</a></h2><p className="muted">{d ? `${openAll} open tickets, ${n(d.unassigned)} unassigned` : 'Tickets with service levels and customer sign-in'}</p></div>
+          <a className="open" href="#/servicedesk">Open Service Desk</a></div>
+        {d && <div className="rings">
+          <Ring title="Open tickets" unit="open" empty="No open tickets." parts={[
+            { key: 'o', label: 'New', value: n(d.open), tone: 'info', href: '#/servicedesk' },
+            { key: 'p', label: 'In progress', value: n(d.progress), tone: 'ok', href: '#/servicedesk' },
+            { key: 'h', label: 'Awaiting customer', value: n(d.hold), tone: 'none', href: '#/servicedesk' }]} />
+          <Ring title="Service level" unit="open" empty="No open tickets." parts={[
+            { key: 'in', label: 'On time', value: Math.max(openAll - n(d.overdue), 0), tone: 'ok' },
+            { key: 'late', label: 'Overdue', value: n(d.overdue), tone: 'bad' }]} />
+          <Ring title="Closed" unit="tickets" empty="No tickets solved yet." parts={[
+            { key: 'r', label: 'Resolved', value: n(d.resolved), tone: 'ok' },
+            { key: 'c', label: 'Closed', value: n(d.closed), tone: 'none' }]} />
+        </div>}
+      </section>
       {MODULES.filter((m) => m !== 'Assets' && m !== 'Service Desk').map((m) => <div key={m} className="tile tile-soon" aria-disabled="true">
         <span className="chip"><Icon name={m} size={22} /></span>
         <h2>{m}</h2>

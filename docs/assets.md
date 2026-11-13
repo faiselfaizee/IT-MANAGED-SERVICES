@@ -146,3 +146,20 @@ These logins are only stored for now. The controller does not receive them yet; 
 ### RustDesk set-up stays on "working…" and nothing starts on the computer
 
 Only agents of version **2.9.0 or newer** can run the RustDesk set-up. An older agent ignores the request without a word, so the page keeps waiting and nothing appears in Task Manager. From v2.9.2 the server refuses to start the set-up for an older agent and says which version it found; the RustDesk page also shows the agent version, and warns while no agent has answered. The agent updates itself within a minute or two when the server holds a newer build (the `.dkb` update carries it). If the agent is 2.9.0 or newer, the first line in the log is "The agent (version …) picked up the request"; if that line is missing, the agent is offline or old, and if the log stops after the download line, send me the log.
+
+## v2.9.3: RustDesk install fix, agents restart themselves after an update, agent state everywhere
+
+**RustDesk "WaitDelay expired before I/O complete".** RustDesk's silent installer starts `rustdesk.exe` and ends; the new program kept the installer's output open, so the agent waited for it and reported a failure although the install had worked. The agent now writes the installer output to a file and no longer waits for programs the installer leaves running.
+
+**Agents that only updated after a restart.** After an update the agent ends so that the new program starts. On Windows it runs as a scheduled task, and Task Scheduler's "restart on failure" only covers a task that fails to *start*, not a program that ends; so the agent stayed stopped until the computer restarted. Now:
+- the agent asks Windows to start it again about ten seconds after it ends, and is back within about 15 seconds;
+- the scheduled task also has a five-minute watchdog trigger, so a stopped agent or controller starts again by itself;
+- agents and controllers installed before 2.9.3 add the watchdog to their own task the first time 2.9.3 runs.
+
+Agents still on 2.8.6 that are stopped will start at the next computer restart (or run `schtasks /Run /TN DeskAskAgent` as administrator on that computer), then update themselves to 2.9.3; from then on they restart on their own.
+
+**Agent state on the asset list.** The Status column (in use, stock…) is replaced by **Agent**: Online or Offline, the version, and *update due* when the server holds a newer agent; "No agent" otherwise. The list can be filtered by agent state.
+
+**Update agent from the asset page.** The agent card shows the version and, when an update is due, **Update agent now** with a live log. It also retries a version the agent tried before and put back. Agents from 2.9.3 report every step (download, start check, swap, restart); an older agent only shows up again with the new version, which closes the log. An offline agent cannot be asked; the page says so.
+
+**Home page.** Each product has rings: Assets shows Agents (live, live with update due, not reporting, no agent), Compliance (antivirus on and patches from the last 30 days; not compliant; no data yet) and Warranty; Service Desk shows open tickets, service level (on time, overdue) and closed tickets. Every count is also written beside its ring in one aligned column, and the agent rows open the asset list filtered to that state. Planned products keep their tiles until they exist.

@@ -229,3 +229,36 @@ html[data-look='compact'] h1 { font-size: 21px; margin-bottom: 10px; }
 
 /* credential list: one heading row per customer */
 table tr.group th { background: var(--surface-2, #f1f3f5); text-align: left; font-weight: 600; padding-top: 10px; }
+
+/* home: one wide tile per product with rings; every count is also text in an aligned column */
+.tile-wide { grid-column: 1 / -1; min-height: 0; }
+.tile-head { display: flex; align-items: center; gap: 14px; }
+.tile-head > div { flex: 1; min-width: 0; } .tile-head h2 { margin: 0; } .tile-head h2 a { color: inherit; }
+.tile-head .open { margin-left: auto; white-space: nowrap; }
+.tile-foot { margin: 4px 0 0; font-size: 13px; }
+.rings { display: grid; gap: 18px 28px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin-top: 12px; }
+.ring { margin: 0; }
+.ring figcaption { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+.ring-body { display: flex; align-items: center; gap: 16px; }
+.ring svg { flex: none; overflow: visible; }
+.ring-track { stroke: color-mix(in srgb, var(--muted) 18%, transparent); }
+.ring-arc { transition: stroke-width .15s, opacity .15s; cursor: default; }
+.ring-arc.dim { opacity: .35; }
+.tone-ok { stroke: var(--ok); background: var(--ok); } .tone-warn { stroke: var(--warn); background: var(--warn); }
+.tone-bad { stroke: var(--bad); background: var(--bad); } .tone-info { stroke: var(--info); background: var(--info); }
+.tone-none { stroke: color-mix(in srgb, var(--muted) 55%, transparent); background: color-mix(in srgb, var(--muted) 55%, transparent); }
+.ring-total { font: 600 24px var(--font-display); fill: var(--ink); font-variant-numeric: tabular-nums; }
+.ring-unit { font-size: 10.5px; fill: var(--muted); }
+.ring-legend { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 0; display: grid; gap: 2px; }
+.ring-legend li > a, .ring-legend li > span { display: grid; grid-template-columns: 10px 1fr auto; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 6px; color: var(--ink); }
+.ring-legend li > a:hover, .ring-legend li.hot > * { background: color-mix(in srgb, var(--muted) 12%, transparent); text-decoration: none; }
+.ring-legend .dot { width: 10px; height: 10px; border-radius: 50%; }
+.ring-legend .name { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ring-legend .num { font-variant-numeric: tabular-nums; text-align: right; font-size: 15px; min-width: 3ch; }
+.ring-empty { font-size: 13px; margin: 6px 0 0; }
+/* the old row of figures: numbers on one line whatever the label length */
+.stats div { display: flex; flex-direction: column-reverse; justify-content: flex-end; }
+@media (max-width: 640px) {
+  .tile-head { flex-wrap: wrap; } .tile-head .open { flex-basis: 100%; margin-left: 58px; }
+  .ring-legend .name { white-space: normal; }
+}

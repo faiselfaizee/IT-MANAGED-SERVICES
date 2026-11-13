@@ -1,7 +1,6 @@
 package agentrun
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -64,19 +63,30 @@ func defaultRdEnv() rdEnv {
 	}
 }
 
-// rdRun runs a program and returns what it printed.
+// rdRun runs a program and returns what it printed. The output goes to a file, not a pipe: RustDesk's installer starts
+// rustdesk.exe, which inherits the output handles and keeps running, so waiting for a pipe to close would never end
+// ("WaitDelay expired before I/O complete") even though the installer itself finished well.
 func rdRun(ctx context.Context, limit time.Duration, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
+	f, err := os.CreateTemp("", "deskask-rd-*.log")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
 	cmd := exec.CommandContext(ctx, name, args...)
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.Stdout, cmd.Stderr = f, f
 	killTree(cmd)
-	err := cmd.Run()
+	err = cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil // the program itself ended with success; only a child it left running still holds the output
+	}
 	if ctx.Err() != nil {
 		err = fmt.Errorf("stopped after %s", limit)
 	}
-	return strings.TrimSpace(out.String()), err
+	b, _ := os.ReadFile(f.Name())
+	return strings.TrimSpace(string(b)), err
 }
 
 type rdLogger func(level, format string, a ...any)

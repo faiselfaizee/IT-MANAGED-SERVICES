@@ -154,6 +154,8 @@ type Runner struct {
 
 	// Exit ends the program so the service manager starts it again (replaced in tests).
 	Exit func(code int)
+	// RestartSoon asks the system to start the program again after it ends (Windows); nil in tests.
+	RestartSoon func() error
 
 	cl       *client.Client
 	mu       sync.Mutex
@@ -168,7 +170,7 @@ type Runner struct {
 }
 
 func NewRunner(cfg config.Collector, version string) *Runner {
-	return &Runner{Cfg: cfg, Version: version, Exit: os.Exit, InventoryEvery: 6 * time.Hour, ScanEvery: 24 * time.Hour, lastInv: map[string]time.Time{},
+	return &Runner{Cfg: cfg, Version: version, Exit: os.Exit, RestartSoon: svc.Collector.RestartSoon, InventoryEvery: 6 * time.Hour, ScanEvery: 24 * time.Hour, lastInv: map[string]time.Time{},
 		wake: make(chan struct{}, 1), deploying: map[string]bool{},
 		cl: &client.Client{Server: cfg.Server, IDHeader: "X-Collector-Id", ID: cfg.CollectorID, Key: cfg.Key}}
 }
@@ -183,7 +185,12 @@ func (r *Runner) logf(level, format string, a ...any) {
 
 // Run checks in with the platform again and again until ctx ends.
 func (r *Runner) Run(ctx context.Context) error {
-	checkUpdateGuard(r.Version, r.Exit)
+	checkUpdateGuard(r.Version, r.restart)
+	go func() { // tasks made by controllers before 2.9.3 have no watchdog: add it once
+		if err := svc.Collector.EnsureWatchdog(); err != nil {
+			log.Printf("watchdog: %v", err)
+		}
+	}()
 	go r.wakeLoop(ctx)
 	failures := 0
 	for ctx.Err() == nil {

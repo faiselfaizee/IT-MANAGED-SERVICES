@@ -80,6 +80,7 @@ type message struct {
 	Body    string    `json:"body"`
 	Timeout int       `json:"timeout"`
 	Version string    `json:"version"`
+	Force   bool      `json:"force"`
 	RD      *rdConfig `json:"rd"`
 }
 
@@ -89,6 +90,8 @@ type Runner struct {
 	Version string
 	// Exit ends the program (so the service manager restarts it); replaced in tests.
 	Exit func(code int)
+	// RestartSoon asks the system to start the program again after it ends (Windows); nil in tests.
+	RestartSoon func() error
 
 	cl         *client.Client
 	mu         sync.Mutex
@@ -98,7 +101,7 @@ type Runner struct {
 }
 
 func NewRunner(cfg config.Agent, version string) *Runner {
-	return &Runner{Cfg: cfg, Version: version, Exit: os.Exit, cancels: map[string]context.CancelFunc{}, collectNow: make(chan struct{}, 1),
+	return &Runner{Cfg: cfg, Version: version, Exit: os.Exit, RestartSoon: svc.Agent.RestartSoon, cancels: map[string]context.CancelFunc{}, collectNow: make(chan struct{}, 1),
 		cl: &client.Client{Server: cfg.Server, IDHeader: "X-Agent-Id", ID: cfg.AgentID, Key: cfg.Key}}
 }
 
@@ -106,7 +109,12 @@ func NewRunner(cfg config.Agent, version string) *Runner {
 var InventoryEvery = 6 * time.Hour
 
 func (r *Runner) Run(ctx context.Context) error {
-	checkUpdateGuard(r.Version, r.Exit)
+	checkUpdateGuard(r.Version, r.restart)
+	go func() { // tasks made by agents before 2.9.3 have no watchdog: add it once
+		if err := svc.Agent.EnsureWatchdog(); err != nil {
+			log.Printf("watchdog: %v", err)
+		}
+	}()
 	go r.inventoryLoop(ctx)
 	failures := 0
 	for ctx.Err() == nil {
@@ -162,7 +170,7 @@ func (r *Runner) handle(ctx context.Context, m message) {
 		default:
 		}
 	case "update":
-		go r.update(ctx, m.Version)
+		go r.update(ctx, m.Version, m.Force)
 	case "rdsetup":
 		go r.rdSetup(ctx, m.RD, defaultRdEnv())
 	case "rdremove":
@@ -238,7 +246,7 @@ func (r *Runner) SendInventory(ctx context.Context) error {
 		return err
 	}
 	if out.Update != nil && out.Update.Version != "" {
-		go r.update(ctx, out.Update.Version)
+		go r.update(ctx, out.Update.Version, false)
 	}
 	return nil
 }

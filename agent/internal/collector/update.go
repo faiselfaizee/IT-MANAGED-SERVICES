@@ -45,7 +45,17 @@ func (r *Runner) selfUpdate(ctx context.Context, version string) {
 	}
 	r.logf("info", "updated to %s; restarting", version)
 	r.flushNow(ctx)
-	r.Exit(3) // a non-zero exit makes the service manager start the new program
+	r.restart(3)
+}
+
+// restart ends the program and makes sure it starts again: Windows' scheduled task does not restart a program that ended.
+func (r *Runner) restart(code int) {
+	if r.RestartSoon != nil {
+		if err := r.RestartSoon(); err != nil {
+			log.Printf("could not schedule the restart (the five-minute watchdog will start the controller): %v", err)
+		}
+	}
+	r.Exit(code)
 }
 
 func (r *Runner) applyUpdate(ctx context.Context, version string) error {

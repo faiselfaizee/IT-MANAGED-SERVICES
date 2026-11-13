@@ -214,6 +214,14 @@ public sealed class AssetsSchema : ITenantSchema
             alter table assets.creds add column if not exists vendor text not null default '';
             alter table assets.creds add column if not exists notes text not null default '';
             create index if not exists creds_company_category on assets.creds (company_id, category)"),
+        new(12, "update an agent from the asset page with a live log", @"
+            alter table assets.agents add column if not exists upd_state text not null default '';
+            alter table assets.agents add column if not exists upd_to text not null default '';
+            alter table assets.agents add column if not exists upd_at timestamptz;
+            create table if not exists assets.agent_upd_log (
+              id bigserial primary key, agent_id text not null references assets.agents(id) on delete cascade, at timestamptz not null default now(),
+              level text not null default 'info', text text not null default '');
+            create index if not exists agent_upd_log_a on assets.agent_upd_log (agent_id, id)"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -428,6 +436,7 @@ public sealed class AssetsModule : IPlatformModule
         CollectorsApi.Map(r, Key);
         ExtrasApi.Map(r, Key);
         AssetExport.Map(r, Key);
+        AgentUpdateApi.Map(r, Key);
         RenewalsApi.Map(r, Key);
 
         // ---- types
@@ -490,7 +499,7 @@ public sealed class AssetsModule : IPlatformModule
         }));
 
         // ---- assets: list, one, summary
-        anyone(r.MapGet("/api/assets", async (HttpContext http, ITenantContext t, CancellationToken ct) =>
+        anyone(r.MapGet("/api/assets", async (HttpContext http, ITenantContext t, IConfiguration cfg, CancellationToken ct) =>
         {
             var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             var q = http.Request.Query;
@@ -499,16 +508,33 @@ public sealed class AssetsModule : IPlatformModule
             if (status != "" && !Statuses.Contains(status)) return Bad("bad_input", "status");
             take = take <= 0 ? 50 : Math.Min(take, 200); skip = Math.Max(skip, 0);
             await using var db = await Open(t, ct);
-            await using var c = new NpgsqlCommand($@"select {Cols}, count(*) over() from {From}
+            var agentF = q["agent"].ToString(); if (agentF is not ("" or "online" or "offline" or "none" or "update")) return Bad("bad_input", "agent must be online, offline, none or update");
+            var latest = AgentsApi.AgentVersion(cfg); var offSec = AgentsApi.Offline(cfg);
+            await using var c = new NpgsqlCommand($@"select {Cols}, count(*) over(), g.id, g.version, g.last_seen from {From} left join assets.agents g on g.id = a.agent_id and g.deleted_at is null
                 where (@q = '' or a.name ilike @l or a.tag ilike @l or a.serial ilike @l or a.model ilike @l or a.assigned_to ilike @l or a.location ilike @l)
                   and (@st = '' or a.status = @st) and (@ty = 0 or a.type_id = @ty) and (@as = '' or lower(a.assigned_to) = lower(@as))
                   and (not @sc or a.company_id = any(@scope))
+                  and (@ag = '' or (@ag = 'none' and g.id is null) or (@ag = 'online' and g.last_seen > now() - make_interval(secs => @off))
+                       or (@ag = 'offline' and g.id is not null and (g.last_seen is null or g.last_seen <= now() - make_interval(secs => @off)))
+                       or (@ag = 'update' and g.id is not null and @lv <> '' and g.version <> @lv))
                 order by a.id desc offset @sk limit @tk", db);
             AssetsAccess.Bind(c, scope);
             P(c, "q", search); P(c, "l", Like(search)); P(c, "st", status); P(c, "ty", typeId); P(c, "as", assigned); P(c, "sk", skip); P(c, "tk", take);
+            P(c, "ag", agentF); P(c, "off", (double)offSec); P(c, "lv", latest);
             var items = new List<object>(); long total = 0;
             await using (var rd = await c.ExecuteReaderAsync(ct))
-                while (await rd.ReadAsync(ct)) { items.Add(Row(rd)); total = rd.GetInt64(19); }
+                while (await rd.ReadAsync(ct))
+                {
+                    var row = System.Text.Json.JsonSerializer.SerializeToNode(Row(rd))!.AsObject(); total = rd.GetInt64(19);
+                    if (rd.IsDBNull(20)) row["agent"] = System.Text.Json.JsonSerializer.SerializeToNode(new { state = "none" });
+                    else
+                    {
+                        var seen = rd.IsDBNull(22) ? (DateTime?)null : rd.GetDateTime(22); var ver = rd.GetString(21);
+                        var online = seen != null && seen.Value > DateTime.UtcNow.AddSeconds(-offSec);
+                        row["agent"] = System.Text.Json.JsonSerializer.SerializeToNode(new { state = online ? "online" : "offline", version = ver, lastSeen = seen, updateDue = latest != "" && ver != "" && ver != latest, latest });
+                    }
+                    items.Add(row);
+                }
             if (items.Count == 0 && skip > 0)
             {
                 await using var cc = new NpgsqlCommand("select count(*) from assets.assets a where (not @sc or a.company_id = any(@scope))", db); AssetsAccess.Bind(cc, scope);
@@ -517,7 +543,7 @@ public sealed class AssetsModule : IPlatformModule
             return Results.Ok(new { total, items });
         }));
 
-        anyone(r.MapGet("/api/assets/summary", async (HttpContext http, ITenantContext t, CancellationToken ct) =>
+        anyone(r.MapGet("/api/assets/summary", async (HttpContext http, ITenantContext t, IConfiguration cfg, CancellationToken ct) =>
         {
             var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             await using var db = await Open(t, ct);
@@ -531,7 +557,36 @@ public sealed class AssetsModule : IPlatformModule
                 count(*) filter (where warranty_end >= current_date and warranty_end < current_date + 90), count(*) filter (where warranty_end < current_date)
                 from assets.assets where status not in ('retired','lost') and warranty_end is not null and (not @sc or company_id = any(@scope))", db).Scoped(scope))
             await using (var rd = await c.ExecuteReaderAsync(ct)) { await rd.ReadAsync(ct); (w30, w90, expired) = (rd.GetInt64(0), rd.GetInt64(1), rd.GetInt64(2)); }
-            return Results.Ok(new { total = byStatus.Values.Sum(), byStatus, byType, warrantyEndsIn30Days = w30, warrantyEndsIn90Days = w90, warrantyExpired = expired });
+            // agents and compliance count the assets in service (not retired or lost); the four agent states do not overlap
+            var latest = AgentsApi.AgentVersion(cfg); var off = (double)AgentsApi.Offline(cfg);
+            long online, due, offline, none, comp, nonComp, unknown, avOff, patchOld, inWarranty, noWarranty;
+            await using (var c = new NpgsqlCommand(@"select
+                  count(*) filter (where g.id is not null and g.last_seen > now() - make_interval(secs => @off) and (@lv = '' or g.version = @lv)),
+                  count(*) filter (where g.id is not null and g.last_seen > now() - make_interval(secs => @off) and @lv <> '' and g.version <> @lv),
+                  count(*) filter (where g.id is not null and (g.last_seen is null or g.last_seen <= now() - make_interval(secs => @off))),
+                  count(*) filter (where g.id is null),
+                  count(*) filter (where g.id is not null and a.antivirus_status = 'Protected' and a.last_patch_date >= current_date - 30),
+                  count(*) filter (where g.id is not null and (coalesce(a.antivirus_status, '') not in ('', 'Protected') or coalesce(a.last_patch_date < current_date - 30, false))),
+                  count(*) filter (where g.id is not null),
+                  count(*) filter (where g.id is not null and coalesce(a.antivirus_status, '') not in ('', 'Protected')),
+                  count(*) filter (where g.id is not null and a.last_patch_date < current_date - 30),
+                  count(*) filter (where a.warranty_end >= current_date + 30),
+                  count(*) filter (where a.warranty_end is null)
+                from assets.assets a left join assets.agents g on g.id = a.agent_id and g.deleted_at is null
+                where a.status not in ('retired','lost') and (not @sc or a.company_id = any(@scope))", db).Scoped(scope))
+            {
+                P(c, "off", off); P(c, "lv", latest);
+                await using var rd = await c.ExecuteReaderAsync(ct); await rd.ReadAsync(ct);
+                (online, due, offline, none, comp, nonComp) = (rd.GetInt64(0), rd.GetInt64(1), rd.GetInt64(2), rd.GetInt64(3), rd.GetInt64(4), rd.GetInt64(5)); unknown = rd.GetInt64(6) - comp - nonComp; // reporting but no antivirus or patch data yet
+                (avOff, patchOld, inWarranty, noWarranty) = (rd.GetInt64(7), rd.GetInt64(8), rd.GetInt64(9), rd.GetInt64(10));
+            }
+            return Results.Ok(new
+            {
+                total = byStatus.Values.Sum(), byStatus, byType, warrantyEndsIn30Days = w30, warrantyEndsIn90Days = w90, warrantyExpired = expired,
+                agents = new { online, updateDue = due, offline, none, latest },
+                compliance = new { compliant = comp, nonCompliant = nonComp, unknown, antivirusOff = avOff, patchesOlderThan30Days = patchOld },
+                warranty = new { covered = inWarranty, endingSoon = w30, expired, unknown = noWarranty },
+            });
         }));
 
         anyone(r.MapGet("/api/assets/{id:long}", async (HttpContext http, long id, ITenantContext t, CancellationToken ct) =>

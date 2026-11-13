@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,27 +27,85 @@ const (
 
 var updating atomic.Bool
 
-func (r *Runner) update(ctx context.Context, version string) {
-	if version == "" || version == r.Version || !updating.CompareAndSwap(false, true) {
+// after a failed automatic attempt the agent waits before trying the same version again, instead of downloading it on every poll
+var (
+	failMu   sync.Mutex
+	failedAt = map[string]time.Time{}
+)
+
+const retryAfter = 10 * time.Minute
+
+// update installs version. force comes from "Update agent" on the asset page: it also retries a version that was put back
+// before, and every step is reported so the person who pressed the button sees where it is.
+func (r *Runner) update(ctx context.Context, version string, force bool) {
+	say := func(level, format string, a ...any) {
+		msg := fmt.Sprintf(format, a...)
+		log.Print(msg)
+		if force {
+			r.updPost(ctx, map[string]any{"level": level, "msg": msg})
+		}
+	}
+	if version == "" || version == r.Version {
+		if force && version != "" {
+			say("info", "This agent already runs %s", r.Version)
+		}
+		return
+	}
+	var done string
+	if b, err := os.ReadFile(filepath.Join(config.Dir(), doneFile)); err == nil {
+		done = strings.TrimSpace(string(b))
+	}
+	if done == version && !force {
+		return // tried before and put back: only a person can ask for it again
+	}
+	failMu.Lock()
+	last := failedAt[version]
+	failMu.Unlock()
+	if !force && time.Since(last) < retryAfter {
+		return
+	}
+	if !updating.CompareAndSwap(false, true) {
+		if force {
+			say("info", "An update is already running on this computer")
+		}
 		return
 	}
 	defer updating.Store(false)
-	var done struct{ V string }
-	if b, err := os.ReadFile(filepath.Join(config.Dir(), doneFile)); err == nil {
-		done.V = strings.TrimSpace(string(b))
+	if done == version {
+		say("info", "Version %s was installed here before and put back because it did not reach the platform; trying again as asked", version)
 	}
-	if done.V == version {
+	say("info", "The agent (version %s) picked up the request: updating to %s", r.Version, version)
+	if err := r.applyUpdate(ctx, version, say); err != nil {
+		failMu.Lock()
+		failedAt[version] = time.Now()
+		failMu.Unlock()
+		say("warn", "Update to %s failed: %v", version, err)
+		if force {
+			r.updPost(ctx, map[string]any{"state": "failed"})
+		}
 		return
 	}
-	if err := r.applyUpdate(ctx, version); err != nil {
-		log.Printf("update to %s failed: %v", version, err)
-		return
-	}
-	log.Printf("updated to %s; restarting", version)
-	r.Exit(3) // a non-zero exit makes the service manager start the new program
+	say("info", "New program in place. Restarting the agent; it is back within about 15 seconds")
+	r.restart(3)
 }
 
-func (r *Runner) applyUpdate(ctx context.Context, version string) error {
+// restart ends the program and makes sure it starts again: Windows' scheduled task does not restart a program that ended.
+func (r *Runner) restart(code int) {
+	if r.RestartSoon != nil {
+		if err := r.RestartSoon(); err != nil {
+			log.Printf("could not schedule the restart (the five-minute watchdog will start the agent): %v", err)
+		}
+	}
+	r.Exit(code)
+}
+
+func (r *Runner) updPost(ctx context.Context, body map[string]any) {
+	pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	_ = r.cl.Do(pctx, "POST", "/agent/v1/update-log", body, nil)
+}
+
+func (r *Runner) applyUpdate(ctx context.Context, version string, say func(level, format string, a ...any)) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -56,28 +115,35 @@ func (r *Runner) applyUpdate(ctx context.Context, version string) error {
 	if err != nil {
 		return err
 	}
+	say("info", "Downloading the new program from the platform")
 	err = r.cl.Download(ctx, "/agent/v1/binary", f)
+	size := int64(0)
+	if st, e := f.Stat(); e == nil {
+		size = st.Size()
+	}
 	f.Close()
 	if err != nil {
 		os.Remove(tmp)
-		return err
+		return fmt.Errorf("download: %v", err)
 	}
+	say("info", "Downloaded %.1f MB; checking that the new program starts", float64(size)/1048576)
 	vctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(vctx, tmp, "version").Output() // the new program must at least start
 	if err != nil || strings.TrimSpace(string(out)) == "" {
 		os.Remove(tmp)
-		return fmt.Errorf("the downloaded program does not start")
+		return fmt.Errorf("the downloaded program does not start (%v); an antivirus may be blocking it", err)
 	}
+	say("info", "The new program starts and reports %s", strings.TrimSpace(string(out)))
 	old := exe + ".old"
 	os.Remove(old)
 	if err := os.Rename(exe, old); err != nil {
 		os.Remove(tmp)
-		return err
+		return fmt.Errorf("could not move the running program aside: %v", err)
 	}
 	if err := os.Rename(tmp, exe); err != nil {
 		_ = os.Rename(old, exe)
-		return err
+		return fmt.Errorf("could not put the new program in place: %v", err)
 	}
 	_ = os.WriteFile(filepath.Join(config.Dir(), pendingFile), []byte("0"), 0o600)
 	_ = os.WriteFile(filepath.Join(config.Dir(), doneFile), []byte(version), 0o600)

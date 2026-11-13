@@ -73,15 +73,73 @@ func (s Spec) CopySelf() (string, error) {
 	return target, os.Rename(tmp, target)
 }
 
-func (s Spec) windowsInstallScript(exe string) string {
-	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+// The task starts at boot and, as a watchdog, every five minutes; "IgnoreNew" makes the watchdog a no-op while the program runs.
+// Task Scheduler's own restart setting only covers a task that fails to start, not a program that ends, so without the watchdog
+// an agent that stopped (for example to swap in an update) stayed stopped until the computer restarted.
+func (s Spec) windowsTaskScript(exe string, start bool) string {
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $a = New-ScheduledTaskAction -Execute '%s' -Argument '%s'
 $t = New-ScheduledTaskTrigger -AtStartup
+$w = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
 $p = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest -LogonType ServiceAccount
 $s = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
-Register-ScheduledTask -TaskName '%s' -Description '%s' -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null
-Start-ScheduledTask -TaskName '%s'
-`, strings.ReplaceAll(exe, "'", "''"), s.Args, s.Task, s.Desc, s.Task)
+Register-ScheduledTask -TaskName '%s' -Description '%s' -Action $a -Trigger @($t, $w) -Principal $p -Settings $s -Force | Out-Null
+`, strings.ReplaceAll(exe, "'", "''"), s.Args, s.Task, s.Desc)
+	if start {
+		script += fmt.Sprintf("Start-ScheduledTask -TaskName '%s'\n", s.Task)
+	}
+	return script
+}
+
+func (s Spec) windowsInstallScript(exe string) string { return s.windowsTaskScript(exe, true) }
+
+// EnsureWatchdog adds the five-minute watchdog to a task created by an older version. It does nothing when the task already has it,
+// on Linux (systemd restarts the program itself), or when the program is not running from its install path.
+func (s Spec) EnsureWatchdog() error {
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if a, _ := filepath.Abs(exe); !strings.EqualFold(a, s.ExePath()) {
+		return nil
+	}
+	out, err := exec.Command("schtasks", "/Query", "/TN", s.Task, "/XML").Output()
+	if err != nil {
+		return fmt.Errorf("could not read the scheduled task: %v", err)
+	}
+	if hasWatchdog(string(out)) {
+		return nil
+	}
+	if out, err := exec.Command("powershell.exe", inventory.PowerShellArgs(s.windowsTaskScript(s.ExePath(), false))...).CombinedOutput(); err != nil {
+		return fmt.Errorf("could not update the scheduled task: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// hasWatchdog reads the task's XML: the watchdog is a time trigger that repeats.
+func hasWatchdog(taskXML string) bool {
+	x := strings.ToLower(taskXML)
+	return strings.Contains(x, "<timetrigger") && strings.Contains(x, "<repetition>")
+}
+
+// RestartSoon asks Windows to start the program again a few seconds after this process ends; the caller then exits.
+// On Linux systemd restarts it (Restart=always), so nothing is needed. The five-minute watchdog is the fallback.
+func (s Spec) RestartSoon() error {
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	mk := func(breakaway bool) *exec.Cmd {
+		cmd := exec.Command("cmd.exe", "/c", fmt.Sprintf(`ping -n 11 127.0.0.1 >nul & schtasks /Run /TN "%s"`, s.Task))
+		detach(cmd, breakaway)
+		return cmd
+	}
+	if err := mk(true).Start(); err == nil {
+		return nil
+	}
+	return mk(false).Start() // the job does not allow leaving it: start the helper inside it
 }
 
 func (s Spec) unitFile(exe string) string {

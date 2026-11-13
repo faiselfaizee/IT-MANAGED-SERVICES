@@ -156,6 +156,7 @@ chmod 755 /opt/deskask-agent/deskask-agent
         await using var c = new NpgsqlCommand("update assets.agents set last_seen = now(), ip = @ip, version = coalesce(nullif(@v, ''), version), hostname = coalesce(nullif(@h, ''), hostname) where id = @i", db);
         P(c, "ip", Clip(ip, 64)); P(c, "v", Clip(version, 40)); P(c, "h", Clip(host, 120)); P(c, "i", agentId); await c.ExecuteNonQueryAsync(ct);
         await using var a = new NpgsqlCommand("update assets.assets set last_seen = now() where id = @i", db); P(a, "i", assetId); await a.ExecuteNonQueryAsync(ct);
+        await AgentUpdateApi.Reported(db, agentId, version, ct);
     }
 
     /// <summary>True when version <paramref name="have"/> is at least <paramref name="need"/>; an unreadable version counts as new enough.</summary>
@@ -317,7 +318,7 @@ chmod 755 /opt/deskask-agent/deskask-agent
         {
             await using var db = await Open(t, ct);
             var ag = await AuthAgent(http, db, ct); if (ag == null) return Results.Json(new { error = "agent_auth" }, statusCode: 401);
-            await Touch(db, ag.Value.Id, ag.Value.AssetId, Ip(http), null, null, ct);
+            await Touch(db, ag.Value.Id, ag.Value.AssetId, Ip(http), http.Request.Query["v"].ToString(), null, ct); // the poll carries the version, so an update shows at once
             var msgs = await Pending(db, ag.Value.Id, ct);
             int.TryParse(http.Request.Query["wait"], out var wait);
             if (msgs.Count == 0 && wait > 0)

@@ -117,3 +117,33 @@ test('credentials are grouped by customer and can be filtered by hardware catego
   await waitFor(() => expect(screen.queryByText('iLO read only')).toBeNull());
   expect(screen.getByText('FortiGate API')).toBeTruthy();
 });
+
+test('the asset list shows the agent state instead of the asset status', async () => {
+  mockApi({ '/api/assets/summary': { total: 3, byStatus: { in_use: 3 } }, '/api/assets?': { total: 3, items: [
+    { id: 1, tag: 'AST-1', name: 'PC-ON', status: 'in_use', agent: { state: 'online', version: '2.9.3', updateDue: false } },
+    { id: 2, tag: 'AST-2', name: 'PC-OLD', status: 'in_use', agent: { state: 'online', version: '2.8.6', updateDue: true } },
+    { id: 3, tag: 'AST-3', name: 'PRINTER', status: 'in_use', agent: { state: 'none' } }] } });
+  location.hash = '#/assets'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('PC-OLD')).toBeTruthy());
+  expect(screen.getByRole('columnheader', { name: 'Agent' })).toBeTruthy();
+  expect(screen.queryByRole('columnheader', { name: 'Status' })).toBeNull();
+  expect(screen.getAllByText('Online').length).toBe(2); expect(screen.getByText('update due')).toBeTruthy(); expect(screen.getAllByText('No agent').some((e) => e.tagName === 'SPAN')).toBe(true);
+});
+
+test('an agent with an update due can be updated from the asset page, with a live log', async () => {
+  let asked = false;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const u = String(url);
+    if (u.startsWith('/api/assets/7/device')) return new Response(JSON.stringify(device()), { status: 200 });
+    if (u.startsWith('/api/assets/7/agent-update/log')) return new Response(JSON.stringify(asked
+      ? { status: 'running', version: '2.8.6', latest: '2.9.3', online: true, items: [{ seq: 1, at: new Date().toISOString(), level: 'info', text: 'Update from 2.8.6 to 2.9.3 asked by admin.' }] }
+      : { status: 'none', version: '2.8.6', latest: '2.9.3', online: true, items: [] }), { status: 200 });
+    if (u === '/api/assets/7/agent-update' && init?.method === 'POST') { asked = true; return new Response('{"ok":true}', { status: 200 }); }
+    return new Response('{}', { status: 404 });
+  }));
+  location.hash = '#/assets/7'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('update due: 2.9.3')).toBeTruthy());
+  fireEvent.click(screen.getByRole('button', { name: 'Update agent now' }));
+  await waitFor(() => expect(screen.getByText(/asked by admin/)).toBeTruthy());
+  expect(screen.getByText('Updating')).toBeTruthy();
+});

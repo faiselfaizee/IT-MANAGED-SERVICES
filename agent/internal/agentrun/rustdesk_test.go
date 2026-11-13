@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -261,3 +262,24 @@ func newTestRunner(server string) *Runner {
 }
 
 func jsonUnmarshal(s string, v any) error { return json.Unmarshal([]byte(s), v) }
+
+// RustDesk's installer starts rustdesk.exe and exits; the child keeps the output handles. That must not count as a failure.
+func TestRdRunDoesNotWaitForAChildThatKeepsTheOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	start := time.Now()
+	out, err := rdRun(context.Background(), 20*time.Second, "sh", "-c", "echo installer done; sleep 30 &")
+	if err != nil {
+		t.Fatalf("a finished installer was reported as failed: %v", err)
+	}
+	if !strings.Contains(out, "installer done") {
+		t.Fatalf("output lost: %q", out)
+	}
+	if d := time.Since(start); d > 8*time.Second {
+		t.Fatalf("waited %s for the child", d)
+	}
+	if _, err := rdRun(context.Background(), 5*time.Second, "sh", "-c", "echo bad; exit 3"); err == nil {
+		t.Fatal("a failing program was reported as fine")
+	}
+}

@@ -4,6 +4,7 @@ import { api, go, openPage, saveFile, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Empty, Err, Field, Loading, Meter, Modal, ago, fmtBytes, fmtDate, fmtDay, fmtUptime, useSubmit } from '../ui';
 import { Checks, Commands, Ise, RemoteControl, Shell, Tickets } from './DetailOps';
 import { AgentInstall } from './AgentInstall';
+import { AgentUpdate } from './AgentUpdate';
 
 const TABS = [
   ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['tickets', 'Tickets'],
@@ -31,7 +32,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
       {perms.admin && hasAgent && <Act label="Refresh inventory" run={async () => { await api(`/api/assets/${id}/refresh`, { method: 'POST', body: {} }); reload(); }} />}
     </div>
     <nav className="sub" aria-label="Asset tabs">{TABS.map(([k, label]) => <a key={k} href={`#/assets/${id}/${k}`} className={tab === k ? 'on' : ''}>{label}</a>)}</nav>
-    {tab === 'overview' && <Overview id={id} d={d} reload={reload} />}
+    {tab === 'overview' && <Overview id={id} d={d} reload={reload} admin={!!perms.admin} />}
     {tab === 'storage' && <Storage d={d} />}
     {tab === 'network' && <Network d={d} />}
     {tab === 'checks' && <Checks id={id} />}
@@ -50,7 +51,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
   </div>;
 }
 
-function Overview({ id, d, reload }: { id: string; d: Rec; reload: () => void }) {
+function Overview({ id, d, reload, admin }: { id: string; d: Rec; reload: () => void; admin: boolean }) {
   const i = d.identity, s = d.system, o = d.ownership, a = d.agent, rm = d.remote;
   const warrantyLeft = o.warrantyEnd ? Math.ceil((new Date(o.warrantyEnd).getTime() - Date.now()) / 86400000) : null;
   return <div className="grid">
@@ -62,6 +63,7 @@ function Overview({ id, d, reload }: { id: string; d: Rec; reload: () => void })
       <p><label><input type="checkbox" checked={rm.assetAllows} onChange={async (e) => { await api(`/api/assets/${id}/remote`, { body: { on: e.target.checked } }); reload(); }} /> Allow remote commands, shell and remote control on this device</label></p>
       {!rm.companyAllows && <p className="note">Remote access is switched off for this customer. Switch it on under Companies.</p>}
       {!a.id && <AgentInstall id={id} onDone={reload} />}
+      {a.id && <AgentUpdate id={id} admin={admin} onDone={reload} />}
     </Card>
   </div>;
 }
