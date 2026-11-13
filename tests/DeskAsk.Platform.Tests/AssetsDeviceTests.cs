@@ -172,4 +172,45 @@ public class AssetsDeviceTests : IClassFixture<WebApplicationFactory<Program>>
         var anon = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.PostAsync("/api/assets/" + a + "/remote", Json(new { on = true }))).StatusCode);
     }
+
+    [PgFact]
+    public async Task TheFullExportCarriesEverySectionAndTheAssetPdfIsADocument()
+    {
+        var api = await Admin();
+        var co = (await J(await api.PostAsync("/api/assets/companies", Json(new { name = "Acme Ltd" })))).GetProperty("id").GetInt32();
+        var a = await NewAsset(api, "PC-FULL"); var b = await NewAsset(api, "PC-OTHER");
+        await api.PatchAsync($"/api/assets/{a}/ownership", Json(new { companyId = co, category = "IT hardware" }));
+        await api.PostAsync($"/api/assets/{a}/inventory", Json(Inv("PC-FULL", "SN-9000", "7-Zip|26.05|Igor Pavlov", "=cmd()|1|evil")));
+        await api.PostAsync($"/api/assets/{a}/tickets", Json(new { title = "Screen flickers" }));
+
+        var one = await api.GetAsync($"/api/assets/{a}/export.csv");
+        Assert.Equal(HttpStatusCode.OK, one.StatusCode);
+        var csv = await one.Content.ReadAsStringAsync();
+        Assert.StartsWith("asset_tag,asset_name,company,section,row,field,value", csv);
+        foreach (var section in new[] { "Identity", "System", "Ownership and contracts", "Agent and remote access", "Storage", "Network adapters", "Installed applications", "Tickets", "Activity log" })
+            Assert.Contains("," + section + ",", csv);
+        Assert.Contains("SN-9000", csv);                 // identity
+        Assert.Contains("Acme Ltd", csv);                // ownership
+        Assert.Contains("Intel Core i5-13400", csv);     // processor
+        Assert.Contains("MIPHI MP100", csv);             // storage
+        Assert.Contains("Realtek PCIe 2.5GbE", csv);     // network
+        Assert.Contains("Screen flickers", csv);         // tickets
+        Assert.Contains("'=cmd()", csv);                 // spreadsheet formulas are defused
+        Assert.DoesNotContain("PC-OTHER", csv);
+
+        var all = await (await api.GetAsync("/api/assets/export-full.csv")).Content.ReadAsStringAsync();
+        Assert.Contains("PC-FULL", all); Assert.Contains("PC-OTHER", all);
+        var onlyAcme = await (await api.GetAsync($"/api/assets/export-full.csv?company={co}")).Content.ReadAsStringAsync();
+        Assert.Contains("PC-FULL", onlyAcme); Assert.DoesNotContain("PC-OTHER", onlyAcme);
+
+        var pdf = await api.GetAsync($"/api/assets/{a}/export.pdf");
+        Assert.Equal(HttpStatusCode.OK, pdf.StatusCode);
+        Assert.Equal("application/pdf", pdf.Content.Headers.ContentType!.MediaType);
+        var bytes = await pdf.Content.ReadAsByteArrayAsync(); var text = Encoding.Latin1.GetString(bytes);
+        Assert.StartsWith("%PDF-", text); Assert.EndsWith("%%EOF\n", text);
+        foreach (var want in new[] { "PC-FULL", "SN-9000", "Installed applications", "Screen flickers", "Acme Ltd" }) Assert.Contains(want, text);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await api.GetAsync("/api/assets/99999/export.pdf")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await api.GetAsync("/api/assets/99999/export.csv")).StatusCode);
+    }
 }

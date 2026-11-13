@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { usePerms } from '../perms';
-import { api, go, openPage, useLoad, type Rec } from '../http';
+import { api, go, openPage, saveFile, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Empty, Err, Field, Loading, Meter, Modal, ago, fmtBytes, fmtDate, fmtDay, fmtUptime, useSubmit } from '../ui';
 import { Checks, Commands, Ise, RemoteControl, Shell, Tickets } from './DetailOps';
 import { AgentInstall } from './AgentInstall';
@@ -23,6 +23,8 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
       {perms.admin && <button onClick={() => setModal('ownership')}>Customer &amp; category</button>}
       {perms.admin && <button onClick={() => setModal('handover')}>{d.ownership.assignedTo ? 'Hand over' : 'Allocate'}</button>}
       <button onClick={() => setModal('qr')}>QR label</button>
+      <Act label="Export PDF" run={() => saveFile(`/api/assets/${id}/export.pdf`, `${d.tag}.pdf`)} />
+      <Act label="Export all details (CSV)" run={() => saveFile(`/api/assets/${id}/export.csv`, `${d.tag}-details.csv`)} />
       {perms.modify && <button onClick={() => setModal('edit')}>Edit</button>}
       {perms.delete ? <Act label="Delete" danger confirm={`Delete ${d.name} (${d.tag}) for good? Its history goes with it.`} run={async () => { await api(`/api/assets/${id}`, { method: 'DELETE' }); go('assets'); }} />
         : perms.modify && <button onClick={() => setModal('ask')}>Request deletion</button>}

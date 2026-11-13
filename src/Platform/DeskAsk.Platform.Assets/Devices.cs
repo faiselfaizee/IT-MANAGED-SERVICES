@@ -120,6 +120,10 @@ public static class AssetsDevice
         };
     }
 
+    /// <summary>The device document as JSON, for the exports.</summary>
+    internal static async Task<JsonElement?> DeviceDoc(NpgsqlConnection db, long id, int offlineSec, CancellationToken ct)
+    { var o = await Device(db, id, offlineSec, ct); return o == null ? null : JsonSerializer.SerializeToElement(o); }
+
     static int OfflineSeconds(Microsoft.Extensions.Configuration.IConfiguration cfg) => int.TryParse(cfg["Assets:AgentOfflineSeconds"], out var s) && s > 0 ? s : 900;
 
     // ---- contracts (AMC and rentals share the shape)

@@ -92,3 +92,28 @@ test('installing the agent through a controller shows each step as it happens', 
   expect(screen.getByText('Installing')).toBeTruthy();
   expect(screen.queryByText('Install agent through a collector')).toBeNull(); // no second click while it runs
 });
+
+test('asset detail offers the PDF and the full export', async () => {
+  mockApi({ '/api/assets/7/device': device() });
+  location.hash = '#/assets/7'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('Reception PC')).toBeTruthy());
+  expect(screen.getByRole('button', { name: 'Export PDF' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Export all details (CSV)' })).toBeTruthy();
+});
+
+test('credentials are grouped by customer and can be filtered by hardware category', async () => {
+  mockApi({
+    '/api/assets/companies': [{ id: 1, name: 'Acme' }, { id: 2, name: 'Globex' }],
+    '/api/assets/discover/creds': { items: [
+      { id: 1, name: 'Domain admin', kind: 'windows', username: 'ACME\\adm', companyId: 1, company: 'Acme', accountType: 'domain', category: 'computer', vendor: '', notes: '' },
+      { id: 2, name: 'iLO read only', kind: 'bmc', username: 'audit', companyId: 1, company: 'Acme', accountType: '', category: 'server', vendor: 'HPE iLO', notes: 'Audit account' },
+      { id: 3, name: 'FortiGate API', kind: 'netapi', username: 'api', companyId: 2, company: 'Globex', accountType: '', category: 'firewall', vendor: 'Fortinet FortiGate', notes: '' }] },
+  });
+  location.hash = '#/assets/credentials'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('iLO read only')).toBeTruthy());
+  expect(screen.getAllByRole('columnheader', { name: /^(Acme|Globex)$/ }).length).toBe(2);
+  expect(screen.getByText('HPE iLO')).toBeTruthy(); expect(screen.getByText('Audit account')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Hardware category'), { target: { value: 'firewall' } });
+  await waitFor(() => expect(screen.queryByText('iLO read only')).toBeNull());
+  expect(screen.getByText('FortiGate API')).toBeTruthy();
+});

@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { api, download, go, openPage, useLoad, type Rec } from '../http';
+import { api, download, go, openPage, saveFile, useLoad, type Rec } from '../http';
 import { usePerms } from '../perms';
-import { Badge, Card, Empty, Err, Field, Loading, Modal, fmtDay, useSubmit } from '../ui';
+import { Act, Badge, Card, Empty, Err, Field, Loading, Modal, fmtDay, useSubmit } from '../ui';
 
 const STATUSES = ['stock', 'in_use', 'repair', 'retired', 'lost'];
 const label = (s: string) => s.replace('_', ' ');
@@ -25,7 +25,8 @@ export default function List() {
       <select value={status} onChange={(e) => { setStatus(e.target.value); setSkip(0); }} aria-label="Status"><option value="">Any status</option>{STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}</select>
       {perms.add && <button className="primary" onClick={() => setAdd(true)}>Add asset</button>}
       <button disabled={sel.size === 0} onClick={() => setPrint(true)}>QR labels ({sel.size})</button>
-      <button onClick={() => download('/api/assets/export.csv', 'assets.csv')}>Export CSV</button>
+      <button onClick={() => download('/api/assets/export.csv', 'assets.csv')}>Export list (CSV)</button>
+      <Act label="Export all details (CSV)" run={() => saveFile('/api/assets/export-full.csv', 'assets-full-details.csv')} />
     </div>
     <Loading loading={loading && !data} error={error} />
     {data && (items.length === 0 ? <Empty>No assets match.</Empty> : <table><thead><tr><th><input type="checkbox" aria-label="Select all" checked={items.every((i) => sel.has(i.id))} onChange={(e) => setSel(e.target.checked ? new Set([...sel, ...items.map((i) => i.id)]) : new Set([...sel].filter((x) => !items.some((i) => i.id === x))))} /></th>

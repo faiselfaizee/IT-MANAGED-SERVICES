@@ -207,6 +207,13 @@ public sealed class AssetsSchema : ITenantSchema
               id bigserial primary key, asset_id bigint not null references assets.assets(id) on delete cascade, at timestamptz not null default now(),
               level text not null default 'info', text text not null default '');
             create index if not exists deploy_log_a on assets.deploy_log (asset_id, id)"),
+        new(11, "credentials by customer and hardware category", @"
+            alter table assets.creds drop constraint if exists creds_kind_check;
+            alter table assets.creds add constraint creds_kind_check check (kind in ('windows','ssh','sshpw','snmp','login','bmc','vmware','nutanix','netssh','netapi'));
+            alter table assets.creds add column if not exists category text not null default '';
+            alter table assets.creds add column if not exists vendor text not null default '';
+            alter table assets.creds add column if not exists notes text not null default '';
+            create index if not exists creds_company_category on assets.creds (company_id, category)"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -420,6 +427,7 @@ public sealed class AssetsModule : IPlatformModule
         DiscoveryApi.Map(r, Key);
         CollectorsApi.Map(r, Key);
         ExtrasApi.Map(r, Key);
+        AssetExport.Map(r, Key);
         RenewalsApi.Map(r, Key);
 
         // ---- types

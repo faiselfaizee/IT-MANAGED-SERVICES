@@ -189,4 +189,37 @@ public class DiscoveryTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Contains("handover", logs.GetProperty("kinds").EnumerateArray().Select(x => x.GetString()));
         Assert.All((await J(await api.GetAsync($"/api/assets/{id}/logs?kind=created"))).GetProperty("items").EnumerateArray(), x => Assert.Equal("created", x.GetProperty("kind").GetString()));
     }
+
+    [PgFact]
+    public async Task CredentialsAreKeptPerCustomerAndHardwareCategory()
+    {
+        var api = await Start();
+        var acme = (await J(await api.PostAsync("/api/assets/companies", Json(new { name = "Acme Ltd" })))).GetProperty("id").GetInt32();
+        var globex = (await J(await api.PostAsync("/api/assets/companies", Json(new { name = "Globex" })))).GetProperty("id").GetInt32();
+
+        async Task<HttpResponseMessage> Add(object o) => await api.PostAsync("/api/assets/discover/creds", Json(o));
+        Assert.True((await Add(new { name = "iLO audit", kind = "bmc", category = "server", vendor = "HPE iLO", username = "audit", secret = "p1", companyId = acme, notes = "read only" })).IsSuccessStatusCode);
+        Assert.True((await Add(new { name = "vCenter", kind = "vmware", category = "virtualization", vendor = "VMware", username = "svc@vsphere.local", secret = "p2", companyId = acme })).IsSuccessStatusCode);
+        Assert.True((await Add(new { name = "Prism", kind = "nutanix", category = "virtualization", username = "admin", secret = "p3", companyId = globex })).IsSuccessStatusCode);
+        Assert.True((await Add(new { name = "FortiGate token", kind = "netapi", category = "firewall", vendor = "Fortinet FortiGate", secret = "tok", companyId = globex })).IsSuccessStatusCode); // user is optional for a token
+        Assert.True((await Add(new { name = "Core switch", kind = "netssh", category = "switch", vendor = "Cisco", username = "ops", secret = "p4", companyId = acme })).IsSuccessStatusCode);
+
+        // an unknown category and an empty token are refused
+        Assert.Equal(HttpStatusCode.BadRequest, (await Add(new { name = "x", kind = "bmc", category = "toaster", username = "u", secret = "s" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Add(new { name = "x", kind = "netapi", category = "firewall", secret = "" })).StatusCode);
+
+        var items = (await J(await api.GetAsync("/api/assets/discover/creds"))).GetProperty("items").EnumerateArray().ToList();
+        Assert.Equal(5, items.Count);
+        var ilo = items.Single(x => x.GetProperty("name").GetString() == "iLO audit");
+        Assert.Equal("Acme Ltd", ilo.GetProperty("company").GetString()); Assert.Equal("server", ilo.GetProperty("category").GetString());
+        Assert.Equal("HPE iLO", ilo.GetProperty("vendor").GetString()); Assert.Equal("read only", ilo.GetProperty("notes").GetString());
+        Assert.Equal("api", items.Single(x => x.GetProperty("name").GetString() == "FortiGate token").GetProperty("username").GetString());
+        Assert.DoesNotContain("p1", await api.GetStringAsync("/api/assets/discover/creds")); // secrets are never sent back
+
+        // moving a login to another category keeps the saved secret
+        Assert.Equal(HttpStatusCode.OK, (await api.PutAsync($"/api/assets/discover/creds/{ilo.GetProperty("id").GetInt32()}", Json(new { name = "iLO audit", category = "other", vendor = "HPE iLO 5", companyId = acme }))).StatusCode);
+        var again = (await J(await api.GetAsync("/api/assets/discover/creds"))).GetProperty("items").EnumerateArray().Single(x => x.GetProperty("name").GetString() == "iLO audit");
+        Assert.Equal("other", again.GetProperty("category").GetString()); Assert.Equal("HPE iLO 5", again.GetProperty("vendor").GetString()); Assert.Equal("audit", again.GetProperty("username").GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.PutAsync($"/api/assets/discover/creds/{ilo.GetProperty("id").GetInt32()}", Json(new { name = "iLO audit", category = "nope" }))).StatusCode);
+    }
 }

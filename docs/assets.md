@@ -115,3 +115,30 @@ Settings > Remote control holds the RustDesk server, relay, public key, installe
 5. sets the permanent password (unattended mode; the password is never written to the log),
 6. waits for the ID and reports it. The *Connect* button then works.
 If it fails the log ends with the reason (download blocked, hash mismatch, installer error, service not starting, no ID because the computer cannot reach the RustDesk server on ports 21115 to 21117). *Remove* uninstalls RustDesk the same way. Windows computers only. The steps were tested against a simulated computer; the first real run is the real test.
+
+## Exporting everything about an asset (v2.9.1)
+
+The old **Export CSV** on the asset list only wrote the front-page columns. There are now three fuller exports.
+
+| Where | Button | You get |
+|---|---|---|
+| Assets list | **Export all details (CSV)** | One flat CSV for every asset you may see |
+| Asset page | **Export all details (CSV)** | The same file for that one asset |
+| Asset page | **Export PDF** | A document for that one asset, ready to print or send to the customer |
+
+Both cover the same sections: **Identity** (tag, name, status, type, category, company, make, model, serial, BIOS, processor make, model and socket, CPU count, cores, logical processors, RAM, storage), **System** (host name, DNS name, IP, domain, operating system, antivirus, last patch, uptime), **Ownership and contracts** (location, person, purchase date and cost, warranty, AMC, rental, notes, custom fields, who created and changed the record), **Agent and remote access**, **Storage** (disks and partitions), **Network adapters**, **Connected IP addresses**, **Installed applications**, **Tickets**, **Service checks** and the **Activity log** (the latest 500 entries).
+
+The CSV is in long form so Excel can filter it: `asset_tag, asset_name, company, section, row, field, value`. Filter the *section* column to see, for example, every installed application of one customer. Cells that start with `=`, `+`, `-` or `@` are defused so a program name cannot run as a formula. The PDF shows at most 300 rows per table and says so when it cuts; the CSV has all of them. The PDF uses a built-in Latin font, so letters outside Latin show as `?`.
+
+An asset list export covers up to 2,000 assets. People limited to some customers only get those customers. Each export is written to the audit log.
+
+## Credentials by customer and hardware category (v2.9.1)
+
+**Assets > Credentials** now keeps every login under a **customer** and a **hardware category**, and the list is grouped by customer.
+
+- Categories: any hardware, computers and laptops, physical servers, VMware and Nutanix, firewalls, switches, access points and controllers, printers, other.
+- Each login also has a **vendor or product** (HPE iLO, Dell iDRAC, Lenovo XClarity, IBM IMM, VMware, Nutanix, Fortinet FortiGate, Cisco, Meraki, HPE Aruba, Ubiquiti, Sophos, SonicWall, Palo Alto) and a free note.
+- New kinds: server management (iLO, iDRAC, XClarity, IMM), VMware vCenter or ESXi, Nutanix Prism, network device by SSH, and network device by API token (the user name is optional for a token).
+- Picking a category suggests the matching kind. Filter the list by customer and by category.
+
+These logins are only stored for now. The controller does not receive them yet; the hardware readers that use them (servers through Redfish, VMware and Nutanix, then network devices) arrive one family per release, so each can be tested on your own equipment.
