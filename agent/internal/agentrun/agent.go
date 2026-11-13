@@ -74,12 +74,13 @@ func Install(ctx context.Context, server, token, version string) error {
 }
 
 type message struct {
-	Type    string `json:"type"`
-	ID      string `json:"id"`
-	Shell   string `json:"shell"`
-	Body    string `json:"body"`
-	Timeout int    `json:"timeout"`
-	Version string `json:"version"`
+	Type    string    `json:"type"`
+	ID      string    `json:"id"`
+	Shell   string    `json:"shell"`
+	Body    string    `json:"body"`
+	Timeout int       `json:"timeout"`
+	Version string    `json:"version"`
+	RD      *rdConfig `json:"rd"`
 }
 
 // Runner is the agent's long-running part.
@@ -93,6 +94,7 @@ type Runner struct {
 	mu         sync.Mutex
 	cancels    map[string]context.CancelFunc
 	collectNow chan struct{}
+	rdBusy     bool // a remote-control set-up or removal is running
 }
 
 func NewRunner(cfg config.Agent, version string) *Runner {
@@ -161,6 +163,10 @@ func (r *Runner) handle(ctx context.Context, m message) {
 		}
 	case "update":
 		go r.update(ctx, m.Version)
+	case "rdsetup":
+		go r.rdSetup(ctx, m.RD, defaultRdEnv())
+	case "rdremove":
+		go r.rdRemove(ctx, defaultRdEnv())
 	case "uninstall":
 		log.Printf("the platform asked this agent to uninstall")
 		config.Remove(ConfigFile)

@@ -199,6 +199,14 @@ public sealed class AssetsSchema : ITenantSchema
         new(9, "recycle bin for agents and enrolment tokens", @"
             alter table assets.agents add column if not exists deleted_at timestamptz;
             alter table assets.enroll_tokens add column if not exists deleted_at timestamptz"),
+        new(10, "live install log, instant wake-up and automatic agent install for controllers", @"
+            alter table assets.collectors add column if not exists auto_install boolean not null default false;
+            alter table assets.collectors add column if not exists wake_req boolean not null default false;
+            alter table assets.deploys add column if not exists attempts int not null default 0;
+            create table if not exists assets.deploy_log (
+              id bigserial primary key, asset_id bigint not null references assets.assets(id) on delete cascade, at timestamptz not null default now(),
+              level text not null default 'info', text text not null default '');
+            create index if not exists deploy_log_a on assets.deploy_log (asset_id, id)"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {

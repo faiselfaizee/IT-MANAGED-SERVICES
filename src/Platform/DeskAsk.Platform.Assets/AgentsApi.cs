@@ -45,6 +45,9 @@ public sealed class AssetsJanitorJob : IJobHandler
         await Sql("update assets.shells set closed = true where not closed and last_in < now() - interval '30 minutes'");
         await Sql("delete from assets.shell_out where at < now() - interval '2 days'");
         await Sql("update assets.agents set rd_state = 'stalled' where rd_state = 'pending' and rd_at < now() - interval '15 minutes'");
+        await Sql("update assets.deploys set status = 'failed', message = 'The controller did not report back within 20 minutes. Is it online and up to date?', at = now() where status = 'running' and at < now() - interval '20 minutes'");
+        await Sql("update assets.deploys set status = 'failed', message = 'The controller did not pick this up within 30 minutes. Check that it is online (Assets > Agents & collectors).', at = now() where status = 'queued' and at < now() - interval '30 minutes'");
+        await Sql("delete from assets.deploy_log where at < now() - interval '30 days'");
         await Sql("delete from assets.agent_q where created_at < now() - interval '3 days'");
         await Sql("delete from assets.jobs where created_at < now() - interval '180 days'");
     }
@@ -282,6 +285,7 @@ chmod 755 /opt/deskask-agent/deskask-agent
             await using (var ut = new NpgsqlCommand("update assets.enroll_tokens set uses = uses + 1 where id = @i", db, tx)) { P(ut, "i", tokId); await ut.ExecuteNonQueryAsync(ct); }
             if (inv.ValueKind == JsonValueKind.Object) await AssetsDevice.ApplyInventory(db, assetId.Value, norm, "agent", "agent", ct, tx);
             await tx.CommitAsync(ct);
+            await CollectorsApi.AgentEnrolled(db, assetId.Value, host, ct);
             await audit.WriteAsync("assets.agent_enrolled", agentId, host, actor: "agent", ct: ct);
             return Results.Ok(new { agentId, key = agentKey, assetId = assetId.Value.ToString(), pollSeconds = 25, lockShell = monitorOnly });
         }));

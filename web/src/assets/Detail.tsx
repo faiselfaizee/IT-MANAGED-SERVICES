@@ -3,6 +3,7 @@ import { usePerms } from '../perms';
 import { api, go, openPage, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Empty, Err, Field, Loading, Meter, Modal, ago, fmtBytes, fmtDate, fmtDay, fmtUptime, useSubmit } from '../ui';
 import { Checks, Commands, Ise, RemoteControl, Shell, Tickets } from './DetailOps';
+import { AgentInstall } from './AgentInstall';
 
 const TABS = [
   ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['tickets', 'Tickets'],
@@ -58,7 +59,7 @@ function Overview({ id, d, reload }: { id: string; d: Rec; reload: () => void })
       <Dl rows={[['Agent', a.id ? (a.online ? 'Online' : 'Offline') : 'None'], ['Last seen', a.lastSeen ? `${ago(a.lastSeen)} (${fmtDate(a.lastSeen)})` : ''], ['Data from', a.source], ['Inventory at', a.inventoryAt ? fmtDate(a.inventoryAt) : '']]} />
       <p><label><input type="checkbox" checked={rm.assetAllows} onChange={async (e) => { await api(`/api/assets/${id}/remote`, { body: { on: e.target.checked } }); reload(); }} /> Allow remote commands, shell and remote control on this device</label></p>
       {!rm.companyAllows && <p className="note">Remote access is switched off for this customer. Switch it on under Companies.</p>}
-      {!a.id && <p><Act label="Install agent through a collector" run={async () => { await api(`/api/assets/${id}/agent-install`, { body: {} }); }} /></p>}
+      {!a.id && <AgentInstall id={id} onDone={reload} />}
     </Card>
   </div>;
 }

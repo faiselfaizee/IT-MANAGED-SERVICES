@@ -162,10 +162,14 @@ type Runner struct {
 	lastInv  map[string]time.Time
 	lastScan time.Time
 	scanning bool
+
+	wake      chan struct{}   // a result is ready or the platform has new work: check in now
+	deploying map[string]bool // installs in flight, by asset id (the platform keeps handing out nothing twice, this guards a retry)
 }
 
 func NewRunner(cfg config.Collector, version string) *Runner {
 	return &Runner{Cfg: cfg, Version: version, Exit: os.Exit, InventoryEvery: 6 * time.Hour, ScanEvery: 24 * time.Hour, lastInv: map[string]time.Time{},
+		wake: make(chan struct{}, 1), deploying: map[string]bool{},
 		cl: &client.Client{Server: cfg.Server, IDHeader: "X-Collector-Id", ID: cfg.CollectorID, Key: cfg.Key}}
 }
 
@@ -180,6 +184,7 @@ func (r *Runner) logf(level, format string, a ...any) {
 // Run checks in with the platform again and again until ctx ends.
 func (r *Runner) Run(ctx context.Context) error {
 	checkUpdateGuard(r.Version, r.Exit)
+	go r.wakeLoop(ctx)
 	failures := 0
 	for ctx.Err() == nil {
 		w, err := r.CheckIn(ctx)
@@ -209,6 +214,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
+		case <-r.wake:
 		case <-time.After(wait):
 		}
 	}
@@ -347,34 +353,72 @@ func firstNonEmpty(s ...string) string {
 
 // ---- push the agent
 
+// deploy starts the installs in the background, a few at a time, and returns at once: the check-in loop keeps running, every step is reported
+// as it happens (see progress.go) and the result goes back the moment the install ends.
 func (r *Runner) deploy(ctx context.Context, list []deploy) {
+	var fresh []deploy
+	r.mu.Lock()
+	for _, d := range list {
+		if r.deploying[d.Asset] {
+			continue
+		}
+		r.deploying[d.Asset] = true
+		fresh = append(fresh, d)
+	}
+	r.mu.Unlock()
+	if len(fresh) == 0 {
+		return
+	}
+	go func() {
+		sem := make(chan struct{}, 4)
+		var wg sync.WaitGroup
+		for _, d := range fresh {
+			d := d
+			wg.Add(1)
+			sem <- struct{}{}
+			go func() {
+				defer func() { <-sem; wg.Done() }()
+				r.deployOne(ctx, d)
+			}()
+		}
+		wg.Wait()
+	}()
+}
+
+func (r *Runner) deployOne(ctx context.Context, d deploy) {
+	defer func() {
+		r.mu.Lock()
+		delete(r.deploying, d.Asset)
+		r.mu.Unlock()
+	}()
+	name := firstNonEmpty(d.Host, d.IP)
+	sctx := withSteps(ctx, func(level, msg string) { r.progress(ctx, d.Asset, level, msg) })
+	host, _ := os.Hostname()
+	step(sctx, "info", "Controller %s (version %s, %s) started the install on %s", host, r.Version, Platform(), name)
 	var tok struct {
 		Token string `json:"token"`
 	}
-	if err := r.cl.Do(ctx, "POST", "/collector/v1/agent-token", nil, &tok); err != nil || tok.Token == "" {
-		r.mu.Lock()
-		for _, d := range list {
-			r.pending.Deploys = append(r.pending.Deploys, deployRes{d.Asset, false, "could not get an install token from the platform"})
-		}
-		r.mu.Unlock()
-		return
+	var msg string
+	var err error
+	if e := r.cl.Do(ctx, "POST", "/collector/v1/agent-token", nil, &tok); e != nil || tok.Token == "" {
+		err = errors.New("could not get an install token from the platform")
+	} else {
+		step(sctx, "info", "Install token ready (valid 24 hours)")
+		msg, err = r.install(sctx, d, tok.Token)
 	}
-	for _, d := range list {
-		msg, err := r.install(ctx, d, tok.Token)
-		r.mu.Lock()
-		if err != nil {
-			r.pending.Deploys = append(r.pending.Deploys, deployRes{d.Asset, false, trim(err.Error())})
-		} else {
-			r.pending.Deploys = append(r.pending.Deploys, deployRes{d.Asset, true, trim(msg)})
-		}
-		r.mu.Unlock()
-		r.logf("info", "Install on %s: %s", firstNonEmpty(d.Host, d.IP), func() string {
-			if err != nil {
-				return "failed - " + trim(err.Error())
-			}
-			return "done"
-		}())
+	r.mu.Lock()
+	if err != nil {
+		r.pending.Deploys = append(r.pending.Deploys, deployRes{d.Asset, false, trim(err.Error())})
+	} else {
+		r.pending.Deploys = append(r.pending.Deploys, deployRes{d.Asset, true, trim(msg)})
 	}
+	r.mu.Unlock()
+	outcome := "done"
+	if err != nil {
+		outcome = "failed - " + trim(err.Error())
+	}
+	r.logf("info", "Install on %s: %s", name, outcome)
+	r.kick() // report the result now, not at the end of the minute
 }
 
 func (r *Runner) install(ctx context.Context, d deploy, token string) (string, error) {
@@ -389,8 +433,12 @@ func (r *Runner) install(ctx context.Context, d deploy, token string) (string, e
 		default:
 			return "", errors.New("could not tell whether this is a Windows or Linux computer (no remote management port answered)")
 		}
+		step(ctx, "info", "Looks like a %s computer (decided from the ports that answer on %s)", kind, target)
+	} else {
+		step(ctx, "info", "The platform says this is a %s computer (%s)", kind, target)
 	}
 	base := strings.TrimRight(r.Cfg.Server, "/")
+	step(ctx, "info", "Logins available: %d (saved on the platform for this customer, plus any saved on the controller)", len(r.credsFor(d.Logins)))
 	if kind == "windows" {
 		return winInstall(ctx, r.credsFor(d.Logins), hostsOf(d.Host, target), base+"/agent/install.ps1?t="+url.QueryEscape(token))
 	}
@@ -412,8 +460,12 @@ func (r *Runner) maybeScan(ctx context.Context, w *work) {
 	r.scanning = true
 	r.lastScan = time.Now()
 	r.mu.Unlock()
-	r.logf("info", "Scanning %s", strings.Join(w.Scan.Cidrs, ", "))
-	found, warn := Scan(ctx, w.Scan.Cidrs, 64)
+	go r.scanNow(ctx, w.Scan.Cidrs) // in the background, so an install pressed meanwhile is not held up by the scan
+}
+
+func (r *Runner) scanNow(ctx context.Context, cidrs []string) {
+	r.logf("info", "Scanning %s", strings.Join(cidrs, ", "))
+	found, warn := Scan(ctx, cidrs, 64)
 	for _, m := range warn {
 		r.logf("warn", "%s", m)
 	}
@@ -423,6 +475,7 @@ func (r *Runner) maybeScan(ctx context.Context, w *work) {
 	r.scanning = false
 	r.mu.Unlock()
 	r.logf("info", "Scan finished: %d device(s) found", len(found))
+	r.kick() // send what was found now
 }
 
 // Inventory is exported for the "inventory" command (print this computer's inventory as JSON).

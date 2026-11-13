@@ -97,3 +97,21 @@ This is the TrustedHosts error. Windows only uses Kerberos when it connects by c
     Set-Item WSMan:\localhost\Client\TrustedHosts -Value '192.168.31.*' -Concatenate -Force
 
 For a local account on the target, enter the user as `COMPUTERNAME\Administrator`, and on the target allow remote admin rights for local accounts (`winrm quickconfig` does this with LocalAccountTokenFilterPolicy).
+
+## Installing the agent through a controller: instant start, live log, automatic install
+**Start and response time.** The controller (v2.9.0 and later) holds a request open on the platform (`GET /collector/v1/wait`, up to 25 seconds). Pressing *Install agent*, *Scan now* or *Install agents on all devices* answers that request at once, so work starts within a second instead of at the next one-minute check-in. Installs and scans run in the background, so one slow device does not hold up the others (four installs run at the same time), and the result goes back the moment an install ends. A controller older than v2.9.0 keeps working on the one-minute rhythm and updates itself to the new one.
+
+**Live log.** On the device page (Overview > Agent & remote access), *Install agent through a collector* opens a log that fills in while it runs. Each line is one step the controller really did:
+queued by whom; whether the controller is online (and when it was last seen if not); handed to the controller; the computer type; the number of logins available; the name or address tried; the WinRM port check (5985, then 5986); which saved login is used; whether the controller adds the target to TrustedHosts; start of the remote command, then every line the target prints (download, enrolment, service start) and a "still working" line every 15 seconds; and finally *Finished* or *Failed* with the reason. The last line is green when the agent has enrolled with the platform. If nothing appears after "Queued", the controller is offline or not picking up work; the second line says which. A device cannot be queued twice while an install is running; after a failure *Try again* clears the log. An install the controller never reports back is marked failed after 20 minutes (30 if it was never picked up).
+
+**Automatic install.** Assets > Agents & collectors > Manage on a controller > *Install the agent automatically on Windows and Linux computers this controller finds*. With it on, each scan adds every new computer as an asset (customer and monitoring default of the controller) and queues the agent install, if a saved login of the right kind exists for that customer (Windows login for computers with WinRM or SMB ports open; SSH password or key for computers with port 22 open). Printers, cameras and everything else stay in the *Found by scans* list. Without a login nothing is added and the controller's activity list says so. The licence limit for assets is respected.
+
+## RustDesk set-up with a live log
+Settings > Remote control holds the RustDesk server, relay, public key, installer address and SHA-256. *Set up unattended / attended* on the device's Remote control tab sends the settings to the agent (v2.9.0 and later; earlier agents ignored the message). The agent then, reporting every step to the *Set-up progress* log:
+1. downloads the installer over HTTPS with progress and checks the SHA-256 (a mismatch stops the set-up and deletes the file; an empty SHA-256 is allowed but warned about),
+2. runs it with `--silent-install`,
+3. starts the RustDesk service,
+4. sets the servers with RustDesk's own `--option` commands and checks that its settings file holds them (otherwise it writes `RustDesk2.toml` itself),
+5. sets the permanent password (unattended mode; the password is never written to the log),
+6. waits for the ID and reports it. The *Connect* button then works.
+If it fails the log ends with the reason (download blocked, hash mismatch, installer error, service not starting, no ID because the computer cannot reach the RustDesk server on ports 21115 to 21117). *Remove* uninstalls RustDesk the same way. Windows computers only. The steps were tested against a simulated computer; the first real run is the real test.

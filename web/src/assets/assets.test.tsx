@@ -70,3 +70,25 @@ test('companies page shows the remote switch per customer', async () => {
   await waitFor(() => expect(screen.getByText('Acme')).toBeTruthy());
   expect(screen.getByText('Off')).toBeTruthy();
 });
+
+test('installing the agent through a controller shows each step as it happens', async () => {
+  let posted = false;
+  const lines = [{ seq: 1, at: new Date().toISOString(), level: 'info', text: 'Queued by admin.' }, { seq: 2, at: new Date().toISOString(), level: 'warn', text: 'Port 5985 does not answer on DKPRDHR01' }];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const u = String(url);
+    if (u === '/api/assets/7/device') return new Response(JSON.stringify(device({ agent: { id: '', online: false, lastSeen: null, source: '', inventoryAt: null } })), { status: 200 });
+    if (u === '/api/assets/7/agent-install' && init?.method === 'POST') { posted = true; return new Response('{"status":"queued"}', { status: 200 }); }
+    if (u.startsWith('/api/assets/7/agent-install/log')) {
+      const after = Number(new URL(u, 'http://x').searchParams.get('after') ?? 0);
+      return new Response(JSON.stringify(posted ? { status: 'running', message: '', items: lines.filter((l) => l.seq > after) } : { status: 'none', message: '', items: [] }), { status: 200 });
+    }
+    return new Response('{}', { status: 404 });
+  }));
+  location.hash = '#/assets/7'; render(<AssetsApp />);
+  const button = await screen.findByText('Install agent through a collector');
+  fireEvent.click(button);
+  await waitFor(() => expect(screen.getByText('Queued by admin.')).toBeTruthy());
+  expect(screen.getByText('Port 5985 does not answer on DKPRDHR01')).toBeTruthy();
+  expect(screen.getByText('Installing')).toBeTruthy();
+  expect(screen.queryByText('Install agent through a collector')).toBeNull(); // no second click while it runs
+});

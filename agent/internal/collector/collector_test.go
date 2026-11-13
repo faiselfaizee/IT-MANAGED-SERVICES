@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -335,4 +337,120 @@ func TestNeedsTrustSpotsTheTrustedHostsError(t *testing.T) {
 	if !strings.Contains(WinHint(msg), "TrustedHosts -Value") {
 		t.Fatal("hint missing")
 	}
+}
+
+// ---- live install log, instant wake-up, installs in the background
+
+func TestAnInstallReportsEveryStepAndAsksForAnImmediateCheckIn(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/collector/v1/progress", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		mu.Lock()
+		lines = append(lines, fmt.Sprint(b["asset"], "|", b["level"], "|", b["msg"]))
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+	mux.HandleFunc("/collector/v1/agent-token", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"token":"dkat_test"}`)) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	r := NewRunner(config.Collector{Server: srv.URL, CollectorID: "cAAA", Key: "dkco_secretsecretsecretsecret"}, "9.9.9")
+	r.deploy(context.Background(), []deploy{{Asset: "7", IP: "127.0.0.1", Host: "gate", Platform: "linux"}})
+	select {
+	case <-r.wake:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the controller did not ask for an immediate check-in after the install ended")
+	}
+	r.mu.Lock()
+	res := append([]deployRes{}, r.pending.Deploys...)
+	busy := len(r.deploying)
+	r.mu.Unlock()
+	if len(res) != 1 || res[0].OK || res[0].Asset != "7" || busy != 0 {
+		t.Fatalf("%+v busy=%d", res, busy)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	all := strings.Join(lines, "\n")
+	for _, want := range []string{"7|info|Controller", "started the install on gate", "Install token ready", "The platform says this is a linux computer", "Logins available: 0", "7|error|No SSH login is saved for 127.0.0.1"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("progress lacks %q:\n%s", want, all)
+		}
+	}
+}
+
+func TestAnInstallAlreadyInFlightIsNotStartedTwice(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { atomic.AddInt32(&hits, 1); _, _ = w.Write([]byte(`{}`)) }))
+	defer srv.Close()
+	r := NewRunner(config.Collector{Server: srv.URL, CollectorID: "cAAA", Key: "k"}, "1")
+	r.deploying["7"] = true
+	r.deploy(context.Background(), []deploy{{Asset: "7", IP: "127.0.0.1", Platform: "linux"}})
+	time.Sleep(200 * time.Millisecond)
+	if atomic.LoadInt32(&hits) != 0 || len(r.pending.Deploys) != 0 {
+		t.Fatal("an install that is already running was started again")
+	}
+}
+
+func TestTheWaitLoopChecksInAtOnceWhenThePlatformSaysNow(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/collector/v1/wait" || r.Header.Get("X-Collector-Id") != "cAAA" {
+			w.WriteHeader(404)
+			return
+		}
+		if atomic.AddInt32(&calls, 1) == 1 {
+			_, _ = w.Write([]byte(`{"now":true}`))
+			return
+		}
+		select { // nothing to do: hold the request open like the platform does
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+		_, _ = w.Write([]byte(`{"now":false}`))
+	}))
+	defer srv.Close()
+	r := NewRunner(config.Collector{Server: srv.URL, CollectorID: "cAAA", Key: "dkco_secretsecretsecretsecret"}, "1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.wakeLoop(ctx)
+	select {
+	case <-r.wake:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no immediate check-in")
+	}
+}
+
+func TestAnOlderPlatformWithoutTheWaitEndpointIsLeftAlone(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { atomic.AddInt32(&calls, 1); w.WriteHeader(404) }))
+	defer srv.Close()
+	r := NewRunner(config.Collector{Server: srv.URL, CollectorID: "cAAA", Key: "k"}, "1")
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+	r.wakeLoop(ctx)
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Fatalf("asked %d times; it must back off for minutes after a 404", n)
+	}
+}
+
+func TestOutputBecomesProgressLinesAsWholeLines(t *testing.T) {
+	var got []string
+	ctx := withSteps(context.Background(), func(level, msg string) { got = append(got, level+":"+msg) })
+	w := &lineWriter{ctx: ctx, prefix: "h: "}
+	_, _ = w.Write([]byte("Downloading ag"))
+	_, _ = w.Write([]byte("ent\r\nEnrolled\n\n  \nDone"))
+	_, _ = w.Write([]byte("\n"))
+	want := []string{"info:h: Downloading agent", "info:h: Enrolled", "info:h: Done"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("%v", got)
+	}
+	step(context.Background(), "info", "no listener: must not panic")
+}
+
+func TestTheHeartbeatCanBeStoppedTwice(t *testing.T) {
+	stop := heartbeat(context.Background(), time.Hour, "x")
+	stop()
+	stop()
 }

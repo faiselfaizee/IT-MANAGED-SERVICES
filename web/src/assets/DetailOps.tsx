@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, useInterval, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Copy, Empty, Err, Field, Loading, Modal, ago, fmtDate, useSubmit } from '../ui';
+import { LiveLog } from './LiveLog';
 
 const RISK: Record<string, 'ok' | 'warn' | 'bad'> = { safe: 'ok', caution: 'warn', disruptive: 'bad' };
 const DONE = ['done', 'failed', 'timeout', 'cancelled'];
@@ -186,7 +187,7 @@ export function Ise({ id, d }: { id: string; d: Rec }) {
 export function RemoteControl({ id, d }: { id: string; d: Rec }) {
   const { data, error, reload } = useLoad<Rec>(`/api/assets/${id}/remote-control`); const log = useLoad<Rec>(`/api/assets/${id}/remote-control/log`);
   const [link, setLink] = useState<Rec | null>(null);
-  const live = data && (data.state === 'pending'); useInterval(() => { reload(); log.reload(); }, live ? 4000 : null);
+  const live = data && (data.state === 'pending'); useInterval(() => { reload(); log.reload(); }, live ? 1500 : null);
   if (!data) return <Loading loading error={error} />;
   const block = remoteBlock(d);
   return <>
@@ -204,6 +205,7 @@ export function RemoteControl({ id, d }: { id: string; d: Rec }) {
       </div>
       {link && <div className="note"><p>Open this link on your computer (RustDesk must be installed there):</p><a href={link.link}>Open RustDesk session</a>{link.password && <p>Password: <Copy text={link.password} /></p>}<p className="muted">The session is recorded in the audit log.</p></div>}
     </Card>
-    <Card title="Set-up progress">{log.data && (log.data.items.length === 0 ? <Empty>No activity yet.</Empty> : <ul>{(log.data.items as Rec[]).map((l) => <li key={l.seq}><span className="muted mono">{fmtDate(l.at)}</span> {l.level === 'warn' ? <Badge tone="warn">warning</Badge> : null} {l.text}</li>)}</ul>)}</Card>
+    <Card title="Set-up progress">{log.data && <LiveLog items={log.data.items as Rec[]} running={data.state === 'pending'} empty="No activity yet. Press Set up to start; every step appears here as the agent does it." />}
+      {data.state === 'pending' && <p className="muted">Waiting for the agent on the computer. It starts within a few seconds when it is online; a download of about 25 MB follows.</p>}</Card>
   </>;
 }

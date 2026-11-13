@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,15 +116,21 @@ func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'"'"'`)
 func sshInstall(ctx context.Context, creds []config.Cred, ip, installURL string) (string, error) {
 	list := pick(creds, "ssh", ip)
 	if len(list) == 0 {
+		step(ctx, "error", "No SSH login is saved for %s. Add one under Assets > Credentials for this customer.", ip)
 		return "", errors.New("no SSH login is saved on the collector for this address")
 	}
 	cmd := `if [ "$(id -u)" = 0 ]; then S=""; else S="sudo -n"; fi; curl -fsSL ` + shQuote(installURL) + ` | $S sh`
 	var last error
 	for _, c := range list {
+		step(ctx, "info", "Connecting to %s over SSH as %s (login %s) and running the install command", ip, c.User, c.Name)
+		stop := heartbeat(ctx, 15*time.Second, "waiting for "+ip+" to run the install command")
 		out, err := SSH(ctx, c, ip, cmd, 5*time.Minute)
+		stop()
 		if err == nil {
+			step(ctx, "ok", "The install command finished on %s", ip)
 			return "installed over SSH as " + c.Name + ": " + lastLines(out, 2), nil
 		}
+		step(ctx, "warn", "SSH to %s as %s failed: %v", ip, c.User, err)
 		last = err
 	}
 	return "", last
@@ -148,12 +155,17 @@ var winRMPorts = [2]int{5985, 5986}
 // winReach checks from the collector that the computer answers on a WinRM port, and says which one (ssl is true when only HTTPS answers).
 // A running WinRM service is not enough: remoting also needs its listener and a firewall rule that lets this computer in.
 func winReach(ctx context.Context, host string) (ssl bool, err error) {
+	step(ctx, "info", "Checking the WinRM ports %d and %d on %s", winRMPorts[0], winRMPorts[1], host)
 	if ok, _ := TCPOpen(ctx, host, winRMPorts[0], 4*time.Second); ok {
+		step(ctx, "info", "Port %d (WinRM, HTTP) answers on %s", winRMPorts[0], host)
 		return false, nil
 	}
+	step(ctx, "warn", "Port %d does not answer on %s", winRMPorts[0], host)
 	if ok, _ := TCPOpen(ctx, host, winRMPorts[1], 4*time.Second); ok {
+		step(ctx, "info", "Port %d (WinRM, HTTPS) answers on %s", winRMPorts[1], host)
 		return true, nil
 	}
+	step(ctx, "warn", "Port %d does not answer on %s either", winRMPorts[1], host)
 	return false, fmt.Errorf("%s does not answer on port %d or %d from the collector. The WinRM service can be running while remoting is not set up or is blocked. On that computer run (as administrator)  Enable-PSRemoting -Force  and, if the collector is on another network, allow it in the firewall:  Set-NetFirewallRule -Name WINRM-HTTP-In-TCP -RemoteAddress Any  (on a Public network profile also  Set-NetFirewallRule -Name WINRM-HTTP-In-TCP-PUBLIC -RemoteAddress Any). Also check that the address %s is the computer's address on the collector's network", host, winRMPorts[0], winRMPorts[1], host)
 }
 
@@ -171,13 +183,20 @@ func winRemote(ctx context.Context, c config.Cred, host, script string, timeout 
 }
 
 func winRemoteOnce(ctx context.Context, c config.Cred, host, script string, ssl, retried bool) (string, error) {
+	who := c.User
+	if who == "" {
+		who = "the collector's own account (no Windows login is saved for this computer)"
+	}
+	step(ctx, "info", "Starting PowerShell remoting to %s as %s%s", host, who, map[bool]string{true: " over HTTPS", false: ""}[ssl])
+	stop := heartbeat(ctx, 15*time.Second, "waiting for "+host+" to run the install command")
+	defer stop()
 	cmd := exec.CommandContext(ctx, "powershell.exe", inventory.PowerShellArgs(remoteWrapper)...)
 	cmd.Env = append(os.Environ(), "DK_HOST="+host, "DK_SCRIPT="+script, "DK_USER="+c.User, "DK_PW="+c.Password)
 	if ssl {
 		cmd.Env = append(cmd.Env, "DK_SSL=1")
 	}
 	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
+	cmd.Stdout, cmd.Stderr = io.MultiWriter(&out, &lineWriter{ctx: ctx, prefix: host + ": "}), &errb
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(errb.String())
 		if msg == "" {
@@ -186,16 +205,19 @@ func winRemoteOnce(ctx context.Context, c config.Cred, host, script string, ssl,
 		// Reaching a computer by IP address, or one outside the domain, needs it in TrustedHosts.
 		// The collector runs as SYSTEM, so it adds the target once and tries again.
 		if c.User != "" && !retried && needsTrust(CleanCLIXML(msg)) {
+			step(ctx, "warn", "Windows will not talk to %s by address unless it is trusted: adding it to TrustedHosts on this computer and trying again", host)
 			if terr := trustHost(ctx, host); terr == nil {
+				stop()
 				return winRemoteOnce(ctx, c, host, script, ssl, true)
+			} else {
+				step(ctx, "warn", "Could not change TrustedHosts (%v). Run it by hand as administrator on this computer.", terr)
 			}
 		}
-		who := c.User
-		if who == "" {
-			who = "the collector's own account (no Windows login is saved for this computer)"
-		}
-		return out.String(), fmt.Errorf("PowerShell remoting to %s as %s: %s", host, who, WinHint(CleanCLIXML(msg)))
+		hint := WinHint(CleanCLIXML(msg))
+		step(ctx, "warn", "PowerShell remoting to %s as %s failed: %s", host, c.User, hint)
+		return out.String(), fmt.Errorf("PowerShell remoting to %s as %s: %s", host, who, hint)
 	}
+	step(ctx, "ok", "PowerShell remoting finished on %s", host)
 	return out.String(), nil
 }
 
@@ -253,7 +275,13 @@ func winInstall(ctx context.Context, creds []config.Cred, hosts []string, instal
 	script := `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; iwr -UseBasicParsing '` + strings.ReplaceAll(installURL, "'", "''") + `' | iex`
 	var last error
 	for _, host := range hosts {
+		step(ctx, "info", "Trying %s", host)
 		for _, c := range winCreds(creds, host) {
+			if c.User == "" {
+				step(ctx, "warn", "No saved Windows login matches %s: using the controller's own account. Save one under Assets > Credentials for this customer.", host)
+			} else {
+				step(ctx, "info", "Using the saved login %s (%s)", c.Name, c.User)
+			}
 			out, err := winRemote(ctx, c, host, script, 6*time.Minute)
 			if err == nil {
 				return "installed by PowerShell remoting as " + c.Name + ": " + lastLines(out, 2), nil

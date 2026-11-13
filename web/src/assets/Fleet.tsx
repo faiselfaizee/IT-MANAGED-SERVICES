@@ -55,7 +55,7 @@ function Collectors() {
 }
 
 function Manage({ c, onClose }: { c: Rec; onClose: () => void }) {
-  const [cidrs, setCidrs] = useState<string>(c.scanCidrs ?? ''); const [mode, setMode] = useState<string>(c.monitorDefault ?? 'ping'); const [name, setName] = useState<string>(c.name); const [err, setErr] = useState('');
+  const [cidrs, setCidrs] = useState<string>(c.scanCidrs ?? ''); const [mode, setMode] = useState<string>(c.monitorDefault ?? 'ping'); const [name, setName] = useState<string>(c.name); const [auto, setAuto] = useState<boolean>(!!c.autoInstall); const [err, setErr] = useState('');
   const found = useLoad<Rec>(`/api/assets/collectors/${c.id}/found`); const log = useLoad<Rec>(`/api/assets/collectors/${c.id}/log`); const [pick, setPick] = useState<Set<string>>(new Set()); const [res, setRes] = useState('');
   useInterval(() => { found.reload(); log.reload(); }, 8000);
   const items = (found.data?.items ?? []) as Rec[];
@@ -63,8 +63,10 @@ function Manage({ c, onClose }: { c: Rec; onClose: () => void }) {
     <Field label="Name"><input value={name} onChange={(e) => setName(e.target.value)} /></Field>
     <Field label="Ranges to scan (comma separated, each up to a /22)"><input value={cidrs} onChange={(e) => setCidrs(e.target.value)} placeholder="192.168.1.0/24, 10.0.5.0/24" /></Field>
     <Field label="Watch new devices by"><select value={mode} onChange={(e) => setMode(e.target.value)}>{['ping', 'windows', 'ssh', 'snmp', 'device'].map((m) => <option key={m}>{m}</option>)}</select></Field>
+    <label><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Install the agent automatically on Windows and Linux computers this controller finds</label>
+    <p className="muted" style={{ marginTop: 0 }}>Each scan adds new computers as assets and installs the agent with the saved login for this customer (Assets &gt; Credentials). Printers, cameras and network devices are left alone. Without a saved login nothing is installed; the activity list says so.</p>
     <Err text={err} />
-    <div className="tools"><Act label="Save settings" run={async () => { setErr(''); try { await api(`/api/assets/collectors/${c.id}`, { method: 'PATCH', body: { name, scanCidrs: cidrs, monitorDefault: mode } }); } catch (e) { setErr((e as Error).message); throw e; } }} />
+    <div className="tools"><Act label="Save settings" run={async () => { setErr(''); try { await api(`/api/assets/collectors/${c.id}`, { method: 'PATCH', body: { name, scanCidrs: cidrs, monitorDefault: mode, autoInstall: auto } }); } catch (e) { setErr((e as Error).message); throw e; } }} />
       <Act label="Scan now" primary run={async () => { await api(`/api/assets/collectors/${c.id}/scan`, { body: {} }); log.reload(); }} />
       <Act label="Install agents on all devices" run={async () => { const r = await api<Rec>(`/api/assets/collectors/${c.id}/agent-install-all`, { body: {} }); setRes(`${r.queued} devices queued.`); }} />
       <Act label="Delete collector" danger confirm="Delete this collector? Its devices stay but are no longer watched." run={async () => { await api(`/api/assets/collectors/${c.id}`, { method: 'DELETE' }); onClose(); }} /></div>
