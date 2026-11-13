@@ -142,3 +142,7 @@ An asset list export covers up to 2,000 assets. People limited to some customers
 - Picking a category suggests the matching kind. Filter the list by customer and by category.
 
 These logins are only stored for now. The controller does not receive them yet; the hardware readers that use them (servers through Redfish, VMware and Nutanix, then network devices) arrive one family per release, so each can be tested on your own equipment.
+
+### RustDesk set-up stays on "working…" and nothing starts on the computer
+
+Only agents of version **2.9.0 or newer** can run the RustDesk set-up. An older agent ignores the request without a word, so the page keeps waiting and nothing appears in Task Manager. From v2.9.2 the server refuses to start the set-up for an older agent and says which version it found; the RustDesk page also shows the agent version, and warns while no agent has answered. The agent updates itself within a minute or two when the server holds a newer build (the `.dkb` update carries it). If the agent is 2.9.0 or newer, the first line in the log is "The agent (version …) picked up the request"; if that line is missing, the agent is offline or old, and if the log stops after the download line, send me the log.

@@ -26,7 +26,7 @@ public class ShellTests : IClassFixture<WebApplicationFactory<Program>>
         var co = (await J(await api.PostAsync("/api/assets/companies", Json(new { name = "Acme", remoteAllowed = true })))).GetProperty("id").GetInt32();
         var tok = (await J(await api.PostAsync("/api/assets/enrolments", Json(new { companyId = co })))).GetProperty("token").GetString()!;
         var c = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-        var r = await c.PostAsync("/agent/v1/enroll", Json(new { token = tok, platform = "windows", version = "1.6.0", inventory = new { schema = 1, hostname = "PC-1", os_family = "windows", serial_number = "SN-1234567" } }));
+        var r = await c.PostAsync("/agent/v1/enroll", Json(new { token = tok, platform = "windows", version = "2.9.0", inventory = new { schema = 1, hostname = "PC-1", os_family = "windows", serial_number = "SN-1234567" } }));
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
         var j = await J(r);
         c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", j.GetProperty("key").GetString()); c.DefaultRequestHeaders.Add("X-Agent-Id", j.GetProperty("agentId").GetString());
@@ -96,6 +96,13 @@ public class ShellTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.BadRequest, (await api.PutAsync("/api/assets/settings/remote-control", Json(new { idServer = "bad host!" }))).StatusCode);
         var save = await api.PutAsync("/api/assets/settings/remote-control", Json(new { enabled = true, idServer = "rd.example.com", installer = "https://rd.example.com/rustdesk.exe", sha256 = new string('a', 64) }));
         Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+
+        // an agent older than 2.9.0 would ignore the request and the page would wait for ever: refuse with the reason
+        await Sql("update assets.agents set version = '2.8.6'");
+        var old = await api.PostAsync("/api/assets/" + asset + "/remote-control/setup", Json(new { mode = "unattended" }));
+        Assert.Equal(HttpStatusCode.BadRequest, old.StatusCode);
+        var oldBody = await J(old); Assert.Equal("agent_too_old", oldBody.GetProperty("error").GetString()); Assert.Contains("2.8.6", oldBody.GetProperty("detail").GetString());
+        await Sql("update assets.agents set version = '2.9.0'");
 
         Assert.Equal(HttpStatusCode.OK, (await api.PostAsync("/api/assets/" + asset + "/remote-control/setup", Json(new { mode = "unattended" }))).StatusCode);
         var m = (await Poll(agent))[0];

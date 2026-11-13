@@ -188,6 +188,14 @@ public static class ShellApi
             var (err, tg) = await AgentsApi.Resolve(db, id, true, AgentsApi.Offline(cfg), ct); if (err != null) return err;
             var rd = await LoadRd(s, ct); if (!rd.Enabled) return Bad("not_enabled", "Remote control is not switched on. Set it up under Settings, Remote control.");
             if (!tg!.Platform.StartsWith("windows", StringComparison.OrdinalIgnoreCase)) return Bad("windows_only", "Remote control is available for Windows computers only for now.");
+            var have = (await RcAgent(db, id, ct))?.Version ?? "";
+            if (!AgentsApi.AtLeast(have, "2.9.0"))
+            {   // older agents ignore the request without a word, which looks like a hang: say so up front
+                var offered = AgentsApi.AgentVersion(cfg);
+                return Bad("agent_too_old", "The agent on this computer is version " + have + "; RustDesk set-up needs 2.9.0 or newer. " + (AgentsApi.AtLeast(offered, "2.9.0") && offered != ""
+                    ? "This server holds agent " + offered + ", so the agent updates itself within a minute or two. Try again then."
+                    : "This server holds " + (offered == "" ? "no agent build" : "agent " + offered) + ". Install the latest DeskAsk update (the .dkb file) so the server holds agent 2.9.x, wait for the agent to update, then try again."));
+            }
             var mode = AgentsApi.Str(b, "mode") == "attended" ? "attended" : "unattended";
             var pw = mode == "unattended" ? AgentsApi.Rand(12) : "";
             await using (var c = new NpgsqlCommand("update assets.agents set rd_state = 'pending', rd_mode = @m, rd_pw = @p, rd_msg = '', rd_at = now() where id = @i", db))

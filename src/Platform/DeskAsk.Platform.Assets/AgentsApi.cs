@@ -72,7 +72,7 @@ public static class AgentsApi
 
     public static string PublicUrl(HttpContext h, IConfiguration cfg) => (cfg["Assets:PublicUrl"] ?? (h.Request.Scheme + "://" + h.Request.Host)).TrimEnd('/');
     static string AgentDir(IConfiguration cfg) => cfg["Assets:AgentDir"] ?? Path.Combine(AppContext.BaseDirectory, "agent-dist");
-    static string AgentVersion(IConfiguration cfg) { try { return File.ReadAllText(Path.Combine(AgentDir(cfg), "version.txt")).Trim(); } catch { return ""; } }
+    internal static string AgentVersion(IConfiguration cfg) { try { return File.ReadAllText(Path.Combine(AgentDir(cfg), "version.txt")).Trim(); } catch { return ""; } }
     static readonly Dictionary<string, string> Files = new() { ["windows"] = "deskask-agent-windows-amd64.exe", ["linux"] = "deskask-agent-linux-amd64", ["linux-arm64"] = "deskask-agent-linux-arm64" };
     internal static string? AgentFile(IConfiguration cfg, string platform) => Files.TryGetValue(platform, out var f) && File.Exists(Path.Combine(AgentDir(cfg), f)) ? Path.Combine(AgentDir(cfg), f) : null;
     internal static string LinuxFlavour(HttpContext h) => h.Request.Query["arch"] == "arm64" ? "linux-arm64" : "linux";
@@ -156,6 +156,13 @@ chmod 755 /opt/deskask-agent/deskask-agent
         await using var c = new NpgsqlCommand("update assets.agents set last_seen = now(), ip = @ip, version = coalesce(nullif(@v, ''), version), hostname = coalesce(nullif(@h, ''), hostname) where id = @i", db);
         P(c, "ip", Clip(ip, 64)); P(c, "v", Clip(version, 40)); P(c, "h", Clip(host, 120)); P(c, "i", agentId); await c.ExecuteNonQueryAsync(ct);
         await using var a = new NpgsqlCommand("update assets.assets set last_seen = now() where id = @i", db); P(a, "i", assetId); await a.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>True when version <paramref name="have"/> is at least <paramref name="need"/>; an unreadable version counts as new enough.</summary>
+    internal static bool AtLeast(string? have, string need)
+    {
+        static bool Parse(string? v, out Version r) { r = new Version(0, 0); var m = Regex.Match(v ?? "", @"(\d+)\.(\d+)(?:\.(\d+))?"); if (!m.Success) return false; r = new Version(int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value), m.Groups[3].Success ? int.Parse(m.Groups[3].Value) : 0); return true; }
+        return !Parse(have, out var h) || !Parse(need, out var n) || h >= n;
     }
 
     internal sealed record UpdateInfo(string version, string platform);

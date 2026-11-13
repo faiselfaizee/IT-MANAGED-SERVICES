@@ -195,6 +195,7 @@ export function RemoteControl({ id, d }: { id: string; d: Rec }) {
     {!data.enabled && <p className="note">Remote control is not switched on for this installation. An administrator sets the RustDesk servers under Settings.</p>}
     {data.hasAgent && !data.windows && <p className="note">Remote control is available for Windows computers only for now.</p>}
     <Card title="RustDesk">
+      <p className="muted" style={{ margin: 0 }}>Agent version {data.agentVersion || 'unknown'}</p>
       <p>State: <Badge tone={data.state === 'ready' ? 'ok' : data.state === 'failed' || data.state === 'stalled' ? 'bad' : undefined}>{data.state || 'not set up'}</Badge> {data.id && <span className="mono">ID {data.id}</span>} {data.mode && <span className="muted">({data.mode})</span>}</p>
       {data.msg && <p className="muted">{data.msg}</p>}
       <div className="tools">
@@ -206,6 +207,7 @@ export function RemoteControl({ id, d }: { id: string; d: Rec }) {
       {link && <div className="note"><p>Open this link on your computer (RustDesk must be installed there):</p><a href={link.link}>Open RustDesk session</a>{link.password && <p>Password: <Copy text={link.password} /></p>}<p className="muted">The session is recorded in the audit log.</p></div>}
     </Card>
     <Card title="Set-up progress">{log.data && <LiveLog items={log.data.items as Rec[]} running={data.state === 'pending'} empty="No activity yet. Press Set up to start; every step appears here as the agent does it." />}
+      {data.state === 'pending' && !((log.data?.items ?? []) as Rec[]).some((x) => String(x.text).includes('picked up')) && <p className="note">The agent has not answered yet. It runs version {data.agentVersion || 'unknown'}; RustDesk set-up needs 2.9.0 or newer. An older agent ignores the request, so nothing starts on the computer. Check the agent version under Agents &amp; collectors and wait for it to update.</p>}
       {data.state === 'pending' && <p className="muted">Waiting for the agent on the computer. It starts within a few seconds when it is online; a download of about 25 MB follows.</p>}</Card>
   </>;
 }
