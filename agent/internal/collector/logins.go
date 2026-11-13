@@ -12,7 +12,7 @@ import (
 // login is a saved login the platform sends with the work for one computer or device (Assets > Credentials).
 type login struct {
 	Name   string `json:"name"`
-	Kind   string `json:"kind"` // windows, ssh (private key), sshpw (SSH password), snmp (community in secret)
+	Kind   string `json:"kind"` // windows, ssh (private key), sshpw (SSH password), snmp (community in secret), vmware (ESXi or vCenter)
 	User   string `json:"user"`
 	Secret string `json:"secret"`
 }
@@ -32,6 +32,8 @@ func (r *Runner) credsFor(l []login) []config.Cred {
 			}
 		case "snmp":
 			out = append(out, config.Cred{Name: x.Name, Kind: "snmp", Community: x.Secret})
+		case "vmware":
+			out = append(out, config.Cred{Name: x.Name, Kind: "vmware", User: x.User, Password: x.Secret})
 		}
 	}
 	return out

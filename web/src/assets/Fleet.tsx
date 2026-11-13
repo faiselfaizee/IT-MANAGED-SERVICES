@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, useInterval, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Copy, Empty, Err, Field, Modal, ago, fmtDate, useSubmit } from '../ui';
+import { MODES } from './Hardware';
 
 /** Agents (installed on devices) and site collectors (inside a customer's network). */
 export default function Fleet() {
@@ -62,7 +63,7 @@ function Manage({ c, onClose }: { c: Rec; onClose: () => void }) {
   return <Modal title={`Collector ${c.name}`} onClose={onClose}><div className="form">
     <Field label="Name"><input value={name} onChange={(e) => setName(e.target.value)} /></Field>
     <Field label="Ranges to scan (comma separated, each up to a /22)"><input value={cidrs} onChange={(e) => setCidrs(e.target.value)} placeholder="192.168.1.0/24, 10.0.5.0/24" /></Field>
-    <Field label="Watch new devices by"><select value={mode} onChange={(e) => setMode(e.target.value)}>{['ping', 'windows', 'ssh', 'snmp', 'device'].map((m) => <option key={m}>{m}</option>)}</select></Field>
+    <Field label="Watch new devices by"><select value={mode} onChange={(e) => setMode(e.target.value)}>{MODES.filter(([k]) => k).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
     <label><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Install the agent automatically on Windows and Linux computers this controller finds</label>
     <p className="muted" style={{ marginTop: 0 }}>Each scan adds new computers as assets and installs the agent with the saved login for this customer (Assets &gt; Credentials). Printers, cameras and network devices are left alone. Without a saved login nothing is installed; the activity list says so.</p>
     <Err text={err} />

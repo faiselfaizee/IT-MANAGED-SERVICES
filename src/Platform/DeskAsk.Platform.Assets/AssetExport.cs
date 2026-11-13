@@ -104,6 +104,12 @@ public static class AssetExport
     static string Str(JsonElement e, string k) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(k, out var v) ? Cell(k, v) : "";
     static string Iso(object? o) => o switch { DateTime d => d.ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture), DateTimeOffset d => d.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture), null => "", _ => o.ToString() ?? "" };
 
+    /// <summary>The extra hardware tables a controller may send, in the order they are shown.</summary>
+    public static readonly (string Key, string Title)[] HardwareTables =
+    {
+        ("power_supplies", "Power supplies"), ("sensors", "Hardware sensors"), ("gpus", "Graphics cards"), ("hosts", "Hosts"), ("datastores", "Datastores"), ("vms", "Virtual machines"),
+    };
+
     // ------------------------------------------------------------------ the document
     public static async Task<Full?> Build(NpgsqlConnection db, long id, int offlineSec, CancellationToken ct, int appLimit = 5000)
     {
@@ -146,6 +152,14 @@ public static class AssetExport
         sections.Add(TableOf("Storage", d.GetProperty("storage"))); totals["Storage"] = sections[^1].Rows!.Count;
         sections.Add(TableOf("Network adapters", d.GetProperty("network"))); totals["Network adapters"] = sections[^1].Rows!.Count;
         sections.Add(TableOf("Connected IP addresses", d.GetProperty("connectedIps"))); totals["Connected IP addresses"] = sections[^1].Rows!.Count;
+
+        // hardware read by a controller: VMware hosts today, servers' management controllers and network gear later
+        if (d.TryGetProperty("hardware", out var hw) && hw.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var (key, title) in HardwareTables)
+                if (hw.TryGetProperty(key, out var tbl) && tbl.ValueKind == JsonValueKind.Array && tbl.GetArrayLength() > 0)
+                { sections.Add(TableOf(title, tbl)); totals[title] = sections[^1].Rows!.Count; }
+        }
 
         // installed applications
         {

@@ -163,3 +163,23 @@ Agents still on 2.8.6 that are stopped will start at the next computer restart (
 **Update agent from the asset page.** The agent card shows the version and, when an update is due, **Update agent now** with a live log. It also retries a version the agent tried before and put back. Agents from 2.9.3 report every step (download, start check, swap, restart); an older agent only shows up again with the new version, which closes the log. An offline agent cannot be asked; the page says so.
 
 **Home page.** Each product has rings: Assets shows Agents (live, live with update due, not reporting, no agent), Compliance (antivirus on and patches from the last 30 days; not compliant; no data yet) and Warranty; Service Desk shows open tickets, service level (on time, overdue) and closed tickets. Every count is also written beside its ring in one aligned column, and the agent rows open the asset list filtered to that state. Planned products keep their tiles until they exist.
+
+## Reading VMware ESXi and vCenter (v2.10.0)
+
+The site controller reads ESXi hosts and vCenter through the vSphere web service (`https://<host>/sdk`, port 443). The same works for a standalone ESXi host and for vCenter, ESXi 6.5 to 8.
+
+**Set up**
+1. On the host, create a read-only account. In the ESXi Host Client: *Manage > Security & users > Users > Add user*, then *Host > Actions > Permissions*, give the user the **Read-only** role. For vCenter, create the user in vCenter and give it **Read-only** at the top level (propagate to children).
+2. **Assets > Credentials > Add credential**: the host's customer, hardware category **VMware and Nutanix**, used for **VMware vCenter or ESXi**, user name and password. The customer's own logins are tried before shared ones, and only VMware logins are sent for VMware devices.
+3. Make sure the controller reaches the host on port 443.
+4. Add the host as an asset (from the scan, by IP is fine). On its **Overview**, in **Read by a controller**, choose the controller and **VMware ESXi or vCenter**, then **Save**. The controller reads it within seconds; **Read now** reads again at any time. After that it is read every six hours.
+
+**What is read**
+- **ESXi host:** vendor, model, serial number or service tag, BIOS version and date, processor model, sockets, cores and threads, memory, local disks (SSD or HDD, size), physical network ports with link state and speed, ESXi version and build, uptime.
+- **Hardware tab:** power supplies with their state, every hardware sensor (fans, temperatures, voltages, power use; problems first), graphics cards (display-class PCI devices, e.g. NVIDIA), datastores with size and free space, and the virtual machines (power state, guest OS, IP, CPUs, memory, disk used; templates left out).
+- **vCenter:** vCenter's version, a table of its hosts (hardware, serial, processor, memory, ESXi version, state and health), and all datastores and virtual machines.
+- Everything also goes into the full CSV export and the asset PDF.
+
+**When it fails** the reason is written to the asset's Logs tab, for example "the VMware login was refused", "did not answer like VMware ESXi or vCenter (HTTP 404); check the address and that port 443 reaches the host", or "this login sees no host: give it the Read-only role".
+
+**Limits.** The controller accepts the host's self-signed certificate (it talks to it on the customer's own network). What ESXi reports for power supplies depends on the server vendor's drivers; reading the server's iLO or iDRAC (next release) fills the gaps. Not tested on a real ESXi host yet, only against a simulated one.

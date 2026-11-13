@@ -74,6 +74,7 @@ public static class AssetsDevice
             domain_type = @dt, domain_workgroup = coalesce(@dw, ''), bios_version = coalesce(@bios, ''), last_patch_date = @patch,
             ip_address = case when ip_address = '' then @ip else ip_address end,
             category = case when category = '' then 'IT hardware' else category end,
+            hw_extra = coalesce(@hx::jsonb, hw_extra), read_req = false,
             source = @src, inventory_at = now(), updated_at = now(), updated_by = @actor
             where id = @id", db, tx);
         P(c, "make", n.Make); P(c, "model", n.Model); P(c, "serial", serial); P(c, "host", n.Hostname); P(c, "dns", n.DnsName);
@@ -84,6 +85,7 @@ public static class AssetsDevice
         P(c, "avs", n.AntivirusStatus); P(c, "dt", n.DomainType); P(c, "dw", n.DomainWorkgroup); P(c, "bios", n.BiosVersion);
         c.Parameters.Add(new NpgsqlParameter("patch", NpgsqlDbType.Date) { Value = patch.HasValue ? patch.Value : DBNull.Value });
         P(c, "ip", first); P(c, "src", source); P(c, "actor", actor); P(c, "id", id);
+        c.Parameters.Add(new NpgsqlParameter("hx", NpgsqlDbType.Text) { Value = (object?)n.Extra ?? DBNull.Value });
         await c.ExecuteNonQueryAsync(ct);
         await History(db, id, actor, "inventory", JsonSerializer.Serialize(new { source }), ct, tx);
     }
@@ -95,8 +97,9 @@ public static class AssetsDevice
         coalesce(c.remote_allowed, true),
         exists (select 1 from assets.amc m where m.asset_ids @> to_jsonb(a.id) and (m.end_date is null or m.end_date >= current_date)),
         (select m.title from assets.amc m where m.asset_ids @> to_jsonb(a.id) and (m.end_date is null or m.end_date >= current_date) order by m.end_date desc nulls first limit 1),
-        exists (select 1 from assets.rentals m where m.asset_ids @> to_jsonb(a.id) and (m.end_date is null or m.end_date >= current_date))
-        from assets.assets a left join assets.companies c on c.id = a.company_id where a.id = @i";
+        exists (select 1 from assets.rentals m where m.asset_ids @> to_jsonb(a.id) and (m.end_date is null or m.end_date >= current_date)),
+        a.hw_extra::text, a.monitor, a.collector_id, coalesce(col.name, ''), a.read_req, a.check_up, a.checked_at
+        from assets.assets a left join assets.companies c on c.id = a.company_id left join assets.collectors col on col.id = a.collector_id where a.id = @i";
 
     static async Task<object?> Device(NpgsqlConnection db, long id, int offlineSec, CancellationToken ct)
     {
@@ -116,7 +119,9 @@ public static class AssetsDevice
             agent = new { id = S(31), online, lastSeen = seen, source = S(34), inventoryAt = T(35) },
             ownership = new { location = S(37), assignedTo = S(38), purchaseDate = Dt(39), warrantyEnd = Dt(40), underAmc = r.GetBoolean(46), amc = S(47), rented = r.GetBoolean(48), notes = S(41) },
             remote = new { assetAllows = r.GetBoolean(32), companyAllows = r.GetBoolean(45) },
-            storage = Clone(r.GetString(42)), network = Clone(r.GetString(43)), connectedIps = Clone(r.GetString(44))
+            storage = Clone(r.GetString(42)), network = Clone(r.GetString(43)), connectedIps = Clone(r.GetString(44)),
+            hardware = Clone(r.GetString(49)),
+            watch = new { mode = S(50), collectorId = S(51), collector = S(52), readRequested = r.GetBoolean(53), up = r.IsDBNull(54) ? (bool?)null : r.GetBoolean(54), checkedAt = T(55) }
         };
     }
 

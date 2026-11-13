@@ -5,11 +5,19 @@ import { Act, Badge, Card, Dl, Empty, Err, Field, Loading, Meter, Modal, ago, fm
 import { Checks, Commands, Ise, RemoteControl, Shell, Tickets } from './DetailOps';
 import { AgentInstall } from './AgentInstall';
 import { AgentUpdate } from './AgentUpdate';
+import { Hardware, Watch } from './Hardware';
 
 const TABS = [
   ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['tickets', 'Tickets'],
   ['logs', 'Logs'], ['commands', 'Commands'], ['shell', 'Shell'], ['ise', 'PowerShell ISE'], ['remote', 'Remote control'],
 ] as const;
+
+/** The Hardware tab appears for devices a controller reads in depth (VMware today). */
+function tabsFor(d: Rec): (readonly [string, string])[] {
+  const hw = d.hardware && Object.keys(d.hardware).length > 0;
+  if (!hw && d.watch?.mode !== 'vmware') return [...TABS];
+  const t: (readonly [string, string])[] = [...TABS]; t.splice(3, 0, ['hardware', 'Hardware']); return t;
+}
 
 export default function Detail({ id, tab }: { id: string; tab: string }) {
   const { data: d, error, loading, reload } = useLoad<Rec>(`/api/assets/${id}/device`);
@@ -31,10 +39,11 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
         : perms.modify && <button onClick={() => setModal('ask')}>Request deletion</button>}
       {perms.admin && hasAgent && <Act label="Refresh inventory" run={async () => { await api(`/api/assets/${id}/refresh`, { method: 'POST', body: {} }); reload(); }} />}
     </div>
-    <nav className="sub" aria-label="Asset tabs">{TABS.map(([k, label]) => <a key={k} href={`#/assets/${id}/${k}`} className={tab === k ? 'on' : ''}>{label}</a>)}</nav>
+    <nav className="sub" aria-label="Asset tabs">{tabsFor(d).map(([k, label]) => <a key={k} href={`#/assets/${id}/${k}`} className={tab === k ? 'on' : ''}>{label}</a>)}</nav>
     {tab === 'overview' && <Overview id={id} d={d} reload={reload} admin={!!perms.admin} />}
     {tab === 'storage' && <Storage d={d} />}
     {tab === 'network' && <Network d={d} />}
+    {tab === 'hardware' && <Hardware d={d} />}
     {tab === 'checks' && <Checks id={id} />}
     {tab === 'apps' && <Apps id={id} />}
     {tab === 'tickets' && <Tickets id={id} d={d} />}
@@ -65,6 +74,7 @@ function Overview({ id, d, reload, admin }: { id: string; d: Rec; reload: () => 
       {!a.id && <AgentInstall id={id} onDone={reload} />}
       {a.id && <AgentUpdate id={id} admin={admin} onDone={reload} />}
     </Card>
+    {admin && !a.id && <Watch id={id} d={d} onChange={reload} />}
   </div>;
 }
 

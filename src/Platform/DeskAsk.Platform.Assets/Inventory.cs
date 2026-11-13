@@ -12,6 +12,8 @@ public sealed class NormInv
     public long? TotalCpu, CpuCores, CoresPerCpu, Logical, Ram, TotalStorage, UptimeS;
     public string Disks = "[]", Nics = "[]", Apps = "[]", Antivirus = "[]", Macs = "[]", Ips = "[]";
     public int NicTotal, NicConnected;
+    /// <summary>Extra hardware tables (sensors, power supplies, GPUs, datastores, virtual machines, hosts) as JSON; null when the source sends none.</summary>
+    public string? Extra;
 }
 
 public static class Inventory
@@ -112,6 +114,8 @@ public static class Inventory
         n.DomainType = S(inv, "domain_type") == "domain" ? "domain" : "workgroup"; n.DomainWorkgroup = S(inv, "domain");
         n.AntivirusStatus = avs; n.BiosVersion = S(inv, "bios_version"); n.LastPatch = patch;
         n.Kind = B(inv, "is_server") ? "server" : "endpoint";
+        var extra = Prop(inv, "hardware_extra");
+        if (extra.ValueKind == JsonValueKind.Object) { var raw = extra.GetRawText(); if (raw.Length <= 4_000_000) n.Extra = raw; }
         return n;
     }
 }

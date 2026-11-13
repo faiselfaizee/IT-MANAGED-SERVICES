@@ -222,6 +222,9 @@ public sealed class AssetsSchema : ITenantSchema
               id bigserial primary key, agent_id text not null references assets.agents(id) on delete cascade, at timestamptz not null default now(),
               level text not null default 'info', text text not null default '');
             create index if not exists agent_upd_log_a on assets.agent_upd_log (agent_id, id)"),
+        new(13, "hardware read by a controller (VMware, later servers and network gear) and read now", @"
+            alter table assets.assets add column if not exists hw_extra jsonb not null default '{}';
+            alter table assets.assets add column if not exists read_req boolean not null default false"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {

@@ -147,3 +147,49 @@ test('an agent with an update due can be updated from the asset page, with a liv
   await waitFor(() => expect(screen.getByText(/asked by admin/)).toBeTruthy());
   expect(screen.getByText('Updating')).toBeTruthy();
 });
+
+test('an ESXi host found by a scan can be read through a controller and shows its hardware', async () => {
+  const esx = device({ name: 'esx01', agent: { id: '', online: false, lastSeen: null, source: 'collector', inventoryAt: new Date().toISOString() },
+    watch: { mode: 'vmware', collectorId: 'c1', collector: 'Site A', readRequested: false, up: true, checkedAt: new Date().toISOString() },
+    hardware: { api: 'VMware ESXi 8.0.2 build-22380479', host_state: { overall: 'yellow' },
+      power_supplies: [{ name: 'Power Supply 1', state: 'OK', reading: '0' }, { name: 'Power Supply 2 AC lost', state: 'Critical', reading: '0' }],
+      sensors: [{ name: 'Power Supply 2 AC lost', type: 'power', state: 'Critical', reading: '0' }, { name: 'Fan1A', type: 'fan', state: 'OK', reading: '7560 RPM' }],
+      gpus: [{ name: 'Tesla T4', vendor: 'NVIDIA Corporation', slot: '0000:03:00.0' }],
+      datastores: [{ name: 'datastore1', type: 'VMFS', capacity_bytes: 2e12, free_bytes: 8e11, accessible: true }],
+      vms: [{ name: 'SQL01', power: 'On', guest_os: 'Windows Server 2022', ip: '10.0.0.21', cpus: 8, memory_bytes: 34359738368, disk_bytes: 107374182400 }] } });
+  const calls: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const u = String(url); if (init?.method === 'POST') calls.push(u);
+    if (u.startsWith('/api/assets/7/device')) return new Response(JSON.stringify(esx), { status: 200 });
+    if (u.startsWith('/api/assets/collectors')) return new Response(JSON.stringify({ items: [{ id: 'c1', name: 'Site A', company: 'Acme', online: true }] }), { status: 200 });
+    if (u.startsWith('/api/me') || u.includes('perms')) return new Response(JSON.stringify({ admin: true }), { status: 200 });
+    return new Response('{"ok":true}', { status: 200 });
+  }));
+  location.hash = '#/assets/7/hardware'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('Tesla T4')).toBeTruthy());
+  expect(screen.getByRole('link', { name: 'Hardware' })).toBeTruthy();
+  expect(screen.getByText('Hardware sensors (1 not OK)')).toBeTruthy();
+  expect(screen.getAllByText('Critical').length).toBeGreaterThan(0);
+  expect(screen.getByText('Virtual machines (1, 1 running)')).toBeTruthy();
+  expect(screen.getByText('datastore1')).toBeTruthy();
+});
+
+test('the overview lets an administrator choose the controller and read mode, and read now', async () => {
+  const esx = device({ name: 'esx01', agent: { id: '', online: false, lastSeen: null, source: '', inventoryAt: null }, hardware: {},
+    watch: { mode: 'vmware', collectorId: 'c1', collector: 'Site A', readRequested: false, up: true, checkedAt: null } });
+  const posts: [string, string][] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const u = String(url); if (init?.method === 'POST') posts.push([u, String(init.body)]);
+    if (u.startsWith('/api/assets/7/device')) return new Response(JSON.stringify(esx), { status: 200 });
+    if (u.startsWith('/api/assets/collectors')) return new Response(JSON.stringify({ items: [{ id: 'c1', name: 'Site A', company: 'Acme', online: true }] }), { status: 200 });
+    return new Response('{"ok":true}', { status: 200 });
+  }));
+  location.hash = '#/assets/7'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('Read by a controller')).toBeTruthy());
+  expect(screen.getByText(/VMware logins saved under Credentials/)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Read now' }));
+  await waitFor(() => expect(posts.some(([u]) => u === '/api/assets/7/read-now')).toBe(true));
+  fireEvent.change(screen.getByLabelText('Read as'), { target: { value: 'snmp' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(posts.some(([u, b]) => u === '/api/assets/7/monitor' && b.includes('"mode":"snmp"') && b.includes('"collectorId":"c1"'))).toBe(true));
+});

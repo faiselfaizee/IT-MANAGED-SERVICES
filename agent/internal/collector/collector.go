@@ -80,6 +80,7 @@ type asset struct {
 	Name    string  `json:"name"`
 	Monitor string  `json:"monitor"`
 	Logins  []login `json:"logins"`
+	ReadNow bool    `json:"readNow"` // someone pressed "Read now" on the device page
 }
 
 type deploy struct {
@@ -310,9 +311,11 @@ func (r *Runner) watch(ctx context.Context, a asset, checks []CheckDef) {
 	r.mu.Lock()
 	r.pending.Results.Health = append(r.pending.Results.Health, healthRes{a.ID, up, rtt})
 	r.pending.Results.Checks = append(r.pending.Results.Checks, res...)
-	due := up && time.Since(r.lastInv[a.ID]) >= r.InventoryEvery
+	key := a.ID + "|" + a.Monitor // a device switched to another way of reading is read at once
+	since := time.Since(r.lastInv[key])
+	due := up && (since >= r.InventoryEvery || a.ReadNow && since >= readNowGap)
 	if due {
-		r.lastInv[a.ID] = time.Now() // claimed now so a slow read is not started twice
+		r.lastInv[key] = time.Now() // claimed now so a slow read is not started twice
 	}
 	r.mu.Unlock()
 	if !due || a.Monitor == "ping" || a.Monitor == "device" || a.Monitor == "" {
@@ -322,12 +325,15 @@ func (r *Runner) watch(ctx context.Context, a asset, checks []CheckDef) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err != nil {
-		delete(r.lastInv, a.ID) // try again at the next check-in rather than in six hours
+		delete(r.lastInv, a.ID+"|"+a.Monitor) // try again at the next check-in rather than in six hours
 		r.pending.Results.Errors = append(r.pending.Results.Errors, errRes{a.ID, err.Error()})
 		return
 	}
 	r.pending.Results.Inventories = append(r.pending.Results.Inventories, invRes{a.ID, raw})
 }
+
+// readNowGap keeps "Read now" from starting a second read while the first is still running.
+const readNowGap = 2 * time.Minute
 
 func (r *Runner) readDevice(ctx context.Context, a asset, target string) (any, error) {
 	switch a.Monitor {
@@ -345,6 +351,16 @@ func (r *Runner) readDevice(ctx context.Context, a asset, target string) (any, e
 		return sshInventory(ctx, r.credsFor(a.Logins), target)
 	case "windows":
 		return winInventory(ctx, r.credsFor(a.Logins), hostsOf(a.Host, target)...)
+	case "vmware":
+		var last error = errors.New("no VMware login is saved for this customer: add one under Assets > Credentials (hardware category VMware and Nutanix, used for VMware vCenter or ESXi)")
+		for _, c := range pick(r.credsFor(a.Logins), "vmware", target) {
+			inv, err := VMwareInventory(ctx, target, c.User, c.Password)
+			if err == nil {
+				return inv, nil
+			}
+			last = fmt.Errorf("VMware login %q: %v", c.Name, err)
+		}
+		return nil, last
 	}
 	return nil, fmt.Errorf("unknown monitor kind %q", a.Monitor)
 }
