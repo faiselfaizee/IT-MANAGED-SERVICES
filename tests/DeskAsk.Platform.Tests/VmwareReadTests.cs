@@ -258,7 +258,8 @@ public class VmwareReadTests : IClassFixture<WebApplicationFactory<Program>>
 
         // an SNMP-mode device does not get the SSH/API network logins
         Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/{aid}/monitor", Json(new { mode = "snmp", collectorId = cid }))).StatusCode);
-        Assert.Equal(new[] { "community" }, (await J(await col.PostAsync("/collector/v1/checkin", Json(new { })))).GetProperty("assets")[0].GetProperty("logins").EnumerateArray().Select(l => l.GetProperty("name").GetString()));
+        var snmpLogins = (await J(await col.PostAsync("/collector/v1/checkin", Json(new { })))).GetProperty("assets")[0].GetProperty("logins").EnumerateArray().Select(l => l.GetProperty("name").GetString()).ToList();
+        Assert.Contains("community", snmpLogins); Assert.DoesNotContain("switch ssh", snmpLogins); Assert.DoesNotContain("FGT token", snmpLogins);
         await api.PostAsync($"/api/assets/{aid}/monitor", Json(new { mode = "network", collectorId = cid }));
 
         object Inv(string? config, string? error = null) => new

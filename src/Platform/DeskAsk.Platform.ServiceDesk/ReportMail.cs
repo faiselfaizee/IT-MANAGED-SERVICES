@@ -63,9 +63,10 @@ public sealed class ReportMailJob : IJobHandler
         await using var db = new NpgsqlConnection(job.Tenant.ConnectionString); await db.OpenAsync(ct);
 
         // A report is claimed (recorded) before it is queued, so two runs at the same moment cannot both send it; a failed queueing gives the claim back.
+        // "Send now" sends again, except a report that went out in the last five minutes (for example by the schedule a moment before).
         async Task<bool> Claim(string scope, string to)
         {
-            await using var c = new NpgsqlCommand("insert into servicedesk.report_sent (month, scope, recipient) values (@m,@s,@r) on conflict (month, scope, recipient) do " + (force ? "update set at = now()" : "nothing"), db);
+            await using var c = new NpgsqlCommand("insert into servicedesk.report_sent (month, scope, recipient) values (@m,@s,@r) on conflict (month, scope, recipient) do " + (force ? "update set at = now() where servicedesk.report_sent.at < now() - interval '5 minutes'" : "nothing"), db);
             c.Parameters.AddWithValue("m", month); c.Parameters.AddWithValue("s", scope); c.Parameters.AddWithValue("r", to.ToLowerInvariant());
             return await c.ExecuteNonQueryAsync(ct) == 1;
         }
