@@ -15,6 +15,7 @@ type login struct {
 	Kind   string `json:"kind"` // windows, ssh (private key), sshpw (SSH password), snmp (community in secret), vmware (ESXi or vCenter)
 	User   string `json:"user"`
 	Secret string `json:"secret"`
+	Vendor string `json:"vendor"`
 }
 
 // credsFor returns the logins saved on this computer followed by the ones the platform sent for this job.
@@ -32,8 +33,8 @@ func (r *Runner) credsFor(l []login) []config.Cred {
 			}
 		case "snmp":
 			out = append(out, config.Cred{Name: x.Name, Kind: "snmp", Community: x.Secret})
-		case "vmware", "bmc", "nutanix", "proxmox", "xen":
-			out = append(out, config.Cred{Name: x.Name, Kind: x.Kind, User: x.User, Password: x.Secret})
+		case "vmware", "bmc", "nutanix", "proxmox", "xen", "netssh", "netapi":
+			out = append(out, config.Cred{Name: x.Name, Kind: x.Kind, User: x.User, Password: x.Secret, Vendor: x.Vendor})
 		}
 	}
 	return out

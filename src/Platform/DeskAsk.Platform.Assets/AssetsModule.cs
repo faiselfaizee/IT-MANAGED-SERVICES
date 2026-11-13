@@ -232,6 +232,13 @@ public sealed class AssetsSchema : ITenantSchema
         new(15, "logins for Proxmox VE and XCP-ng / Citrix Hypervisor", @"
             alter table assets.creds drop constraint if exists creds_kind_check;
             alter table assets.creds add constraint creds_kind_check check (kind in ('windows','ssh','sshpw','snmp','login','bmc','vmware','nutanix','proxmox','xen','netssh','netapi'))"),
+        new(16, "configuration backups of network devices", @"
+            create table if not exists assets.configs (
+              id bigserial primary key, asset_id bigint not null references assets.assets(id) on delete cascade, at timestamptz not null default now(),
+              source text not null default '', vendor text not null default '', text text not null, size int not null default 0, lines int not null default 0, hash text not null);
+            create index if not exists configs_asset on assets.configs (asset_id, id);
+            alter table assets.assets add column if not exists config_checked_at timestamptz;
+            alter table assets.assets add column if not exists config_error text not null default ''"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -447,6 +454,7 @@ public sealed class AssetsModule : IPlatformModule
         ExtrasApi.Map(r, Key);
         AssetExport.Map(r, Key);
         AgentUpdateApi.Map(r, Key);
+        ConfigsApi.Map(r, Key);
         RenewalsApi.Map(r, Key);
 
         // ---- types

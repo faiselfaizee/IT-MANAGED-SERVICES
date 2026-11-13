@@ -222,3 +222,29 @@ test('a server read as VMware can also have its iDRAC read, and the physical det
   expect(screen.getByText(/Management controller: 15G Monolithic/)).toBeTruthy();
   expect(screen.getByText('Virtual machines (1, 1 running)')).toBeTruthy();
 });
+
+test('a switch shows its ports and its configuration versions with what changed', async () => {
+  const sw = device({ name: 'CORE-SW1', agent: { id: '', online: false, lastSeen: null, source: 'collector', inventoryAt: null },
+    watch: { mode: 'network', collectorId: 'c1', collector: 'Site A', readRequested: false, up: true, checkedAt: null, bmc: '' },
+    hardware: { api: 'Cisco (SNMP)', port_summary: { total: 3, connected: 1, free: 1, disabled: 1, speeds: { '1 Gbps': 1 } },
+      ports: [{ name: 'Gi1/0/1', description: 'Uplink', kind: 'Ethernet', state: 'Connected', speed: '1 Gbps' }, { name: 'Gi1/0/2', kind: 'Ethernet', state: 'Not connected' }, { name: 'Gi1/0/3', kind: 'Ethernet', state: 'Disabled' }],
+      modules: [{ name: 'Switch 1', kind: 'Chassis', model: 'C9200L-48P-4X', serial: 'JAE25110ABC', software: '17.9.4' }] } });
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const u = String(url);
+    if (u.startsWith('/api/assets/7/device')) return new Response(JSON.stringify(sw), { status: 200 });
+    if (u === '/api/assets/7/configs') return new Response(JSON.stringify({ keep: 30, checkedAt: new Date().toISOString(), error: '', items: [
+      { id: 2, at: '2026-11-13T10:00:00Z', source: 'ssh', vendor: 'cisco', size: 60, lines: 3 }, { id: 1, at: '2026-11-12T10:00:00Z', source: 'ssh', vendor: 'cisco', size: 50, lines: 3 }] }), { status: 200 });
+    if (u === '/api/assets/7/configs/2') return new Response(JSON.stringify({ id: 2, text: 'hostname CORE-SW1\ninterface Gi1/0/1\n description Uplink to FW2' }), { status: 200 });
+    if (u === '/api/assets/7/configs/1') return new Response(JSON.stringify({ id: 1, text: 'hostname CORE-SW1\ninterface Gi1/0/1\n description Uplink to FW' }), { status: 200 });
+    return new Response('{}', { status: 200 });
+  }));
+  location.hash = '#/assets/7/hardware'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('Ports: 3, 1 in use, 1 free, 1 switched off')).toBeTruthy());
+  expect(screen.getByText('In use: 1 at 1 Gbps')).toBeTruthy(); expect(screen.getByText('JAE25110ABC')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Configuration' })).toBeTruthy();
+  cleanup(); location.hash = '#/assets/7/config'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText(/description Uplink to FW2/)).toBeTruthy());
+  fireEvent.click(screen.getByRole('button', { name: 'Changes from the version before' }));
+  await waitFor(() => expect(screen.getByText('Changes: 1 lines added, 1 removed')).toBeTruthy());
+  expect(screen.getByText(/^\+\s+description Uplink to FW2$/)).toBeTruthy(); expect(screen.getByText(/^-\s+description Uplink to FW$/)).toBeTruthy();
+});

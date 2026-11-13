@@ -413,6 +413,8 @@ func (r *Runner) readDevice(ctx context.Context, a asset, target string) (any, e
 		return winInventory(ctx, r.credsFor(a.Logins), hostsOf(a.Host, target)...)
 	case "bmc":
 		return redfishWith(ctx, r.credsFor(a.Logins), target)
+	case "network":
+		return readNetwork(ctx, r.credsFor(a.Logins), target, firstNonEmpty(a.Host, a.Name))
 	case "vmware", "nutanix", "proxmox", "xen":
 		h := apiReaders[a.Monitor]
 		var last error = fmt.Errorf("no %s login is saved for this customer: add one under Assets > Credentials (hardware category Hypervisors, used for %s)", h.name, h.name)

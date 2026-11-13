@@ -6,6 +6,7 @@ import { Checks, Commands, Ise, RemoteControl, Shell, Tickets } from './DetailOp
 import { AgentInstall } from './AgentInstall';
 import { AgentUpdate } from './AgentUpdate';
 import { DEEP, Hardware, Watch } from './Hardware';
+import { Configs } from './Configs';
 
 const TABS = [
   ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['tickets', 'Tickets'],
@@ -16,7 +17,9 @@ const TABS = [
 function tabsFor(d: Rec): (readonly [string, string])[] {
   const hw = d.hardware && Object.keys(d.hardware).length > 0;
   if (!hw && !DEEP.includes(d.watch?.mode) && !d.watch?.bmc) return [...TABS];
-  const t: (readonly [string, string])[] = [...TABS]; t.splice(3, 0, ['hardware', 'Hardware']); return t;
+  const t: (readonly [string, string])[] = [...TABS]; t.splice(3, 0, ['hardware', 'Hardware']);
+  if (d.watch?.mode === 'network') t.splice(4, 0, ['config', 'Configuration']);
+  return t;
 }
 
 export default function Detail({ id, tab }: { id: string; tab: string }) {
@@ -44,6 +47,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
     {tab === 'storage' && <Storage d={d} />}
     {tab === 'network' && <Network d={d} />}
     {tab === 'hardware' && <Hardware d={d} />}
+    {tab === 'config' && <Configs id={id} />}
     {tab === 'checks' && <Checks id={id} />}
     {tab === 'apps' && <Apps id={id} />}
     {tab === 'tickets' && <Tickets id={id} d={d} />}

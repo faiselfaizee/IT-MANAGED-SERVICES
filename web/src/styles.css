@@ -262,3 +262,8 @@ table tr.group th { background: var(--surface-2, #f1f3f5); text-align: left; fon
   .tile-head { flex-wrap: wrap; } .tile-head .open { flex-basis: 100%; margin-left: 58px; }
   .ring-legend .name { white-space: normal; }
 }
+
+/* network device configuration backups */
+pre.config { max-height: 70vh; overflow: auto; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; background: color-mix(in srgb, var(--muted) 8%, transparent); padding: 12px; border-radius: 8px; margin: 0; }
+pre.config.diff div.add { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+pre.config.diff div.del { background: color-mix(in srgb, var(--bad) 18%, transparent); }

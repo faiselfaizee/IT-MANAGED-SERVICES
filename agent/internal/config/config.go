@@ -38,6 +38,7 @@ type Cred struct {
 	KeyFile   string `json:"keyFile,omitempty"`   // ssh private key path
 	Community string `json:"community,omitempty"` // snmp v2c
 	CIDR      string `json:"cidr,omitempty"`      // limit to a network; empty means any device
+	Vendor    string `json:"vendor,omitempty"`    // for network device logins: Fortinet, Cisco Meraki, Palo Alto...
 }
 
 type Collector struct {

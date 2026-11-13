@@ -225,3 +225,35 @@ All of them fill the same **Hardware** tab as VMware: hosts, storage and virtual
 - **KVM / libvirt:** every domain with state, CPUs, memory and IP (when libvirt knows it). **Proxmox through the agent:** `qm list` and `pct list` (name, state, memory, disk).
 
 For the physical side of any of these hosts (power supplies, memory modules, drives), add its **Management address** (iLO, iDRAC, XClarity) as described above. Tested against simulated answers only.
+
+## Network devices: firewalls, switches, access points (v2.13.0)
+
+Choose **Network device: firewall, switch, access point (SNMP and configuration)** under *Read as* on the device's Overview. The controller reads it every six hours and on **Read now**.
+
+**Logins** (Assets > Credentials, the device's customer; categories Firewalls, Switches or Access points are tried first):
+- an **SNMP community** (used for Printer, switch or firewall (SNMP)) - for hardware and ports;
+- a **Network device (SSH user and password)** login - for the configuration backup. Write the **vendor** (Cisco, Fortinet, Aruba, ...) when the device does not say its maker over SNMP;
+- or a **Network device (API token or key)** login with the vendor **Fortinet** (REST API token of a read-only API admin), **Palo Alto** (API key) or **Cisco Meraki** (Dashboard API key; the controller needs internet access to api.meraki.com). API logins are tried before SSH.
+
+**What is read over SNMP (all makers)**
+- Maker, model, serial number and firmware (ENTITY-MIB; Fortinet, SonicWall, Palo Alto and UniFi also from their own MIBs).
+- **Every port**: name, description, kind (Ethernet, fibre, wireless, LAG), state (in use, free, switched off), speed and MAC; and a summary such as "52 ports, 30 in use, 20 free, 2 switched off; in use: 28 at 1 Gbps, 2 at 10 Gbps". VLAN, loopback and tunnel interfaces are left out.
+- **Hardware modules** (chassis, stack members, line cards) with model, serial and firmware.
+- **Power supplies, fans and temperatures** with their state: Cisco (CISCO-ENVMON-MIB), HP/Aruba (HP-ICF-CHASSIS), Fortinet (hardware sensors). Other makers list the parts without a state.
+
+**Configuration backup**
+| Maker | How | Commands / call |
+|---|---|---|
+| Cisco IOS, IOS-XE, NX-OS | SSH | `terminal length 0`, `show running-config` |
+| Fortinet FortiGate | API token, or SSH | `/api/v2/monitor/system/config/backup?scope=global`; SSH: `config system console / set output standard / end`, `show` |
+| HP / Aruba (ArubaOS-Switch, AOS-CX) | SSH | `no page`, `show running-config` |
+| Palo Alto PAN-OS | XML API (key, or the SSH user and password) | `type=export&category=configuration` |
+| SonicWall SonicOS 7 | SSH | `no cli pager session`, `show current-config` |
+| Ubiquiti EdgeOS / EdgeSwitch | SSH | `show configuration commands` / `show running-config` |
+| Cisco Meraki (MS, MX, MR) | Dashboard API | device, switch ports and their status, VLANs, firewall rules or SSIDs (as JSON); a Meraki switch's ports also fill the ports table |
+| Juniper, MikroTik | SSH | `show configuration \| display set \| no-more`, `/export` |
+| Sophos (SFOS) | not possible over SSH (the console is a menu) | use Sophos Central or the firewall's scheduled backup; hardware and ports still come over SNMP |
+
+The **Configuration** tab shows the latest configuration, every kept version (a new one only when it changed, the latest 30), **what changed** from the version before, and a download. Configurations contain password hashes and keys: only administrators can see them, each view and download is in the audit log, and they never go into the CSV export or the PDF. A failed backup shows its reason on the tab; the device's other details are still read.
+
+Tested against simulated devices only (an SNMP switch and firewall, a FortiGate and Palo Alto API, the Meraki Dashboard, and a stand-in SSH device).

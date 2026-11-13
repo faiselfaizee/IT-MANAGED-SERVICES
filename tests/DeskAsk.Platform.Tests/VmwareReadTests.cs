@@ -226,4 +226,76 @@ public class VmwareReadTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal("DC01", dev.GetProperty("hardware").GetProperty("vms")[0].GetProperty("name").GetString());
         Assert.Contains("Hyper-V", dev.GetProperty("hardware").GetProperty("api").GetString());
     }
+
+    [PgFact]
+    public async Task ANetworkDeviceGetsItsSnmpAndNetworkLoginsAndKeepsAConfigurationVersionOnlyWhenItChanges()
+    {
+        var api = await TestSupport.AdminClient(factory);
+        await api.GetAsync("/api/assets/types");
+        await Sql("truncate assets.collectors, assets.creds, assets.shells, assets.rc_log, assets.jobs, assets.agent_q, assets.agents, assets.enroll_tokens, assets.amc, assets.rentals, assets.history, assets.assets, assets.companies, assets.types restart identity cascade");
+        var co = (await J(await api.PostAsync("/api/assets/companies", Json(new { name = "Acme Ltd" })))).GetProperty("id").GetInt32();
+        var tok = (await J(await api.PostAsync("/api/assets/collectors/tokens", Json(new { companyId = co, label = "HQ" })))).GetProperty("token").GetString()!;
+        var anon = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var en = await J(await anon.PostAsync("/collector/v1/enroll", Json(new { token = tok, name = "HQ", hostname = "COL-1", platform = "windows", version = "2.13.0" })));
+        var cid = en.GetProperty("collectorId").GetString()!;
+        var col = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        col.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", en.GetProperty("key").GetString()); col.DefaultRequestHeaders.Add("X-Collector-Id", cid);
+        async Task Cred(object o) => Assert.True((await api.PostAsync("/api/assets/discover/creds", Json(o))).IsSuccessStatusCode);
+        await Cred(new { name = "community", kind = "snmp", category = "", secret = "public", companyId = co });
+        await Cred(new { name = "printer ssh", kind = "netssh", category = "printer", username = "x", secret = "x", companyId = co });
+        await Cred(new { name = "switch ssh", kind = "netssh", category = "switch", vendor = "Cisco", username = "backup", secret = "s1", companyId = co });
+        await Cred(new { name = "FGT token", kind = "netapi", category = "firewall", vendor = "Fortinet FortiGate", secret = "tok", companyId = co });
+        await Cred(new { name = "domain", kind = "windows", category = "computer", username = "ACME\\adm", secret = "w", companyId = co });
+
+        await col.PostAsync("/collector/v1/checkin", Json(new { found = new object[] { new { ip = "10.0.0.2", hostname = "CORE-SW1", open = new[] { 22, 161 }, mac = "" } } }));
+        await api.PostAsync($"/api/assets/collectors/{cid}/adopt", Json(new { ips = new[] { "10.0.0.2" } }));
+        var aid = (await J(await api.GetAsync("/api/assets"))).GetProperty("items")[0].GetProperty("id").GetInt64();
+        Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/{aid}/monitor", Json(new { mode = "network", collectorId = cid }))).StatusCode);
+        var a = (await J(await col.PostAsync("/collector/v1/checkin", Json(new { })))).GetProperty("assets")[0];
+        var logins = a.GetProperty("logins").EnumerateArray().Select(l => l.GetProperty("name").GetString()).ToList();
+        Assert.Equal(new[] { "switch ssh", "FGT token", "community", "printer ssh" }, logins); // network categories first; no Windows login
+        Assert.Equal("Fortinet FortiGate", a.GetProperty("logins")[1].GetProperty("vendor").GetString());
+
+        // an SNMP-mode device does not get the SSH/API network logins
+        Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/{aid}/monitor", Json(new { mode = "snmp", collectorId = cid }))).StatusCode);
+        Assert.Equal(new[] { "community" }, (await J(await col.PostAsync("/collector/v1/checkin", Json(new { })))).GetProperty("assets")[0].GetProperty("logins").EnumerateArray().Select(l => l.GetProperty("name").GetString()));
+        await api.PostAsync($"/api/assets/{aid}/monitor", Json(new { mode = "network", collectorId = cid }));
+
+        object Inv(string? config, string? error = null) => new
+        {
+            schema = 1, hostname = "CORE-SW1", make = "Cisco", model = "C9200L-48P-4X", serial_number = "JAE25110ABC", os_version = "17.9.4",
+            hardware_extra = new { platform = "network", api = "Cisco (SNMP)", port_summary = new { total = 52, connected = 30, free = 20, disabled = 2 },
+                ports = new object[] { new { name = "Gi1/0/1", kind = "Ethernet", state = "Connected", speed = "1 Gbps" } } },
+            config = config == null ? null : new { source = "ssh", vendor = "cisco", text = config }, config_error = error,
+        };
+        async Task Send(object raw) => Assert.Equal(HttpStatusCode.OK, (await col.PostAsync("/collector/v1/checkin", Json(new { results = new { inventories = new object[] { new { asset = aid.ToString(), raw } } } }))).StatusCode);
+        var v1 = "hostname CORE-SW1\ninterface Gi1/0/1\n description Uplink to FW\nend";
+        await Send(Inv(v1)); await Send(Inv(v1)); // the same text twice: one version
+        var list = await J(await api.GetAsync($"/api/assets/{aid}/configs"));
+        Assert.Equal(1, list.GetProperty("items").GetArrayLength()); Assert.Equal(4, list.GetProperty("items")[0].GetProperty("lines").GetInt32());
+        await Send(Inv(v1.Replace("FW", "FW2")));
+        list = await J(await api.GetAsync($"/api/assets/{aid}/configs"));
+        Assert.Equal(2, list.GetProperty("items").GetArrayLength());
+        var latest = list.GetProperty("items")[0].GetProperty("id").GetInt64();
+        var one = await J(await api.GetAsync($"/api/assets/{aid}/configs/{latest}"));
+        Assert.Contains("Uplink to FW2", one.GetProperty("text").GetString());
+        var dl = await api.GetAsync($"/api/assets/{aid}/configs/{latest}/download");
+        Assert.Equal("text/plain", dl.Content.Headers.ContentType!.MediaType); Assert.Contains("Uplink to FW2", await dl.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.NotFound, (await api.GetAsync($"/api/assets/{aid}/configs/999999")).StatusCode);
+
+        // a failed backup is shown, and cleared by the next good one; the device details still land
+        await Send(Inv(null, "SSH login \"switch ssh\": Permission denied"));
+        list = await J(await api.GetAsync($"/api/assets/{aid}/configs"));
+        Assert.Contains("Permission denied", list.GetProperty("error").GetString());
+        var dev = await J(await api.GetAsync($"/api/assets/{aid}/device"));
+        Assert.Equal("JAE25110ABC", dev.GetProperty("identity").GetProperty("serial").GetString());
+        Assert.Equal(52, dev.GetProperty("hardware").GetProperty("port_summary").GetProperty("total").GetInt32());
+        await Send(Inv(v1.Replace("FW", "FW2")));
+        list = await J(await api.GetAsync($"/api/assets/{aid}/configs"));
+        Assert.Equal("", list.GetProperty("error").GetString()); Assert.Equal(2, list.GetProperty("items").GetArrayLength());
+
+        // the configuration text never reaches the export
+        var csv = await (await api.GetAsync($"/api/assets/{aid}/export.csv")).Content.ReadAsStringAsync();
+        Assert.DoesNotContain("Uplink to FW2", csv); Assert.Contains(",Ports,", csv);
+    }
 }

@@ -18,9 +18,11 @@ namespace DeskAsk.Platform.Assets;
 /// </summary>
 public static class CollectorsApi
 {
-    static readonly string[] Monitors = { "ping", "windows", "ssh", "snmp", "vmware", "nutanix", "proxmox", "xen", "bmc", "device" };
+    static readonly string[] Monitors = { "ping", "windows", "ssh", "snmp", "network", "vmware", "nutanix", "proxmox", "xen", "bmc", "device" };
     /// <summary>The modes in which the controller reads the device's details, not only whether it answers.</summary>
-    static readonly string[] Reading = { "windows", "ssh", "snmp", "vmware", "nutanix", "proxmox", "xen", "bmc" };
+    static readonly string[] Reading = { "windows", "ssh", "snmp", "network", "vmware", "nutanix", "proxmox", "xen", "bmc" };
+    static readonly string[] NetKinds = { "snmp", "netssh", "netapi" };
+    static readonly string[] NetCategories = { "firewall", "switch", "wireless" };
     /// <summary>Login kinds sent only for their own read mode, with the hardware category they are filed under first.</summary>
     static readonly Dictionary<string, string> OwnKinds = new() { ["vmware"] = "virtualization", ["nutanix"] = "virtualization", ["proxmox"] = "virtualization", ["xen"] = "virtualization", ["bmc"] = "server" };
     static IResult Bad(string error, string? detail = null) => AgentsApi.Bad(error, detail);
@@ -331,6 +333,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
                     await using var tx = await db.BeginTransactionAsync(ct);
                     await AssetsDevice.ApplyInventory(db, id, Inventory.Normalize(raw), "collector", "collector " + col.Name, ct, tx);
                     await tx.CommitAsync(ct);
+                    await ConfigsApi.FromInventory(db, id, raw, "collector " + col.Name, ct);
                 }
                 catch (Exception e) { await Log(db, col.Id, "warn", "Inventory for asset " + id + " rejected: " + e.Message, ct); }
             }
@@ -400,13 +403,13 @@ chmod 755 /opt/deskask-collector/deskask-collector
 
             // the logins saved under Assets > Credentials, sealed in the database; sent only to this collector, over its own authenticated connection
             var saved = new List<(int? Company, string Kind, string Category, object Login)>();
-            await using (var c = new NpgsqlCommand("select name, kind, username, secret, company_id, category from assets.creds where kind in ('windows','ssh','snmp','sshpw','vmware','nutanix','proxmox','xen','bmc') order by id", db))
+            await using (var c = new NpgsqlCommand("select name, kind, username, secret, company_id, category, vendor from assets.creds where kind in ('windows','ssh','snmp','sshpw','vmware','nutanix','proxmox','xen','bmc','netssh','netapi') order by id", db))
             {
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 while (await rd.ReadAsync(ct))
                 {
                     string secret; try { secret = rd.GetString(3) == "" ? "" : SecretBox.Open(cfg, t.Require().Id, rd.GetString(3)); } catch (Exception) { continue; }
-                    saved.Add((rd.IsDBNull(4) ? null : rd.GetInt32(4), rd.GetString(1), rd.GetString(5), new { name = rd.GetString(0), kind = rd.GetString(1), user = rd.GetString(2), secret }));
+                    saved.Add((rd.IsDBNull(4) ? null : rd.GetInt32(4), rd.GetString(1), rd.GetString(5), new { name = rd.GetString(0), kind = rd.GetString(1), user = rd.GetString(2), secret, vendor = rd.GetString(6) }));
                 }
             }
             var company = new Dictionary<long, int?>();
@@ -419,8 +422,11 @@ chmod 755 /opt/deskask-collector/deskask-collector
             object[] LoginsFor(long assetId, string mode = "")
             {
                 company.TryGetValue(assetId, out var co);
+                if (mode == "network") // a firewall, switch or access point: its SNMP community and its SSH or API logins, network categories first
+                    return saved.Where(x => (x.Company == null || x.Company == co) && NetKinds.Contains(x.Kind))
+                        .OrderBy(x => x.Company == null ? 1 : 0).ThenBy(x => NetCategories.Contains(x.Category) ? 0 : 1).Select(x => x.Login).ToArray();
                 var own = OwnKinds.TryGetValue(mode, out var cat);
-                return saved.Where(x => (x.Company == null || x.Company == co) && (own ? x.Kind == mode : !OwnKinds.ContainsKey(x.Kind)))
+                return saved.Where(x => (x.Company == null || x.Company == co) && (own ? x.Kind == mode : !OwnKinds.ContainsKey(x.Kind) && x.Kind is not ("netssh" or "netapi")))
                     .OrderBy(x => x.Company == null ? 1 : 0).ThenBy(x => own && x.Category != cat ? 1 : 0).Select(x => x.Login).ToArray();
             }
             // the work list

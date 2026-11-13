@@ -16,7 +16,8 @@ var makers = map[string]string{
 	"11863": "TP-Link", "4526": "Netgear", "171": "D-Link", "674": "Dell", "1602": "Canon", "1347": "Kyocera", "253": "Xerox", "2435": "Brother",
 	"1248": "Epson", "641": "Lexmark", "367": "Ricoh", "310": "Konica Minolta", "119": "NEC", "2011": "Huawei", "25506": "H3C", "41112": "Ubiquiti",
 	"6486": "Alcatel-Lucent", "1991": "Brocade", "1916": "Extreme Networks", "6876": "VMware", "2021": "Net-SNMP", "16": "Allied Telesis", "5951": "Citrix",
-	"3375": "F5", "6527": "Nokia", "4881": "Ruijie", "27975": "Sophos", "8744": "Sophos", "10002": "Ubiquiti", "15983": "WatchGuard", "21013": "Hikvision",
+	"3375": "F5", "6527": "Nokia", "4881": "Ruijie", "27975": "Sophos", "8744": "Sophos", "2604": "Sophos", "10002": "Ubiquiti", "15983": "WatchGuard", "21013": "Hikvision",
+	"8741": "SonicWall", "29671": "Cisco Meraki", "14823": "Aruba", "47196": "Aruba",
 }
 
 // SNMPInventory reads a device over SNMP v2c and returns it in the inventory shape the platform reads.
@@ -83,6 +84,7 @@ func SNMPInventory(addr, community, fallbackName string) (map[string]any, error)
 		inv["make"] = mf
 	}
 	inv["nics"] = snmpNICs(c)
+	addNetworkDetails(c, inv)
 	return inv, nil
 }
 

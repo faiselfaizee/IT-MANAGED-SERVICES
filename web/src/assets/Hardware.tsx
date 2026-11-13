@@ -4,13 +4,14 @@ import { Act, Badge, Card, Dl, Empty, Err, Field, ago, fmtBytes, fmtDate } from 
 
 /** How a controller reads a device: only whether it answers, or its details too. */
 export const MODES: [string, string][] = [['', 'Not watched'], ['ping', 'Ping only'], ['device', 'Ping and ports (no login)'], ['windows', 'Windows or Hyper-V host (WinRM)'],
-  ['ssh', 'Linux, KVM or Proxmox host (SSH)'], ['snmp', 'Printer, switch or firewall (SNMP)'], ['vmware', 'VMware ESXi or vCenter'], ['nutanix', 'Nutanix (Prism Element)'], ['proxmox', 'Proxmox VE (API)'],
+  ['ssh', 'Linux, KVM or Proxmox host (SSH)'], ['snmp', 'Printer or other device (SNMP)'], ['network', 'Network device: firewall, switch, access point (SNMP and configuration)'], ['vmware', 'VMware ESXi or vCenter'], ['nutanix', 'Nutanix (Prism Element)'], ['proxmox', 'Proxmox VE (API)'],
   ['xen', 'XCP-ng or Citrix Hypervisor'], ['bmc', 'Server management (iLO, iDRAC, XClarity)']];
-const READING = ['windows', 'ssh', 'snmp', 'vmware', 'nutanix', 'proxmox', 'xen', 'bmc'];
+const READING = ['windows', 'ssh', 'snmp', 'network', 'vmware', 'nutanix', 'proxmox', 'xen', 'bmc'];
 /** Modes that read a hypervisor or a server in depth, so the Hardware tab is shown. */
-export const DEEP = ['vmware', 'nutanix', 'proxmox', 'xen', 'bmc'];
+export const DEEP = ['vmware', 'nutanix', 'proxmox', 'xen', 'bmc', 'network'];
 const LOGIN_HINT: Record<string, string> = {
   vmware: 'Uses the VMware logins saved under Credentials for this customer (hardware category Hypervisors). A read-only account is enough.',
+  network: 'Reads serial, model, firmware, every port with its state and speed, modules, power supplies and fans over SNMP, and backs up the configuration over SSH or the vendor API. Uses the SNMP and network device logins saved under Credentials for this customer.',
   nutanix: 'Use the Prism Element (cluster) address, port 9440. Uses the Nutanix logins saved under Credentials for this customer; a viewer account is enough.',
   proxmox: 'Port 8006. Uses the Proxmox logins saved under Credentials: an API token (user name like audit@pve!deskask, the token secret as password, PVEAuditor role) or a user and password.',
   xen: "Use the pool master's address. Uses the XCP-ng logins saved under Credentials for this customer (a read-only role is enough).",
@@ -57,16 +58,20 @@ const num = (v: unknown) => (typeof v === 'number' ? v : Number(v ?? 0));
 /** Hardware read by a controller: power supplies, sensors, graphics cards, and for VMware the hosts, datastores and virtual machines. */
 export function Hardware({ d }: { d: Rec }) {
   const h = (d.hardware ?? {}) as Rec;
+  const ports = (h.ports ?? []) as Rec[], mods = (h.modules ?? []) as Rec[], sum = (h.port_summary ?? null) as Rec | null;
   const procs = (h.processors ?? []) as Rec[], dimms = (h.memory_modules ?? []) as Rec[], drives = (h.drives ?? []) as Rec[], ctrls = (h.storage_controllers ?? []) as Rec[];
   const psu = (h.power_supplies ?? []) as Rec[], sensors = (h.sensors ?? []) as Rec[], gpus = (h.gpus ?? []) as Rec[], hosts = (h.hosts ?? []) as Rec[], ds = (h.datastores ?? []) as Rec[], vms = (h.vms ?? []) as Rec[];
   const [all, setAll] = useState(false);
-  if (![psu, sensors, gpus, hosts, ds, vms, procs, dimms, drives].some((x) => x.length)) return <Empty>No hardware details yet. Under Overview, choose a controller and how to read this device (a hypervisor, or server management), or enter its management address, then press Read now.</Empty>;
+  if (![psu, sensors, gpus, hosts, ds, vms, procs, dimms, drives, ports, mods].some((x) => x.length)) return <Empty>No hardware details yet. Under Overview, choose a controller and how to read this device (a hypervisor, or server management), or enter its management address, then press Read now.</Empty>;
   const bmc = (h.bmc ?? null) as Rec | null;
   const bad = sensors.filter((s) => s.state !== 'OK');
   const st = (h.host_state ?? {}) as Rec;
   return <>
     {h.api && <p className="muted">Read from {String(h.api)}{st.overall ? <> · overall health <Badge tone={STATE_TONE[String(st.overall)]}>{String(st.overall)}</Badge></> : null}</p>}
     {(bmc || h.bmc_api) && <p className="muted">Management controller: {String(h.bmc_api ?? h.api ?? '')}{bmc?.state && bmc.state !== 'OK' ? <> <Badge tone={STATE_TONE[String(bmc.state)]}>{String(bmc.state)}</Badge></> : null}</p>}
+    {ports.length > 0 && <Ports ports={ports} sum={sum} />}
+    {mods.length > 0 && <Card title={`Hardware modules (${mods.length})`}><table><thead><tr><th>Name</th><th>Kind</th><th>Model</th><th>Serial</th><th>Firmware / software</th></tr></thead><tbody>
+      {mods.map((m, i) => <tr key={i}><td>{m.name}<div className="muted">{m.description && m.description !== m.name ? m.description : ''}</div></td><td>{m.kind}</td><td>{m.model}</td><td className="mono">{m.serial}</td><td>{[m.firmware, m.software].filter(Boolean).join(' / ')}</td></tr>)}</tbody></table></Card>}
     {procs.length > 0 && <Card title={`Processors (${procs.length})`}><table><thead><tr><th>Socket</th><th>Model</th><th className="num">Cores</th><th className="num">Threads</th><th className="num">Max speed</th><th>State</th></tr></thead><tbody>
       {procs.map((p, i) => <tr key={i}><td>{p.socket}</td><td>{p.model}</td><td className="num">{p.cores || ''}</td><td className="num">{p.threads || ''}</td><td className="num">{p.max_mhz ? `${p.max_mhz} MHz` : ''}</td><td><Badge tone={STATE_TONE[p.state]}>{p.state}</Badge></td></tr>)}</tbody></table></Card>}
     {dimms.length > 0 && <Card title={`Memory modules (${dimms.length}, ${fmtBytes(dimms.reduce((t, m) => t + num(m.size_bytes), 0))})`}><table><thead><tr><th>Slot</th><th className="num">Size</th><th>Type</th><th className="num">Speed</th><th>Maker</th><th>Part</th><th>State</th></tr></thead><tbody>
@@ -93,4 +98,21 @@ export function Hardware({ d }: { d: Rec }) {
       {vms.map((v, i) => <tr key={i}><td>{v.name}{v.guest_name && v.guest_name !== v.name ? <div className="muted">{v.guest_name}</div> : null}</td><td><Badge tone={v.power === 'On' ? 'ok' : undefined}>{v.power}</Badge>{v.kind === 'Container' ? <> <Badge>container</Badge></> : null}</td><td>{v.guest_os}</td>
         <td className="mono">{v.ip}</td><td className="num">{v.cpus}</td><td className="num">{fmtBytes(num(v.memory_bytes))}</td><td className="num">{fmtBytes(num(v.disk_bytes))}</td>{hosts.length > 0 && <td>{v.host}</td>}</tr>)}</tbody></table></Card>}
   </>;
+}
+
+const PORT_TONE: Record<string, 'ok' | 'warn' | 'bad' | undefined> = { Connected: 'ok', Disabled: undefined, 'Not connected': undefined };
+
+/** Every port of a firewall, switch or access point, with a count of ports in use and free. */
+function Ports({ ports, sum }: { ports: Rec[]; sum: Rec | null }) {
+  const [show, setShow] = useState<'all' | 'Connected' | 'Not connected' | 'Disabled'>('all');
+  const list = show === 'all' ? ports : ports.filter((p) => p.state === show);
+  const speeds = Object.entries((sum?.speeds ?? {}) as Record<string, number>).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} at ${k}`).join(', ');
+  return <Card title={sum ? `Ports: ${sum.total}, ${sum.connected} in use, ${sum.free} free${sum.disabled ? `, ${sum.disabled} switched off` : ''}` : `Ports (${ports.length})`}>
+    {speeds && <p className="muted">In use: {speeds}</p>}
+    <div className="tools"><select value={show} onChange={(e) => setShow(e.target.value as typeof show)} aria-label="Show ports">
+      <option value="all">All ports</option><option value="Connected">In use</option><option value="Not connected">Free</option><option value="Disabled">Switched off</option></select></div>
+    <table><thead><tr><th>Port</th><th>Description</th><th>Kind</th><th>State</th><th className="num">Speed</th><th>MAC</th></tr></thead><tbody>
+      {list.map((p, i) => <tr key={i}><td className="mono">{p.name}</td><td>{p.description}{p.vlan ? <div className="muted">VLAN {p.vlan}</div> : null}</td><td>{p.kind}</td>
+        <td><Badge tone={PORT_TONE[String(p.state)]}>{String(p.state) === 'Not connected' ? 'Free' : p.state}</Badge></td><td className="num">{p.speed ?? ''}</td><td className="mono">{p.mac}</td></tr>)}</tbody></table>
+  </Card>;
 }
