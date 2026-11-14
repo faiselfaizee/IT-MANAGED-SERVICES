@@ -218,6 +218,9 @@ public class AgentsTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(0, (await J(await api.GetAsync("/api/assets/agents"))).GetArrayLength());
         var d = await J(await api.GetAsync("/api/assets/" + a.AssetId + "/device"));
         Assert.Equal("", d.GetProperty("agent").GetProperty("id").GetString());
+        // the agent collects its uninstall order once (it used to be lost with the record), then it is refused
+        var msgs = (await J(await a.Client.GetAsync("/agent/v1/poll?wait=0"))).GetProperty("msgs").EnumerateArray().Select(m => m.GetProperty("type").GetString()).ToList();
+        Assert.Equal(new[] { "uninstall" }, msgs);
         Assert.Equal(HttpStatusCode.Unauthorized, (await a.Client.GetAsync("/agent/v1/poll?wait=0")).StatusCode);
     }
 }

@@ -25,8 +25,11 @@ public static class AssetDash
         when a.os_family in ('windows','linux','macos','darwin') or coalesce(t.name, '') ~* '(laptop|desktop|computer|notebook|workstation|\mpc\M)' then 'computer'
         else 'other' end)";
 
-    /// <summary>A power supply, drive, memory module, fan or other part reported as not OK by a controller.</summary>
-    public const string HwBadSql = @"jsonb_path_exists(a.hw_extra || a.bmc_extra, '$.* ? (@.type() == ""array"")[*] ? (@.state == ""Critical"" || @.state == ""Warning"")')";
+    /// <summary>
+    /// A power supply, drive, memory module, fan or other part reported as not OK by a controller, or a hypervisor host in red.
+    /// Strict mode: in lax mode the array test unwraps the arrays first and never matches. VMs are left out (a VM warning is not a hardware fault).
+    /// </summary>
+    public const string HwBadSql = @"jsonb_path_exists(coalesce(a.hw_extra, '{}') || coalesce(a.bmc_extra, '{}'), 'strict $.keyvalue() ? (@.key != ""vms"" && @.value.type() == ""array"").value[*] ? (@.state == ""Critical"" || @.state == ""Warning"" || @.health == ""red"")')";
 
     /// <summary>The list filter for one ring part, or null when the name is not known.</summary>
     public static string? Where(string ring, string part) => (ring, part) switch
