@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { api, useLoad, type Rec } from './http';
 import { Act, Badge, Card, Empty, Err, Field, Loading, Modal, useSubmit } from './ui';
 
-const MODULES: [string, string][] = [['assets', 'Assets'], ['servicedesk', 'Service Desk']];
+const MODULES: [string, string][] = [['assets', 'Assets'], ['servicedesk', 'Service Desk'], ['monitoring', 'Monitoring']];
 const ACTIONS: [string, string][] = [['read', 'View'], ['add', 'Add'], ['modify', 'Change'], ['delete', 'Delete']];
 const modName = (m: string) => MODULES.find(([k]) => k === m)?.[1] ?? m;
 const actName = (a: string) => ACTIONS.find(([k]) => k === a)?.[1] ?? a;

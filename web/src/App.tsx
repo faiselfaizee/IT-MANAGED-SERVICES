@@ -21,8 +21,11 @@ const Licence = lazy(() => import('./Licence'));
 const Mail = lazy(() => import('./Mail'));
 const Updates = lazy(() => import('./Updates'));
 const ServiceDeskApp = lazy(() => import('./servicedesk/ServiceDeskApp'));
+const MonitoringApp = lazy(() => import('./monitoring/MonitoringApp'));
 
-export function Home({ who, live, assets }: { who: WhoAmI | null; live: boolean; assets: boolean }) {
+export function Home({ who, live, assets, monitoring = false }: { who: WhoAmI | null; live: boolean; assets: boolean; monitoring?: boolean }) {
+  const mon = useLoad<Rec>(live && monitoring ? '/api/monitoring/dashboard' : null);
+  const mo = (mon.data?.all ?? null) as Rec | null;
   const sum = useLoad<Rec>(live && assets ? '/api/assets/summary' : null);
   const s = sum.data;
   const desk = useLoad<Rec>(live ? '/api/servicedesk/summary' : null);
@@ -75,7 +78,27 @@ export function Home({ who, live, assets }: { who: WhoAmI | null; live: boolean;
             { key: 'c', label: 'Closed', value: n(d.closed), tone: 'none' }]} />
         </div>}
       </section>
-      {MODULES.filter((m) => m !== 'Assets' && m !== 'Service Desk').map((m) => <div key={m} className="tile tile-soon" aria-disabled="true">
+      {monitoring && <section className="tile tile-wide" aria-labelledby="t-mon">
+        <div className="tile-head"><span className="chip"><Icon name="Monitoring" size={22} /></span>
+          <div><h2 id="t-mon"><a href="#/monitoring">Monitoring</a></h2><p className="muted">{mo ? `${n(mo.watched)} of ${n(mo.devices)} devices watched, ${n(mo.alertsCritical) + n(mo.alertsWarning)} open alerts` : 'Alerts for devices that are down, busy, full or failing'}</p></div>
+          <a className="open" href="#/monitoring">Open Monitoring</a></div>
+        {mo && <div className="rings">
+          <Ring title="Device status" unit="devices" empty="No devices yet." parts={[
+            { key: 'ok', label: 'OK', value: n(mo.ok), tone: 'ok', href: '#/monitoring/devices?status=ok' },
+            { key: 'w', label: 'Warning', value: n(mo.warning), tone: 'warn', href: '#/monitoring/devices?status=warning' },
+            { key: 'c', label: 'Critical', value: n(mo.critical), tone: 'bad', href: '#/monitoring/devices?status=critical' },
+            { key: 'm', label: 'Muted', value: n(mo.muted), tone: 'info', href: '#/monitoring/devices?status=muted' },
+            { key: 'u', label: 'Not watched', value: n(mo.unwatched), tone: 'none', href: '#/monitoring/devices?status=unwatched' }]} />
+          <Ring title="Open alerts" unit="alerts" empty="No open alerts. All clear." parts={[
+            { key: 'c', label: 'Critical', value: n(mo.alertsCritical), tone: 'bad', href: '#/monitoring/alerts?severity=critical' },
+            { key: 'w', label: 'Warning', value: n(mo.alertsWarning), tone: 'warn', href: '#/monitoring/alerts?severity=warning' }]} />
+          <Ring title="Disk space" unit="devices" empty="No disk data yet." parts={[
+            { key: 'ok', label: '20% or more free', value: n(mo.diskOk), tone: 'ok', href: '#/monitoring/devices?disk=ok' },
+            { key: 'l', label: '10 to 20% free', value: n(mo.diskLow), tone: 'warn', href: '#/monitoring/devices?disk=low' },
+            { key: 'c', label: 'Under 10% free', value: n(mo.diskCritical), tone: 'bad', href: '#/monitoring/devices?disk=critical' }]} />
+        </div>}
+      </section>}
+      {MODULES.filter((m) => m !== 'Assets' && m !== 'Service Desk' && (m !== 'Monitoring' || !monitoring)).map((m) => <div key={m} className="tile tile-soon" aria-disabled="true">
         <span className="chip"><Icon name={m} size={22} /></span>
         <h2>{m}</h2>
         <p className="muted">{ABOUT[m]}</p>
@@ -99,6 +122,8 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const canAssets = !!fetcher || (!!mine.data?.assets?.read && mine.data.assets.read !== 'none');
   const inAssets = parts[0] === 'assets' && canAssets;
   const inDesk = parts[0] === 'servicedesk';
+  const canMon = !!fetcher || (!!mine.data?.monitoring?.read && mine.data.monitoring.read !== 'none');
+  const inMon = parts[0] === 'monitoring' && canMon;
   const inUsers = parts[0] === 'users' && isAdmin;
   const inAccess = parts[0] === 'access' && isAdmin;
   const inLicence = parts[0] === 'licence' && isAdmin;
@@ -108,11 +133,13 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
     <div className="shell">
       <nav aria-label="Modules" className="side">
         <a className="brand" href="#/" aria-label="DeskAsk Platform home"><Logo /><strong>DeskAsk</strong></a>
-        <a href="#/" className={!inAssets && !inDesk && !inUsers && !inAccess && !inLicence && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
+        <a href="#/" className={!inAssets && !inDesk && !inMon && !inUsers && !inAccess && !inLicence && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
         {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
           ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
           : m === 'Service Desk'
             ? <a key={m} href="#/servicedesk" className={inDesk ? 'on' : ''}><Icon name={m} />{m}</a>
+          : m === 'Monitoring' && canMon
+            ? <a key={m} href="#/monitoring" className={inMon ? 'on' : ''}><Icon name={m} />{m}</a>
             : <span key={m} title="Not built yet"><Icon name={m} />{m}<em>Soon</em></span>)}
         {isAdmin ? <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a> : null}
         {isAdmin ? <a href="#/access" className={inAccess ? 'on' : ''}><Icon name="access" />Access</a> : null}
@@ -129,12 +156,13 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
         {inAssets
           ? <Suspense fallback={<p className="muted">Loading…</p>}><AssetsApp /></Suspense>
           : inDesk ? <Suspense fallback={<p className="muted">Loading…</p>}><ServiceDeskApp /></Suspense>
+          : inMon ? <Suspense fallback={<p className="muted">Loading…</p>}><MonitoringApp /></Suspense>
           : inUpdates ? <Suspense fallback={<p className="muted">Loading…</p>}><Updates /></Suspense>
           : inMail ? <Suspense fallback={<p className="muted">Loading…</p>}><Mail /></Suspense>
           : inLicence ? <Suspense fallback={<p className="muted">Loading…</p>}><Licence /></Suspense>
           : inAccess ? <Suspense fallback={<p className="muted">Loading…</p>}><Access /></Suspense>
           : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><Users meId={me.data?.sub} /></Suspense>
-          : !err ? <Home who={who} live={!fetcher} assets={canAssets} /> : null}
+          : !err ? <Home who={who} live={!fetcher} assets={canAssets} monitoring={canMon && !fetcher} /> : null}
       </main>
     </div>
   );
