@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -118,5 +119,26 @@ func TestFortinetSerialAndFirmwareComeFromItsOwnMIB(t *testing.T) {
 	}
 	if s := x["port_summary"].(map[string]any); s["total"] != 4 || s["connected"] != 2 {
 		t.Errorf("summary = %v", s)
+	}
+}
+
+// A firewall that only speaks SNMPv3: the platform's snmp3 login reaches it through the normal device read.
+func TestASNMPv3LoginReadsTheDevice(t *testing.T) {
+	user := &snmp.V3{User: "deskask", AuthProto: "SHA", AuthPass: "auth-pass-123", PrivProto: "AES", PrivPass: "priv-pass-456"}
+	addr, stop := snmp.FakeDeviceV3(map[string]snmp.Value{
+		"1.3.6.1.2.1.1.1.0": snmp.Str("Palo Alto Networks PA-440"), "1.3.6.1.2.1.1.2.0": snmp.ObjectID("1.3.6.1.4.1.25461.2.3.43"), "1.3.6.1.2.1.1.5.0": snmp.Str("PA-HQ"),
+		"1.3.6.1.4.1.25461.2.1.2.1.3.0": snmp.Str("0123456789"), "1.3.6.1.4.1.25461.2.1.2.1.1.0": snmp.Str("11.1.2"),
+	}, user, []byte{0x80, 0, 0x63, 0x8d, 4, 'P', 'A'}, 3)
+	defer stop()
+	r := &Runner{}
+	raw, err := r.readDevice(context.Background(), asset{ID: "5", Monitor: "snmp", Logins: []login{
+		{Name: "v2 community", Kind: "snmp", Secret: "public-is-not-allowed"},
+		{Name: "firewall v3", Kind: "snmp3", User: "deskask", Secret: "auth-pass-123", AuthProto: "SHA", PrivProto: "AES", PrivSecret: "priv-pass-456"}}}, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv := raw.(map[string]any)
+	if inv["hostname"] != "PA-HQ" || inv["serial_number"] != "0123456789" || inv["os_version"] != "PAN-OS 11.1.2" {
+		t.Fatalf("got %v %v %v", inv["hostname"], inv["serial_number"], inv["os_version"])
 	}
 }

@@ -45,8 +45,12 @@ public class AssetsAccessTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var admin = await TestSupport.AdminClient(factory);
         await Sql("delete from identity.users where \"Email\" like '%@del.test'");
-        await Sql("delete from assets.delete_requests");
+        await Sql("delete from assets.delete_requests; truncate mail.outbox restart identity");
+        using var smtp = new FakeSmtp();
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/platform/mail/config", Json(new { provider = "smtp", from = "desk@example.test", fromName = "DeskAsk", host = "127.0.0.1", port = smtp.Port, security = "none", user = "", password = "" }))).StatusCode);
         Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "eng@del.test", name = "eng", role = "engineer", password = Pw }))).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "boss@del.test", name = "boss", role = "admin", password = Pw }))).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "view@del.test", name = "viewer", role = "viewer", password = Pw }))).StatusCode);
         var eng = await TestSupport.ClientFor(factory, "eng@del.test", Pw);
 
         var made = await eng.PostAsync("/api/assets", Json(new { name = "Reception PC", status = "in_use" }));
@@ -59,6 +63,16 @@ public class AssetsAccessTests : IClassFixture<WebApplicationFactory<Program>>
         var ask = await eng.PostAsync($"/api/assets/{id}/delete-request", Json(new { reason = "Scrapped" }));
         Assert.Equal(HttpStatusCode.Created, ask.StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await eng.PostAsync($"/api/assets/{id}/delete-request", Json(new { reason = "again" }))).StatusCode);
+        // the approvers get a mail; the requester and people who may not delete do not
+        await using (var db = new Npgsql.NpgsqlConnection(Environment.GetEnvironmentVariable("TEST_PG_CONNECTION")))
+        {
+            await db.OpenAsync();
+            await using var q = new Npgsql.NpgsqlCommand("select string_agg(to_addr, ',' order by to_addr), max(subject), max(body) from mail.outbox where reference like 'asset-delete:%'", db);
+            await using var rd = await q.ExecuteReaderAsync(); await rd.ReadAsync();
+            var to = rd.IsDBNull(0) ? "" : rd.GetString(0);
+            Assert.Contains("boss@del.test", to); Assert.DoesNotContain("eng@del.test", to); Assert.DoesNotContain("view@del.test", to);
+            Assert.Contains("Asset deletion to approve", rd.GetString(1)); Assert.Contains("Scrapped", rd.GetString(2)); Assert.Contains("#/assets/delete-requests", rd.GetString(2));
+        }
 
         // the asker sees the request but cannot decide it
         var list = JsonDocument.Parse(await eng.GetStringAsync("/api/assets/delete-requests?status=pending")).RootElement.GetProperty("items");

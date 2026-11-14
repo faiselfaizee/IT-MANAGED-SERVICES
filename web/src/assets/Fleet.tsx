@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, useInterval, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Copy, Empty, Err, Field, Modal, ago, fmtDate, useSubmit } from '../ui';
 import { MODES } from './Hardware';
+import { CountUp } from '../Rings';
 
 /** Agents (installed on devices) and site collectors (inside a customer's network). */
 export default function Fleet() {
@@ -9,20 +10,21 @@ export default function Fleet() {
 }
 
 function Agents() {
-  const tokens = useLoad<Rec[]>('/api/assets/enrolments'); const agents = useLoad<Rec[]>('/api/assets/agents'); const bin = useLoad<Rec>('/api/assets/recycle'); const [add, setAdd] = useState(false); const [show, setShow] = useState<Rec | null>(null);
-  const tl = Array.isArray(tokens.data) ? tokens.data : []; const al = Array.isArray(agents.data) ? agents.data : [];
+  const tokens = useLoad<Rec[]>('/api/assets/enrolments'); const dash = useLoad<Rec>('/api/assets/dashboard'); const bin = useLoad<Rec>('/api/assets/recycle'); const [add, setAdd] = useState(false); const [show, setShow] = useState<Rec | null>(null);
+  const tl = Array.isArray(tokens.data) ? tokens.data : []; const m = (dash.data?.all ?? {}) as Rec; const n = (v: unknown) => Number(v ?? 0);
   return <>
     <h2>Agents</h2>
     <div className="tools"><button className="primary" onClick={() => setAdd(true)}>New enrolment token</button><span className="muted">Run the install command on a computer to put an agent on it. It reports hardware and software and allows remote work.</span></div>
-    {al.length === 0 ? <Empty>No agents are installed yet.</Empty> : <table><thead><tr><th>Computer</th><th>Customer</th><th>System</th><th>Version</th><th>Last seen</th><th>Address</th><th /></tr></thead><tbody>
-      {al.map((a) => <tr key={a.id}><td>{a.assetId ? <a href={`#/assets/${a.assetId}`}>{a.hostname || a.assetName}</a> : a.hostname}{a.locked && <> <Badge>monitor only</Badge></>}</td><td>{a.company}</td><td>{a.platform}</td><td>{a.version} {a.latest && a.version && a.version !== a.latest && <Badge tone="warn">update due</Badge>}</td>
-        <td><Badge tone={a.online ? 'ok' : 'bad'}>{a.online ? 'online' : 'offline'}</Badge> {ago(a.lastSeen)}</td><td className="mono">{a.ip}</td>
-        <td><Act label="Move to bin" confirm={`Move the agent on ${a.hostname} to the recycle bin? It stops reporting, the asset stays, and you can restore it for 30 days.`} run={async () => { await api(`/api/assets/agents/${a.id}/bin`, { method: 'POST', body: {} }); agents.reload(); bin.reload(); }} /> <Act label="Uninstall" danger confirm={`Uninstall the agent from ${a.hostname} and remove it for good? The asset stays.`} run={async () => { await api(`/api/assets/agents/${a.id}`, { method: 'DELETE' }); agents.reload(); }} /></td></tr>)}</tbody></table>}
+    {dash.data && <div className="agent-counts">
+      {([['Live', n(m.agentOnline), 'online', 'ok'], ['Live, update due', n(m.agentUpdate), 'update', 'warn'], ['Not reporting', n(m.agentOffline), 'offline', 'bad'], ['No agent', n(m.agentNone), 'none', 'none']] as const).map(([l, v, f, tone]) =>
+        <a key={f} className="co-tile agent-count" href={`#/assets/list?agent=${f}`}><span className="muted"><i className={`dot tone-${tone}`} aria-hidden="true" /> {l}</span><b><CountUp value={v} /></b><span className="open">Show these assets</span></a>)}
+    </div>}
+    <p className="muted">Each agent is shown with its asset: open a count to see the computers, then choose them to update, move to the recycle bin or uninstall their agents together.</p>
     <h2>Enrolment tokens</h2>
     {tl.length === 0 ? <Empty>No tokens.</Empty> : <table><thead><tr><th>Label</th><th>Customer</th><th>Token</th><th className="num">Used</th><th>Expires</th><th /></tr></thead><tbody>
       {tl.map((t) => <tr key={t.id}><td>{t.label}{t.monitorOnly && <> <Badge>monitor only</Badge></>}</td><td>{t.company || '(own)'}</td><td className="mono">{t.prefix}…</td><td className="num">{t.uses}</td><td>{t.revoked ? <Badge tone="bad">revoked</Badge> : t.expires ? fmtDate(t.expires) : 'never'}</td>
         <td>{!t.revoked && <><button onClick={async () => setShow(await api(`/api/assets/enrolments/${t.id}/scripts`))}>Install commands</button> <Act label="Revoke" danger run={async () => { await api(`/api/assets/enrolments/${t.id}`, { method: 'DELETE' }); tokens.reload(); }} /> </>}<Act label="Delete" confirm={`Move the token "${t.label || t.prefix}" to the recycle bin? It stops working at once; you can restore it for 30 days.`} run={async () => { await api(`/api/assets/enrolments/${t.id}/bin`, { method: 'POST', body: {} }); tokens.reload(); bin.reload(); }} /></td></tr>)}</tbody></table>}
-    <RecycleBin bin={bin} onRestore={() => { agents.reload(); tokens.reload(); }} />
+    <RecycleBin bin={bin} onRestore={() => { dash.reload(); tokens.reload(); }} />
     {add && <TokenForm path="/api/assets/enrolments" title="New enrolment token" monitor onClose={(r) => { setAdd(false); if (r) { setShow(r); tokens.reload(); } }} />}
     {show && <Modal title="Install commands" onClose={() => setShow(null)}><Commands c={show.commands} /><div className="actions"><button onClick={() => setShow(null)}>Close</button></div></Modal>}
   </>;
@@ -70,7 +72,7 @@ function Manage({ c, onClose }: { c: Rec; onClose: () => void }) {
     <div className="tools"><Act label="Save settings" run={async () => { setErr(''); try { await api(`/api/assets/collectors/${c.id}`, { method: 'PATCH', body: { name, scanCidrs: cidrs, monitorDefault: mode, autoInstall: auto } }); } catch (e) { setErr((e as Error).message); throw e; } }} />
       <Act label="Scan now" primary run={async () => { await api(`/api/assets/collectors/${c.id}/scan`, { body: {} }); log.reload(); }} />
       <Act label="Install agents on all devices" run={async () => { const r = await api<Rec>(`/api/assets/collectors/${c.id}/agent-install-all`, { body: {} }); setRes(`${r.queued} devices queued.`); }} />
-      <Act label="Delete collector" danger confirm="Delete this collector? Its devices stay but are no longer watched." run={async () => { await api(`/api/assets/collectors/${c.id}`, { method: 'DELETE' }); onClose(); }} /></div>
+      <Act label="Move to recycle bin" danger confirm="Move this site controller to the recycle bin? It stops working at once and its devices are no longer watched. You can restore it, with its devices, for 30 days." run={async () => { await api(`/api/assets/collectors/${c.id}`, { method: 'DELETE' }); onClose(); }} /></div>
     {res && <p className="muted">{res}</p>}
     <h3>Found by scans ({items.length})</h3>
     {items.length === 0 ? <Empty>Nothing found yet. Set ranges and choose Scan now; the collector answers within a minute.</Empty> : <>
@@ -82,14 +84,14 @@ function Manage({ c, onClose }: { c: Rec; onClose: () => void }) {
 }
 
 function RecycleBin({ bin, onRestore }: { bin: { data: Rec | null; reload: () => void }; onRestore: () => void }) {
-  const ag = (bin.data?.agents ?? []) as Rec[]; const tk = (bin.data?.tokens ?? []) as Rec[];
-  if (ag.length + tk.length === 0) return null;
-  const row = (kind: string, id: string | number, what: string, when: string) => <tr key={kind + id}><td>{what}</td><td>{kind === 'agent' ? 'Agent' : 'Enrolment token'}</td><td>{fmtDate(when)}</td>
+  const ag = (bin.data?.agents ?? []) as Rec[]; const tk = (bin.data?.tokens ?? []) as Rec[]; const cl = (bin.data?.collectors ?? []) as Rec[];
+  if (ag.length + tk.length + cl.length === 0) return null;
+  const row = (kind: string, id: string | number, what: string, when: string) => <tr key={kind + id}><td>{what}</td><td>{kind === 'agent' ? 'Agent' : kind === 'collector' ? 'Site controller' : 'Enrolment token'}</td><td>{fmtDate(when)}</td>
     <td><Act label="Restore" run={async () => { await api(`/api/assets/recycle/${kind}/${id}/restore`, { method: 'POST', body: {} }); bin.reload(); onRestore(); }} /> <Act label="Delete for good" danger confirm="Delete this for good? It cannot be restored." run={async () => { await api(`/api/assets/recycle/${kind}/${id}`, { method: 'DELETE' }); bin.reload(); }} /></td></tr>;
   return <>
     <h2>Recycle bin</h2>
-    <p className="muted">Removed items are kept for 30 days, then deleted for good. A restored agent starts reporting again if its software is still on the computer.</p>
+    <p className="muted">Removed items are kept for 30 days, then deleted for good. A restored agent starts reporting again if its software is still on the computer; a restored site controller gets back the devices it watched.</p>
     <table><thead><tr><th>Item</th><th>Kind</th><th>Removed</th><th /></tr></thead><tbody>
-      {ag.map((a) => row('agent', a.id, a.hostname || a.id, a.deletedAt))}{tk.map((t) => row('token', t.id, `${t.label || 'Token'} (${t.prefix}…)`, t.deletedAt))}</tbody></table>
+      {ag.map((a) => row('agent', a.id, a.hostname || a.id, a.deletedAt))}{tk.map((t) => row('token', t.id, `${t.label || 'Token'} (${t.prefix}…)`, t.deletedAt))}{cl.map((c) => row('collector', c.id, `${c.name}${c.company ? ` (${c.company})` : ''}, watched ${c.devices} devices`, c.deletedAt))}</tbody></table>
   </>;
 }

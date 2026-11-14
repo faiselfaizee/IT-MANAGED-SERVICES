@@ -257,3 +257,32 @@ Choose **Network device: firewall, switch, access point (SNMP and configuration)
 The **Configuration** tab shows the latest configuration, every kept version (a new one only when it changed, the latest 30), **what changed** from the version before, and a download. Configurations contain password hashes and keys: only administrators can see them, each view and download is in the audit log, and they never go into the CSV export or the PDF. A failed backup shows its reason on the tab; the device's other details are still read.
 
 Tested against simulated devices only (an SNMP switch and firewall, a FortiGate and Palo Alto API, the Meraki Dashboard, and a stand-in SSH device).
+
+## Dashboard, agents at scale, SNMP v3 and the patch report (v2.14.0)
+
+### The Assets dashboard in three levels
+1. **Customer tiles** (Assets › Dashboard). Each customer has one tile with a small ring of its agents (live, update due, not reporting, no agent) and five figures: live, not reporting, not compliant, warranty expired or ending, and hardware not OK. The first tile, "All customers", totals everything. Tiles with problems come first. You can also sort by name or by number of assets, search by name, and show 60 more at a time. Someone who may see only one customer goes straight to that customer.
+2. **A customer's dashboard** (click a tile). It shows six rings: agents, compliance, warranty, asset types, hardware health and network ports. The breadcrumb reads *Assets › Customer*.
+3. **The asset list** (click a part of a ring). It opens filtered to that customer and that ring part, for example *Brightway Schools › Not compliant*. Each filter shows as a chip; remove it with ✕. The rings and the list use the same conditions, so the count on a ring is the number of rows the list shows. Counts are for assets in service (not retired or lost). **Export list** and **Export all details** export what the list shows, filters included.
+
+The rings sweep round and the numbers count up when a dashboard opens and when you come back to it. When figures change, they move from the old value to the new one. Nothing moves when the computer is set to reduce motion.
+
+### Agents at scale
+The Agents & collectors page no longer lists every agent, because that list grows too slow with thousands of computers. It shows four counts instead: live, live with an update due, not reporting, and no agent. Each count opens the matching assets.
+
+In the asset list, an administrator can tick assets (or choose **all N matching**, up to 5,000) and then:
+- **Update agents**: assets that have no agent, are offline, are already up to date or already updating are skipped, and the reasons are counted.
+- **Move agents to bin**: the agent stops reporting and the asset stays. You can restore the agent for 30 days.
+- **Uninstall agents**: the agent is sent the order to remove itself. Fix in this version: until now, the agent record was deleted at once, which also deleted the queued order, so the agent never got it. The record now stays, marked as being uninstalled. Such an agent may only fetch its order and can no longer report. The record goes once the order is delivered, or after 30 days if the computer never comes back. This also fixes the single Uninstall button.
+
+### Site controllers in the recycle bin
+Deleting a site controller now moves it to the recycle bin. It stops working at once, and the devices it watched are freed. **Restore** (within 30 days) brings it back and gives it its devices again. **Delete for good** removes it.
+
+### SNMP v3
+Under Credentials, choose **Printer, switch or firewall (SNMP v3 user)**. Enter the user name, the authentication protocol (MD5, SHA or SHA-256) and its password, and the privacy protocol (AES-128, DES or none) and its password. Passwords are at least 8 characters, are stored sealed and are never shown again. When you edit the login, leaving a password empty keeps the saved one. The site controller tries the customer's SNMP v3 logins before community strings, for both network devices and SNMP-read printers. Clear error messages say which part is wrong: unknown user, wrong authentication password, wrong privacy password, or the device clock out of step.
+
+### Patch report
+Assets › Patch report lists every computer with an agent, oldest patch first. For each it shows the last patch date, days since that patch, antivirus state and compliance (compliant means antivirus is on and a patch was installed in the last 30 days). You can filter by customer and show all computers, those 30+ days behind, or those not compliant. **Export CSV** saves the report, and the export is recorded in the audit log.
+
+### Deletion approvals by mail
+When someone asks to delete an asset, an email goes to everyone who may approve the deletion for that customer (not the person asking and not customer users). The email gives the reason and a link to Assets › Delete requests. This needs mail to be set up under Settings › Mail.

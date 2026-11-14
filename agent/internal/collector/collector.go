@@ -400,7 +400,7 @@ func (r *Runner) readDevice(ctx context.Context, a asset, target string) (any, e
 	case "snmp":
 		var last error = errors.New("no SNMP login is saved on the collector for this address (collector-cred add --kind snmp --community ...)")
 		for _, c := range pick(r.credsFor(a.Logins), "snmp", target) {
-			inv, err := SNMPInventory(target, c.Community, firstNonEmpty(a.Host, a.Name))
+			inv, err := SNMPInventoryWith(target, c, firstNonEmpty(a.Host, a.Name))
 			if err == nil {
 				return inv, nil
 			}

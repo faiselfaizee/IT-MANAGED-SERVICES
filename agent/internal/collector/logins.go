@@ -16,6 +16,10 @@ type login struct {
 	User   string `json:"user"`
 	Secret string `json:"secret"`
 	Vendor string `json:"vendor"`
+	// SNMPv3 logins (kind snmp3): protocols and the privacy password
+	AuthProto  string `json:"authProto"`
+	PrivProto  string `json:"privProto"`
+	PrivSecret string `json:"privSecret"`
 }
 
 // credsFor returns the logins saved on this computer followed by the ones the platform sent for this job.
@@ -33,6 +37,8 @@ func (r *Runner) credsFor(l []login) []config.Cred {
 			}
 		case "snmp":
 			out = append(out, config.Cred{Name: x.Name, Kind: "snmp", Community: x.Secret})
+		case "snmp3":
+			out = append(out, config.Cred{Name: x.Name, Kind: "snmp", V3: true, User: x.User, Password: x.Secret, AuthProto: x.AuthProto, PrivProto: x.PrivProto, PrivPassword: x.PrivSecret})
 		case "vmware", "bmc", "nutanix", "proxmox", "xen", "netssh", "netapi":
 			out = append(out, config.Cred{Name: x.Name, Kind: x.Kind, User: x.User, Password: x.Secret, Vendor: x.Vendor})
 		}

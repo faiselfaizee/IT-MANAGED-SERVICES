@@ -1,34 +1,50 @@
 import { useState } from 'react';
 import { api, download, go, openPage, saveFile, useLoad, type Rec } from '../http';
 import { usePerms } from '../perms';
-import { Act, Badge, Card, Empty, Err, Field, Loading, Modal, fmtDay, useSubmit } from '../ui';
+import { Act, Badge, Empty, Err, Field, Loading, Modal, fmtDay, useSubmit } from '../ui';
 
 const STATUSES = ['stock', 'in_use', 'repair', 'retired', 'lost'];
 const label = (s: string) => s.replace('_', ' ');
 
+/** Filters that come from the dashboard (a ring part), with the words shown for them. */
+const DRILL: Record<string, Record<string, string>> = {
+  compliance: { compliant: 'Compliant', noncompliant: 'Not compliant', nodata: 'No compliance data' },
+  warranty: { covered: 'Warranty covered', soon: 'Warranty ends within 30 days', expired: 'Warranty expired', unknown: 'Warranty not recorded' },
+  kind: { computer: 'Computers', server: 'Servers and hypervisors', network: 'Network devices', printer: 'Printers', other: 'Other devices' },
+  health: { bad: 'Hardware not OK' },
+};
+const AGENT_WORDS: Record<string, string> = { online: 'Agent live', offline: 'Agent not reporting', update: 'Agent update due', none: 'No agent' };
+
 export default function List() {
-  const perms = usePerms('assets'); const [search, setSearch] = useState(''); const [status, setStatus] = useState(''); const [agent, setAgent] = useState(location.hash.match(/agent=(\w+)/)?.[1] ?? ''); const [skip, setSkip] = useState(0); const take = 50;
+  const qs = new URLSearchParams(location.hash.split('?')[1] ?? '');
+  const company = qs.get('company') ?? '';
+  const drill = Object.keys(DRILL).map((k) => [k, qs.get(k) ?? ''] as const).filter(([k, v]) => v && DRILL[k][v]);
+  const perms = usePerms('assets'); const [search, setSearch] = useState(''); const [status, setStatus] = useState(''); const [agent, setAgent] = useState(qs.get('agent') ?? ''); const [skip, setSkip] = useState(0); const take = 50;
+  const co = useLoad<Rec>(company ? `/api/assets/dashboard?company=${encodeURIComponent(company)}` : null);
+  const coName = company ? String(co.data?.customer?.company ?? (company === 'none' ? 'No customer' : '…')) : '';
+  const without = (key: string) => { const n = new URLSearchParams(qs); n.delete(key); const t = n.toString(); return '#/assets/list' + (t ? '?' + t : ''); };
   const [sel, setSel] = useState<Set<number>>(new Set()); const [add, setAdd] = useState(false); const [print, setPrint] = useState(false);
-  const q = `/api/assets?search=${encodeURIComponent(search)}&status=${status}&agent=${agent}&skip=${skip}&take=${take}`;
+  const filters = `&agent=${agent}` + (company ? `&company=${encodeURIComponent(company)}` : '') + drill.map(([k, v]) => `&${k}=${v}`).join('');
+  const exportQs = `search=${encodeURIComponent(search)}&status=${status}${filters}`;
+  const q = `/api/assets?search=${encodeURIComponent(search)}&status=${status}${filters}&skip=${skip}&take=${take}`;
   const { data, error, loading, reload } = useLoad<Rec>(q);
-  const sum = useLoad<Rec>('/api/assets/summary');
   const items = (data?.items ?? []) as Rec[]; const total = (data?.total ?? 0) as number;
   const toggle = (id: number) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   return <>
-    <h1>Assets</h1>
-    {sum.data && <div className="grid" style={{ marginBottom: 14 }}>
-      <Card title="Total"><b style={{ fontSize: 24 }}>{sum.data.total}</b> <span className="muted">{STATUSES.map((s) => `${sum.data?.byStatus?.[s] ?? 0} ${label(s)}`).join(' · ')}</span></Card>
-      <Card title="Warranty"><Badge tone="warn">{sum.data.warrantyEndsIn30Days} end in 30 days</Badge> <Badge>{sum.data.warrantyEndsIn90Days} in 90 days</Badge> <Badge tone="bad">{sum.data.warrantyExpired} expired</Badge></Card>
-    </div>}
+    <nav className="crumbs" aria-label="Breadcrumb"><a href="#/assets">Assets</a><span aria-hidden="true">›</span>
+      {company ? <><a href={`#/assets/customer/${company}`}>{coName}</a><span aria-hidden="true">›</span></> : null}<span aria-current="page">{drill.length ? drill.map(([k, v]) => DRILL[k][v]).join(', ') : agent ? AGENT_WORDS[agent] : 'All assets'}</span></nav>
+    <h1>{company ? coName : 'All assets'}</h1>
+    {(company || drill.length > 0) && <div className="filter-chips">{company && <a href={without('company')} title="Show every customer">{coName} ✕</a>}{drill.map(([k, v]) => <a key={k} href={without(k)} title="Remove this filter">{DRILL[k][v]} ✕</a>)}</div>}
     <div className="tools">
       <input placeholder="Search name, tag, serial, model, person…" value={search} onChange={(e) => { setSearch(e.target.value); setSkip(0); }} style={{ minWidth: 260 }} />
       <select value={status} onChange={(e) => { setStatus(e.target.value); setSkip(0); }} aria-label="Status"><option value="">Any status</option>{STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}</select>
-      <select value={agent} onChange={(e) => { setAgent(e.target.value); setSkip(0); }} aria-label="Agent"><option value="">Any agent state</option><option value="online">Agent online</option><option value="offline">Agent offline</option><option value="update">Agent update due</option><option value="none">No agent</option></select>
+      <select value={agent} onChange={(e) => { setAgent(e.target.value); setSkip(0); }} aria-label="Agent"><option value="">Any agent state</option><option value="online">Agent live, up to date</option><option value="offline">Agent offline</option><option value="update">Agent update due</option><option value="none">No agent</option></select>
       {perms.add && <button className="primary" onClick={() => setAdd(true)}>Add asset</button>}
       <button disabled={sel.size === 0} onClick={() => setPrint(true)}>QR labels ({sel.size})</button>
-      <button onClick={() => download('/api/assets/export.csv', 'assets.csv')}>Export list (CSV)</button>
-      <Act label="Export all details (CSV)" run={() => saveFile('/api/assets/export-full.csv', 'assets-full-details.csv')} />
+      <button onClick={() => download('/api/assets/export.csv?' + exportQs, 'assets.csv')}>Export list (CSV)</button>
+      <Act label="Export all details (CSV)" run={() => saveFile('/api/assets/export-full.csv?' + exportQs, 'assets-full-details.csv')} />
     </div>
+    {perms.admin && sel.size > 0 && <BulkAgents ids={[...sel]} total={total} query={q} onSelect={(ids) => setSel(new Set(ids))} onDone={() => { setSel(new Set()); reload(); }} />}
     <Loading loading={loading && !data} error={error} />
     {data && (items.length === 0 ? <Empty>No assets match.</Empty> : <table><thead><tr><th><input type="checkbox" aria-label="Select all" checked={items.every((i) => sel.has(i.id))} onChange={(e) => setSel(e.target.checked ? new Set([...sel, ...items.map((i) => i.id)]) : new Set([...sel].filter((x) => !items.some((i) => i.id === x))))} /></th>
       <th>Tag</th><th>Name</th><th>Type</th><th>Agent</th><th>Model</th><th>Assigned to</th><th>Location</th><th>Warranty</th></tr></thead><tbody>
@@ -39,6 +55,43 @@ export default function List() {
     {add && <AddAsset onClose={(id) => { setAdd(false); if (id) go(`assets/${id}`); else reload(); }} />}
     {print && <PrintDialog ids={[...sel]} onClose={() => setPrint(false)} />}
   </>;
+}
+
+/** Agent actions for the chosen assets: update, move to the recycle bin, uninstall; and choosing every asset that matches the filters. */
+function BulkAgents({ ids, total, query, onSelect, onDone }: { ids: number[]; total: number; query: string; onSelect: (ids: number[]) => void; onDone: () => void }) {
+  const [msg, setMsg] = useState(''); const [busy, setBusy] = useState(false);
+  const run = async (action: 'update' | 'bin' | 'uninstall') => {
+    setBusy(true); setMsg('');
+    try {
+      let done = 0; const skipped: Record<string, number> = {};
+      for (let i = 0; i < ids.length; i += 1000) {
+        const r = await api<Rec>('/api/assets/agents/bulk', { body: { action, assetIds: ids.slice(i, i + 1000) } });
+        done += Number(r.done ?? 0); for (const [k, v] of Object.entries((r.skipped ?? {}) as Record<string, number>)) skipped[k] = (skipped[k] ?? 0) + v;
+      }
+      const why: Record<string, string> = { no_agent: 'have no agent', up_to_date: 'are up to date', agent_offline: 'are offline', busy: 'are already updating', no_build: 'have no build on the server' };
+      const rest = Object.entries(skipped).map(([k, v]) => `${v} ${why[k] ?? k}`).join(', ');
+      setMsg(`${action === 'update' ? 'Update asked for' : action === 'bin' ? 'Moved to the recycle bin:' : 'Uninstall sent to'} ${done} agent${done === 1 ? '' : 's'}.${rest ? ' Skipped: ' + rest + '.' : ''}`);
+      if (action !== 'update') onDone();
+    } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
+  };
+  const all = async () => {
+    setBusy(true);
+    try {
+      const out: number[] = [];
+      for (let skip = 0; skip < Math.min(total, 5000); skip += 200) {
+        const r = await api<Rec>(query.replace(/&skip=\d+&take=\d+/, '') + `&skip=${skip}&take=200`);
+        out.push(...((r.items ?? []) as Rec[]).map((x) => Number(x.id)));
+      }
+      onSelect(out);
+    } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
+  };
+  return <div className="bulk" role="region" aria-label="Agent actions">
+    <b>{ids.length} chosen</b>{ids.length < total && <button disabled={busy} onClick={all}>Choose all {Math.min(total, 5000)} matching</button>}
+    <button disabled={busy} onClick={() => run('update')}>Update agents</button>
+    <Act label="Move agents to bin" confirm={`Move the agents of ${ids.length} assets to the recycle bin? They stop reporting; the assets stay, and you can restore the agents for 30 days.`} run={() => run('bin')} />
+    <Act label="Uninstall agents" danger confirm={`Uninstall the agent from ${ids.length} computers? The assets stay.`} run={() => run('uninstall')} />
+    {msg && <span role="status">{msg}</span>}
+  </div>;
 }
 
 /** Online, offline or no agent, with the version and a flag when an update is due. */

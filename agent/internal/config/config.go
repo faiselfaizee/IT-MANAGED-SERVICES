@@ -39,6 +39,11 @@ type Cred struct {
 	Community string `json:"community,omitempty"` // snmp v2c
 	CIDR      string `json:"cidr,omitempty"`      // limit to a network; empty means any device
 	Vendor    string `json:"vendor,omitempty"`    // for network device logins: Fortinet, Cisco Meraki, Palo Alto...
+	// SNMP version 3 (Kind snmp with V3 set): User, Password = authentication password, and these
+	V3           bool   `json:"v3,omitempty"`
+	AuthProto    string `json:"authProto,omitempty"` // MD5, SHA, SHA256
+	PrivProto    string `json:"privProto,omitempty"` // DES, AES, or empty
+	PrivPassword string `json:"privPassword,omitempty"`
 }
 
 type Collector struct {

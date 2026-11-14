@@ -109,8 +109,21 @@ public static class DiscoveryApi
     }
     const string WinRm = "$ErrorActionPreference='Stop'\n$sec=ConvertTo-SecureString $env:DK_PW -AsPlainText -Force; $cred=New-Object System.Management.Automation.PSCredential($env:DK_USER,$sec)\n$o=@{ComputerName=$env:DK_HOST;Credential=$cred;FilePath=$env:DK_SCRIPT;ErrorAction='Stop'}\nif($env:DK_SSL -eq '1'){$o.UseSSL=$true;$o.SessionOption=New-PSSessionOption -SkipCACheck -SkipCNCheck}\nInvoke-Command @o";
 
+    /// <summary>The SNMPv3 protocols and privacy password of a login (empty for other kinds).</summary>
+    static (string Auth, string Priv, string Secret2, string? Error) V3Fields(JsonElement b, string kind, bool isNew)
+    {
+        if (kind != "snmp3") return ("", "", "", null);
+        var auth = (AgentsApi.Str(b, "authProto") ?? "SHA").ToUpperInvariant(); var priv = (AgentsApi.Str(b, "privProto") ?? "").ToUpperInvariant();
+        if (auth is not ("MD5" or "SHA" or "SHA256")) return ("", "", "", "Authentication must be MD5, SHA or SHA256.");
+        if (priv is not ("" or "DES" or "AES")) return ("", "", "", "Privacy must be none, DES or AES.");
+        var s2 = AgentsApi.Str(b, "privSecret") ?? "";
+        if (priv != "" && s2 != "" && s2.Length < 8) return ("", "", "", "SNMPv3 passwords are at least 8 characters.");
+        if (priv != "" && s2 == "" && isNew) return ("", "", "", "Enter the privacy password.");
+        return (auth, priv, s2, null);
+    }
+
     /// <summary>What a saved login is for: computers, servers' management controllers, hypervisors, and network gear.</summary>
-    public static readonly string[] CredKinds = { "windows", "ssh", "sshpw", "snmp", "login", "bmc", "vmware", "nutanix", "proxmox", "xen", "netssh", "netapi" };
+    public static readonly string[] CredKinds = { "windows", "ssh", "sshpw", "snmp", "snmp3", "login", "bmc", "vmware", "nutanix", "proxmox", "xen", "netssh", "netapi" };
     /// <summary>The hardware category a login belongs to; empty means any.</summary>
     public static readonly string[] CredCategories = { "", "computer", "server", "virtualization", "firewall", "switch", "wireless", "printer", "other" };
 
@@ -279,9 +292,9 @@ public static class DiscoveryApi
         Admin(r.MapGet("/api/assets/discover/creds", async (ITenantContext t, CancellationToken ct) =>
         {
             await using var db = await AgentsApi.Open(t, ct); var o = new List<object>();
-            await using var c = new NpgsqlCommand("select c.id, c.name, c.kind, c.username, c.company_id, coalesce(co.name,''), c.created_at, c.account_type, c.category, c.vendor, c.notes from assets.creds c left join assets.companies co on co.id = c.company_id order by lower(c.name)", db);
+            await using var c = new NpgsqlCommand("select c.id, c.name, c.kind, c.username, c.company_id, coalesce(co.name,''), c.created_at, c.account_type, c.category, c.vendor, c.notes, c.auth_proto, c.priv_proto from assets.creds c left join assets.companies co on co.id = c.company_id order by lower(c.name)", db);
             await using var rd = await c.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) o.Add(new { id = rd.GetInt32(0), name = rd.GetString(1), kind = rd.GetString(2), username = rd.GetString(3), companyId = rd.IsDBNull(4) ? (int?)null : rd.GetInt32(4), company = rd.GetString(5), createdAt = rd.GetDateTime(6), accountType = rd.GetString(7), category = rd.GetString(8), vendor = rd.GetString(9), notes = rd.GetString(10) });
+            while (await rd.ReadAsync(ct)) o.Add(new { id = rd.GetInt32(0), name = rd.GetString(1), kind = rd.GetString(2), username = rd.GetString(3), companyId = rd.IsDBNull(4) ? (int?)null : rd.GetInt32(4), company = rd.GetString(5), createdAt = rd.GetDateTime(6), accountType = rd.GetString(7), category = rd.GetString(8), vendor = rd.GetString(9), notes = rd.GetString(10), authProto = rd.GetString(11), privProto = rd.GetString(12) });
             return Results.Ok(new { items = o });
         }));
         Admin(r.MapPost("/api/assets/discover/creds", async (JsonElement body, ITenantContext t, IConfiguration cfg, IAuditLog audit, CancellationToken ct) =>
@@ -294,12 +307,16 @@ public static class DiscoveryApi
             if (user == "") return Bad("bad_input", "Enter the user name.");
             if (secret == "") return Bad("bad_input", kind == "ssh" ? "Paste the private key." : kind == "sshpw" ? "Enter the password." : kind == "snmp" ? "Enter the SNMP community string." : kind == "netapi" ? "Enter the API token or key." : "Enter the password.");
             if (kind == "ssh" && !Regex.IsMatch(secret, "BEGIN [A-Z ]*PRIVATE KEY")) return Bad("bad_input", "That does not look like an SSH private key (PEM / OpenSSH format).");
+            var (auth, priv, secret2, v3err) = V3Fields(body, kind, true);
+            if (v3err != null) return Bad("bad_input", v3err);
+            if (kind == "snmp3" && secret.Length < 8) return Bad("bad_input", "SNMPv3 passwords are at least 8 characters.");
             int? company = body.TryGetProperty("companyId", out var ce) && ce.ValueKind == JsonValueKind.Number ? ce.GetInt32() : null;
             var acct = AgentsApi.Str(body, "accountType") ?? ""; if (acct is not ("domain" or "service" or "local")) acct = "";
             var cat = AgentsApi.Str(body, "category") ?? ""; if (!CredCategories.Contains(cat)) return Bad("bad_input", "Pick a hardware category from the list.");
             var vendor = AgentsApi.Clip(AgentsApi.Str(body, "vendor"), 60).Trim(); var notes = AgentsApi.Clip(AgentsApi.Str(body, "notes"), 400).Trim();
             await using var db = await AgentsApi.Open(t, ct);
-            await using var c = new NpgsqlCommand("insert into assets.creds (name, kind, username, secret, company_id, account_type, category, vendor, notes) values (@n,@k,@u,@s,@c,@at,@cat,@v,@no) returning id", db);
+            await using var c = new NpgsqlCommand("insert into assets.creds (name, kind, username, secret, company_id, account_type, category, vendor, notes, auth_proto, priv_proto, secret2) values (@n,@k,@u,@s,@c,@at,@cat,@v,@no,@ap,@pp,@s2) returning id", db);
+            AgentsApi.P(c, "ap", auth); AgentsApi.P(c, "pp", priv); AgentsApi.P(c, "s2", secret2 == "" ? "" : Sealed(cfg, t, secret2));
             AgentsApi.P(c, "cat", cat); AgentsApi.P(c, "v", vendor); AgentsApi.P(c, "no", notes);
             AgentsApi.P(c, "at", acct); AgentsApi.P(c, "n", name); AgentsApi.P(c, "k", kind); AgentsApi.P(c, "u", user); AgentsApi.P(c, "s", Sealed(cfg, t, secret)); AgentsApi.P(c, "c", company);
             int id; try { id = (int)(await c.ExecuteScalarAsync(ct))!; } catch (PostgresException e) when (e.SqlState == "23503") { return Bad("bad_input", "Customer not found."); }
@@ -316,6 +333,18 @@ public static class DiscoveryApi
             var cat = AgentsApi.Str(body, "category") ?? ""; if (!CredCategories.Contains(cat)) return Bad("bad_input", "Pick a hardware category from the list.");
             var vendor = AgentsApi.Clip(AgentsApi.Str(body, "vendor"), 60).Trim(); var notes = AgentsApi.Clip(AgentsApi.Str(body, "notes"), 400).Trim();
             await using var db = await AgentsApi.Open(t, ct);
+            await using (var k = new NpgsqlCommand("select kind from assets.creds where id = @i", db))
+            {
+                AgentsApi.P(k, "i", id);
+                if (await k.ExecuteScalarAsync(ct) is "snmp3")
+                {
+                    var (auth, priv, secret2, v3err) = V3Fields(body, "snmp3", false);
+                    if (v3err != null) return Bad("bad_input", v3err);
+                    await using var u3 = new NpgsqlCommand("update assets.creds set auth_proto = @ap, priv_proto = @pp, secret2 = case when @pp = '' then '' when @s2::text is null then secret2 else @s2 end where id = @i", db);
+                    AgentsApi.P(u3, "ap", auth); AgentsApi.P(u3, "pp", priv); AgentsApi.P(u3, "s2", secret2 == "" ? null : Sealed(cfg, t, secret2)); AgentsApi.P(u3, "i", id);
+                    await u3.ExecuteNonQueryAsync(ct);
+                }
+            }
             await using var c = new NpgsqlCommand("update assets.creds set name = @n, username = case when @u = '' then username else @u end, secret = case when @s::text is null then secret else @s end, company_id = @c, account_type = @at, category = @cat, vendor = @v, notes = @no where id = @i", db);
             AgentsApi.P(c, "cat", cat); AgentsApi.P(c, "v", vendor); AgentsApi.P(c, "no", notes);
             AgentsApi.P(c, "n", name); AgentsApi.P(c, "u", user); AgentsApi.P(c, "s", secret == "" ? null : Sealed(cfg, t, secret)); AgentsApi.P(c, "c", company); AgentsApi.P(c, "at", acct); AgentsApi.P(c, "i", id);

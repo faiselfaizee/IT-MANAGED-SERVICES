@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/deskask/platform/agent/internal/config"
 	"github.com/deskask/platform/agent/internal/snmp"
 )
 
@@ -22,7 +23,23 @@ var makers = map[string]string{
 
 // SNMPInventory reads a device over SNMP v2c and returns it in the inventory shape the platform reads.
 func SNMPInventory(addr, community, fallbackName string) (map[string]any, error) {
-	c := &snmp.Client{Addr: addr, Community: community, Timeout: 2 * time.Second, Retries: 1}
+	return snmpInventory(&snmp.Client{Addr: addr, Community: community, Timeout: 2 * time.Second, Retries: 1}, fallbackName)
+}
+
+// SNMPInventoryWith reads with a saved login: a v2c community or an SNMPv3 user.
+func SNMPInventoryWith(addr string, cred config.Cred, fallbackName string) (map[string]any, error) {
+	return snmpInventory(snmpClient(addr, cred), fallbackName)
+}
+
+func snmpClient(addr string, cred config.Cred) *snmp.Client {
+	c := &snmp.Client{Addr: addr, Community: cred.Community, Timeout: 2 * time.Second, Retries: 1}
+	if cred.V3 {
+		c.V3 = &snmp.V3{User: cred.User, AuthProto: cred.AuthProto, AuthPass: cred.Password, PrivProto: cred.PrivProto, PrivPass: cred.PrivPassword}
+	}
+	return c
+}
+
+func snmpInventory(c *snmp.Client, fallbackName string) (map[string]any, error) {
 	descr, err := c.Get("1.3.6.1.2.1.1.1.0")
 	if err != nil {
 		return nil, err

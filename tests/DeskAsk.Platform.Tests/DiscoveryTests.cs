@@ -130,7 +130,20 @@ public class DiscoveryTests : IClassFixture<WebApplicationFactory<Program>>
         // a wrong key is refused; deleting the collector frees its devices
         var bad = factory.CreateClient(); bad.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "dkco_" + new string('x', 30)); bad.DefaultRequestHeaders.Add("X-Collector-Id", cid);
         Assert.Equal(HttpStatusCode.Unauthorized, (await bad.PostAsync("/collector/v1/checkin", Json(new { }))).StatusCode);
+        var watchedBefore = (await J(await api.GetAsync($"/api/assets/{aid}/device"))).GetProperty("watch").GetProperty("collectorId").GetString();
         Assert.Equal(HttpStatusCode.NoContent, (await api.DeleteAsync($"/api/assets/collectors/{cid}")).StatusCode);
+        // it goes to the recycle bin: it stops working, leaves the list, and a restore gives its devices back
+        Assert.Equal(HttpStatusCode.Unauthorized, (await col.PostAsync("/collector/v1/checkin", Json(new { }))).StatusCode);
+        Assert.DoesNotContain(cid, await api.GetStringAsync("/api/assets/collectors"));
+        var binned = (await J(await api.GetAsync("/api/assets/recycle"))).GetProperty("collectors").EnumerateArray().Single(x => x.GetProperty("id").GetString() == cid);
+        Assert.Equal(watchedBefore == cid ? 1 : 0, binned.GetProperty("devices").GetInt32());
+        Assert.Equal("", (await J(await api.GetAsync($"/api/assets/{aid}/device"))).GetProperty("watch").GetProperty("collectorId").GetString());
+        Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/recycle/collector/{cid}/restore", Json(new { }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await col.PostAsync("/collector/v1/checkin", Json(new { }))).StatusCode);
+        Assert.Equal(watchedBefore, (await J(await api.GetAsync($"/api/assets/{aid}/device"))).GetProperty("watch").GetProperty("collectorId").GetString());
+        Assert.Equal(HttpStatusCode.NoContent, (await api.DeleteAsync($"/api/assets/collectors/{cid}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await api.DeleteAsync($"/api/assets/recycle/collector/{cid}")).StatusCode);
+        Assert.DoesNotContain(cid, await api.GetStringAsync("/api/assets/recycle"));
         Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/assets/{aid}/monitor", Json(new { mode = "" }))).StatusCode);
     }
 

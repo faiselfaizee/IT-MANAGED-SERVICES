@@ -239,6 +239,17 @@ public sealed class AssetsSchema : ITenantSchema
             create index if not exists configs_asset on assets.configs (asset_id, id);
             alter table assets.assets add column if not exists config_checked_at timestamptz;
             alter table assets.assets add column if not exists config_error text not null default ''"),
+        new(17, "collectors in the recycle bin", @"
+            alter table assets.collectors add column if not exists deleted_at timestamptz;
+            alter table assets.collectors add column if not exists binned_assets jsonb not null default '[]'"),
+        new(18, "SNMPv3 logins", @"
+            alter table assets.creds drop constraint if exists creds_kind_check;
+            alter table assets.creds add constraint creds_kind_check check (kind in ('windows','ssh','sshpw','snmp','snmp3','login','bmc','vmware','nutanix','proxmox','xen','netssh','netapi'));
+            alter table assets.creds add column if not exists auth_proto text not null default '';
+            alter table assets.creds add column if not exists priv_proto text not null default '';
+            alter table assets.creds add column if not exists secret2 text not null default ''"),
+        new(19, "an uninstalled agent keeps its record until the order is delivered", @"
+            alter table assets.agents add column if not exists uninstall_at timestamptz"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -259,6 +270,26 @@ public sealed class AssetsModule : IPlatformModule
     static readonly string[] Statuses = { "stock", "in_use", "repair", "retired", "lost" };
     static readonly string[] TextColumns = { "manufacturer", "model", "serial", "location", "assigned_to" };
     static readonly Regex TagRx = new("^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$", RegexOptions.Compiled);
+    /// <summary>Mails everyone who may approve the deletion (administrators, and people or groups granted Assets delete for that customer), except the requester.</summary>
+    static async Task NotifyApprovers(HttpContext http, NpgsqlConnection db, long id, string tag, string name, string by, string bySub, string reason, CancellationToken ct)
+    {
+        var sp = http.RequestServices; var users = sp.GetService<IUserDirectory>(); var mail = sp.GetService<IMailQueue>(); var access = sp.GetService<IAccess>();
+        if (users == null || mail == null || access == null) return;
+        int? company = null;
+        await using (var c = new NpgsqlCommand("select company_id from assets.assets where id = @i", db)) { P(c, "i", id); if (await c.ExecuteScalarAsync(ct) is int co) company = co; }
+        var link = $"{http.Request.Scheme}://{http.Request.Host}/#/assets/delete-requests";
+        var body = $"{by} asked to delete the asset {tag} ({name}).\n\nReason: {reason}\n\nApprove or reject it under Assets > Delete requests:\n{link}\n";
+        var sent = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var u in await users.ListAsync(ct))
+        {
+            if (!u.Active || !u.Email.Contains('@') || u.Id.ToString() == bySub || u.Role is "customer" || !sent.Add(u.Email)) continue;
+            var who = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", u.Id.ToString()), new Claim("role", u.Role), new Claim("email", u.Email) }, "approver"));
+            try { if (!await access.AllowedAsync(who, Modules.Assets, Acts.Delete, company, ct)) { sent.Remove(u.Email); continue; } }
+            catch (Exception) { sent.Remove(u.Email); continue; }
+            try { await mail.EnqueueAsync(u.Email, $"Asset deletion to approve: {tag}", body, "asset-delete:" + id, ct); } catch (Exception) { /* mail is best effort */ }
+        }
+    }
+
     const string Cols = "a.id, a.tag, a.name, a.type_id, t.name, a.status, a.manufacturer, a.model, a.serial, a.location, a.assigned_to, a.purchase_date, a.purchase_cost, a.warranty_end, a.notes, a.custom, a.source, a.created_at, a.updated_at";
     const string From = "assets.assets a left join assets.types t on t.id = a.type_id";
 
@@ -440,6 +471,39 @@ public sealed class AssetsModule : IPlatformModule
     }
 
     // ------------------------------------------------------------------ endpoints
+    /// <summary>
+    /// The asset list filters (search, status, type, person, agent state, customer and a dashboard ring part), shared by the list and its exports
+    /// so an export holds what the screen shows. Needs the agents joined as g. Error is set when a filter value is not known.
+    /// </summary>
+    internal static (string? Error, string Sql, Action<NpgsqlCommand> Bind) ListFilter(IQueryCollection q, IConfiguration cfg)
+    {
+        var search = q["search"].ToString().Trim(); var status = q["status"].ToString(); var assigned = q["assignedTo"].ToString().Trim();
+        int.TryParse(q["typeId"], out var typeId);
+        if (status != "" && !Statuses.Contains(status)) return ("status", "", _ => { });
+        var agentF = q["agent"].ToString(); if (agentF is not ("" or "online" or "offline" or "none" or "update")) return ("agent must be online, offline, none or update", "", _ => { });
+        var coF = q["company"].ToString(); int coId = 0;
+        if (coF != "" && coF != "none" && !int.TryParse(coF, out coId)) return ("company must be a customer id or none", "", _ => { });
+        var w = new List<string>
+        {
+            "(@q = '' or a.name ilike @l or a.tag ilike @l or a.serial ilike @l or a.model ilike @l or a.assigned_to ilike @l or a.location ilike @l)",
+            "(@st = '' or a.status = @st) and (@ty = 0 or a.type_id = @ty) and (@as = '' or lower(a.assigned_to) = lower(@as))",
+        };
+        if (agentF != "") w.Add("a.status not in ('retired','lost') and " + AssetDash.Where("agent", agentF));
+        if (coF == "none") w.Add("a.company_id is null"); else if (coF != "") w.Add("a.company_id = @coF");
+        foreach (var ring in new[] { "compliance", "warranty", "kind", "health" })
+        {
+            var part = q[ring].ToString(); if (part == "") continue;
+            var cond = AssetDash.Where(ring, part); if (cond == null) return (ring + " has no part " + part, "", _ => { });
+            w.Add("a.status not in ('retired','lost') and " + cond);
+        }
+        var latest = AgentsApi.AgentVersion(cfg); var off = AgentsApi.Offline(cfg);
+        return (null, string.Join(" and ", w.Select(x => "(" + x + ")")), c =>
+        {
+            P(c, "q", search); P(c, "l", Like(search)); P(c, "st", status); P(c, "ty", typeId); P(c, "as", assigned);
+            P(c, "off", (double)off); P(c, "lv", latest); if (coF != "" && coF != "none") P(c, "coF", coId);
+        });
+    }
+
     public void MapEndpoints(IEndpointRouteBuilder r)
     {
         var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(Key);
@@ -455,6 +519,7 @@ public sealed class AssetsModule : IPlatformModule
         AssetExport.Map(r, Key);
         AgentUpdateApi.Map(r, Key);
         ConfigsApi.Map(r, Key);
+        AssetDash.Map(r, Key);
         RenewalsApi.Map(r, Key);
 
         // ---- types
@@ -521,24 +586,15 @@ public sealed class AssetsModule : IPlatformModule
         {
             var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             var q = http.Request.Query;
-            var search = q["search"].ToString().Trim(); var status = q["status"].ToString(); var assigned = q["assignedTo"].ToString().Trim();
-            int.TryParse(q["typeId"], out var typeId); int.TryParse(q["take"], out var take); int.TryParse(q["skip"], out var skip);
-            if (status != "" && !Statuses.Contains(status)) return Bad("bad_input", "status");
+            int.TryParse(q["take"], out var take); int.TryParse(q["skip"], out var skip);
             take = take <= 0 ? 50 : Math.Min(take, 200); skip = Math.Max(skip, 0);
+            var f = ListFilter(q, cfg); if (f.Error != null) return Bad("bad_input", f.Error);
             await using var db = await Open(t, ct);
-            var agentF = q["agent"].ToString(); if (agentF is not ("" or "online" or "offline" or "none" or "update")) return Bad("bad_input", "agent must be online, offline, none or update");
             var latest = AgentsApi.AgentVersion(cfg); var offSec = AgentsApi.Offline(cfg);
             await using var c = new NpgsqlCommand($@"select {Cols}, count(*) over(), g.id, g.version, g.last_seen from {From} left join assets.agents g on g.id = a.agent_id and g.deleted_at is null
-                where (@q = '' or a.name ilike @l or a.tag ilike @l or a.serial ilike @l or a.model ilike @l or a.assigned_to ilike @l or a.location ilike @l)
-                  and (@st = '' or a.status = @st) and (@ty = 0 or a.type_id = @ty) and (@as = '' or lower(a.assigned_to) = lower(@as))
-                  and (not @sc or a.company_id = any(@scope))
-                  and (@ag = '' or (@ag = 'none' and g.id is null) or (@ag = 'online' and g.last_seen > now() - make_interval(secs => @off))
-                       or (@ag = 'offline' and g.id is not null and (g.last_seen is null or g.last_seen <= now() - make_interval(secs => @off)))
-                       or (@ag = 'update' and g.id is not null and @lv <> '' and g.version <> @lv))
+                where (not @sc or a.company_id = any(@scope)) and {f.Sql}
                 order by a.id desc offset @sk limit @tk", db);
-            AssetsAccess.Bind(c, scope);
-            P(c, "q", search); P(c, "l", Like(search)); P(c, "st", status); P(c, "ty", typeId); P(c, "as", assigned); P(c, "sk", skip); P(c, "tk", take);
-            P(c, "ag", agentF); P(c, "off", (double)offSec); P(c, "lv", latest);
+            AssetsAccess.Bind(c, scope); f.Bind(c); P(c, "sk", skip); P(c, "tk", take);
             var items = new List<object>(); long total = 0;
             await using (var rd = await c.ExecuteReaderAsync(ct))
                 while (await rd.ReadAsync(ct))
@@ -729,6 +785,7 @@ public sealed class AssetsModule : IPlatformModule
             P(ins, "a", id); P(ins, "t", tag); P(ins, "n", name); P(ins, "u", who(u)); P(ins, "s", u.FindFirstValue("sub") ?? ""); P(ins, "r", reason);
             var rid = (int)(await ins.ExecuteScalarAsync(ct))!;
             await audit.WriteAsync("assets.delete_requested", id.ToString(), tag + ": " + reason, ct: ct);
+            await NotifyApprovers(http, db, id, tag, name, who(u), u.FindFirstValue("sub") ?? "", reason, ct);
             return Results.Json(new { id = rid }, statusCode: 201);
         }));
         anyone(r.MapGet("/api/assets/delete-requests", async (HttpContext http, string? status, ITenantContext t, CancellationToken ct) =>
@@ -775,11 +832,12 @@ public sealed class AssetsModule : IPlatformModule
         }));
 
         // ---- CSV
-        anyone(r.MapGet("/api/assets/export.csv", async (HttpContext http, ITenantContext t, CancellationToken ct) =>
+        anyone(r.MapGet("/api/assets/export.csv", async (HttpContext http, ITenantContext t, IConfiguration cfg, CancellationToken ct) =>
         {
             var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
+            var f = ListFilter(http.Request.Query, cfg); if (f.Error != null) return Bad("bad_input", f.Error);
             await using var db = await Open(t, ct);
-            await using var c = new NpgsqlCommand($"select {Cols} from {From} where (not @sc or a.company_id = any(@scope)) order by a.id", db); AssetsAccess.Bind(c, scope);
+            await using var c = new NpgsqlCommand($"select {Cols} from {From} left join assets.agents g on g.id = a.agent_id and g.deleted_at is null where (not @sc or a.company_id = any(@scope)) and {f.Sql} order by a.id", db); AssetsAccess.Bind(c, scope); f.Bind(c);
             var sb = new StringBuilder("tag,name,type,status,manufacturer,model,serial,location,assigned_to,purchase_date,purchase_cost,warranty_end,notes\r\n");
             await using var rd = await c.ExecuteReaderAsync(ct);
             while (await rd.ReadAsync(ct))

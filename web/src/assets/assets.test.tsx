@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import AssetsApp from './AssetsApp';
 
@@ -22,11 +22,11 @@ function mockApi(routes: Record<string, unknown>) {
 beforeEach(() => { location.hash = ''; });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-test('asset list shows rows and the summary', async () => {
+test('the asset list shows its rows', async () => {
   mockApi({ '/api/assets/summary': { total: 1, byStatus: { in_use: 1 }, warrantyEndsIn30Days: 0, warrantyEndsIn90Days: 2, warrantyExpired: 0 }, '/api/assets?': { total: 1, items: [{ id: 7, tag: 'AST-000007', name: 'Reception PC', status: 'in_use', model: 'OptiPlex', manufacturer: 'Dell', assignedTo: 'Priya', location: 'HQ' }] } });
-  location.hash = '#/assets'; render(<AssetsApp />);
+  location.hash = '#/assets/list'; render(<AssetsApp />);
   await waitFor(() => expect(screen.getByText('Reception PC')).toBeTruthy());
-  expect(screen.getByText('2 in 90 days')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'All assets' })).toBeTruthy();
 });
 
 test('asset detail shows hardware, AMC badge and storage usage', async () => {
@@ -123,7 +123,7 @@ test('the asset list shows the agent state instead of the asset status', async (
     { id: 1, tag: 'AST-1', name: 'PC-ON', status: 'in_use', agent: { state: 'online', version: '2.9.3', updateDue: false } },
     { id: 2, tag: 'AST-2', name: 'PC-OLD', status: 'in_use', agent: { state: 'online', version: '2.8.6', updateDue: true } },
     { id: 3, tag: 'AST-3', name: 'PRINTER', status: 'in_use', agent: { state: 'none' } }] } });
-  location.hash = '#/assets'; render(<AssetsApp />);
+  location.hash = '#/assets/list'; render(<AssetsApp />);
   await waitFor(() => expect(screen.getByText('PC-OLD')).toBeTruthy());
   expect(screen.getByRole('columnheader', { name: 'Agent' })).toBeTruthy();
   expect(screen.queryByRole('columnheader', { name: 'Status' })).toBeNull();
@@ -247,4 +247,56 @@ test('a switch shows its ports and its configuration versions with what changed'
   fireEvent.click(screen.getByRole('button', { name: 'Changes from the version before' }));
   await waitFor(() => expect(screen.getByText('Changes: 1 lines added, 1 removed')).toBeTruthy());
   expect(screen.getByText(/^\+\s+description Uplink to FW2$/)).toBeTruthy(); expect(screen.getByText(/^-\s+description Uplink to FW$/)).toBeTruthy();
+});
+
+const metrics = (company: string, companyId: number | null, x: Record<string, number> = {}) => ({ company, companyId, total: 0, inService: 0, agentOnline: 0, agentUpdate: 0, agentOffline: 0, agentNone: 0,
+  compliant: 0, nonCompliant: 0, noData: 0, warrantyCovered: 0, warrantySoon: 0, warrantyExpired: 0, warrantyUnknown: 0, computers: 0, servers: 0, network: 0, printers: 0, other: 0, hardwareNotOk: 0,
+  portsTotal: 0, portsUsed: 0, portsFree: 0, portsOff: 0, ...x });
+
+test('the assets home shows one tile per customer, worst first, and a tile opens that customer', async () => {
+  const acme = metrics('Acme Ltd', 1, { total: 40, inService: 38, agentOnline: 30, agentOffline: 5, nonCompliant: 4, hardwareNotOk: 1 });
+  const glob = metrics('Globex', 2, { total: 12, inService: 12, agentOnline: 12 });
+  mockApi({ '/api/assets/dashboard?company=1': { customer: acme }, '/api/assets/dashboard': { all: metrics('All customers', null, { total: 52 }), customers: [glob, acme], restricted: false } });
+  location.hash = '#/assets'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('Acme Ltd')).toBeTruthy());
+  const tiles = [...document.querySelectorAll('a.co-tile')].map((a) => a.getAttribute('href'));
+  expect(tiles).toEqual(['#/assets/customer/all', '#/assets/customer/1', '#/assets/customer/2']); // all, then the customer with problems
+  expect(screen.getByRole('img', { name: 'Agents of Acme Ltd: 30 live, 0 live, update due, 5 not reporting, 0 no agent' })).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Find a customer'), { target: { value: 'glo' } });
+  expect(document.querySelectorAll('a.co-tile').length).toBe(1);
+  cleanup(); location.hash = '#/assets/customer/1'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Acme Ltd' })).toBeTruthy());
+  expect(screen.getByText('Not reporting').closest('a')?.getAttribute('href')).toBe('#/assets/list?company=1&agent=offline');
+  expect(screen.getByText('Not compliant').closest('a')?.getAttribute('href')).toBe('#/assets/list?company=1&compliance=noncompliant');
+  expect(screen.getByRole('link', { name: 'View all assets' }).getAttribute('href')).toBe('#/assets/list?company=1');
+});
+
+test('someone limited to one customer lands on that customer', async () => {
+  const acme = metrics('Acme Ltd', 1, { total: 3 });
+  mockApi({ '/api/assets/dashboard?company=1': { customer: acme }, '/api/assets/dashboard': { all: acme, customers: [acme], restricted: true } });
+  location.hash = '#/assets'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Acme Ltd' })).toBeTruthy());
+  expect(document.querySelectorAll('a.co-tile').length).toBe(0);
+});
+
+test('the filtered list shows where it came from and sends the filters; chosen assets get their agents updated together', async () => {
+  const urls: string[] = []; const posts: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const u = String(url); urls.push(u); if (init?.method === 'POST') posts.push(String(init.body));
+    if (u.startsWith('/api/assets/dashboard?company=1')) return new Response(JSON.stringify({ customer: metrics('Acme Ltd', 1) }), { status: 200 });
+    if (u.startsWith('/api/assets/agents/bulk')) return new Response(JSON.stringify({ done: 1, skipped: { agent_offline: 1 } }), { status: 200 });
+    if (u.startsWith('/api/assets?')) return new Response(JSON.stringify({ total: 2, items: [{ id: 1, tag: 'A1', name: 'PC-1', agent: { state: 'online', version: '2.8.6', updateDue: true } }, { id: 2, tag: 'A2', name: 'PC-2', agent: { state: 'offline' } }] }), { status: 200 });
+    if (u.startsWith('/api/me') || u.includes('perms')) return new Response(JSON.stringify({ admin: true }), { status: 200 });
+    return new Response('{}', { status: 200 });
+  }));
+  location.hash = '#/assets/list?company=1&compliance=noncompliant'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('PC-1')).toBeTruthy());
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Acme Ltd' })).toBeTruthy());
+  expect(urls.some((u) => u.startsWith('/api/assets?') && u.includes('&company=1') && u.includes('&compliance=noncompliant'))).toBe(true);
+  expect(screen.getByRole('link', { name: 'Not compliant ✕' }).getAttribute('href')).toBe('#/assets/list?company=1');
+  fireEvent.click(screen.getByLabelText('Select PC-1')); fireEvent.click(screen.getByLabelText('Select PC-2'));
+  const bulk = await screen.findByRole('region', { name: 'Agent actions' });
+  fireEvent.click(within(bulk).getByRole('button', { name: 'Update agents' }));
+  await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Update asked for 1 agent. Skipped: 1 are offline.'));
+  expect(JSON.parse(posts[0])).toEqual({ action: 'update', assetIds: [1, 2] });
 });

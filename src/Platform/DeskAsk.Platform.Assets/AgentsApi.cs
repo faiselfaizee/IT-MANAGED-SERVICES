@@ -114,11 +114,24 @@ chmod 755 /opt/deskask-agent/deskask-agent
         var m = Regex.Match(http.Request.Headers.Authorization.ToString(), @"^Bearer\s+(dkag_[A-Za-z0-9_-]{20,})$");
         var id = http.Request.Headers["X-Agent-Id"].ToString();
         if (!m.Success || id == "") return null;
-        await using var c = new NpgsqlCommand("select key_hash, asset_id, company_id, platform, version, locked, shell_ok from assets.agents where id = @i and deleted_at is null", db); P(c, "i", id);
+        await using var c = new NpgsqlCommand("select key_hash, asset_id, company_id, platform, version, locked, shell_ok, uninstall_at is not null from assets.agents where id = @i and deleted_at is null", db); P(c, "i", id);
         await using var r = await c.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) return null;
         if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(r.GetString(0)), Encoding.ASCII.GetBytes(Hash(m.Groups[1].Value)))) return null;
+        // an agent being uninstalled may only fetch its messages (the uninstall order); it no longer reports
+        if (r.GetBoolean(7) && !http.Request.Path.Value!.EndsWith("/agent/v1/poll", StringComparison.Ordinal)) return null;
         return (id, r.IsDBNull(1) ? 0 : r.GetInt64(1), r.IsDBNull(2) ? null : r.GetInt32(2), r.GetString(3), r.GetString(4), r.GetBoolean(5), r.GetBoolean(6));
+    }
+
+    /// <summary>
+    /// Sends the agent the order to remove itself and takes it off its asset. The agent record stays, marked as being uninstalled, until the
+    /// order has been delivered (so the queued message is not lost with it), or for 30 days when the computer never comes back.
+    /// </summary>
+    public static async Task Uninstall(NpgsqlConnection db, AgentHub hub, ITenantContext t, string id, CancellationToken ct)
+    {
+        await Enqueue(db, hub, t, id, "uninstall", new { }, ct);
+        await using (var a = new NpgsqlCommand("update assets.assets set agent_id = '' where agent_id = @i", db)) { P(a, "i", id); await a.ExecuteNonQueryAsync(ct); }
+        await using (var d = new NpgsqlCommand("update assets.agents set uninstall_at = now(), deleted_at = null where id = @i", db)) { P(d, "i", id); await d.ExecuteNonQueryAsync(ct); }
     }
 
     public static async Task Enqueue(NpgsqlConnection db, AgentHub hub, ITenantContext t, string agentId, string kind, object payload, CancellationToken ct)
@@ -318,6 +331,17 @@ chmod 755 /opt/deskask-agent/deskask-agent
         {
             await using var db = await Open(t, ct);
             var ag = await AuthAgent(http, db, ct); if (ag == null) return Results.Json(new { error = "agent_auth" }, statusCode: 401);
+            await using (var un = new NpgsqlCommand("select uninstall_at is not null from assets.agents where id = @i", db))
+            {
+                P(un, "i", ag.Value.Id);
+                if (await un.ExecuteScalarAsync(ct) is true)
+                {
+                    // being uninstalled: hand over the order, then the record goes
+                    var order = await Pending(db, ag.Value.Id, ct);
+                    if (order.Any(x => x["type"] as string == "uninstall")) { await using var d = new NpgsqlCommand("delete from assets.agents where id = @i", db); P(d, "i", ag.Value.Id); await d.ExecuteNonQueryAsync(ct); }
+                    return Results.Ok(new { msgs = order.Where(x => x["type"] as string == "uninstall").ToList() });
+                }
+            }
             await Touch(db, ag.Value.Id, ag.Value.AssetId, Ip(http), http.Request.Query["v"].ToString(), null, ct); // the poll carries the version, so an update shows at once
             var msgs = await Pending(db, ag.Value.Id, ct);
             int.TryParse(http.Request.Query["wait"], out var wait);
@@ -434,7 +458,7 @@ chmod 755 /opt/deskask-agent/deskask-agent
         admin(r.MapGet("/api/assets/agents", async (ITenantContext t, IConfiguration cfg, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
-            await using var c = new NpgsqlCommand("select g.id, g.asset_id, a.name, g.company_id, coalesce(co.name,''), g.hostname, g.platform, g.version, g.ip, g.last_seen, g.created_at, g.shell_ok, g.locked from assets.agents g left join assets.assets a on a.id = g.asset_id left join assets.companies co on co.id = g.company_id where g.deleted_at is null order by lower(g.hostname)", db);
+            await using var c = new NpgsqlCommand("select g.id, g.asset_id, a.name, g.company_id, coalesce(co.name,''), g.hostname, g.platform, g.version, g.ip, g.last_seen, g.created_at, g.shell_ok, g.locked from assets.agents g left join assets.assets a on a.id = g.asset_id left join assets.companies co on co.id = g.company_id where g.deleted_at is null and g.uninstall_at is null order by lower(g.hostname)", db);
             var latest = AgentVersion(cfg); var off = DateTime.UtcNow.AddSeconds(-Offline(cfg));
             var rows = new List<object>(); await using var rd = await c.ExecuteReaderAsync(ct);
             while (await rd.ReadAsync(ct)) rows.Add(new { id = rd.GetString(0), assetId = rd.IsDBNull(1) ? (long?)null : rd.GetInt64(1), assetName = rd.IsDBNull(2) ? "" : rd.GetString(2), companyId = rd.IsDBNull(3) ? (int?)null : rd.GetInt32(3), company = rd.GetString(4), hostname = rd.GetString(5), platform = rd.GetString(6), version = rd.GetString(7), ip = rd.GetString(8), lastSeen = rd.IsDBNull(9) ? (DateTime?)null : rd.GetDateTime(9), online = !rd.IsDBNull(9) && rd.GetDateTime(9) > off, created = rd.GetDateTime(10), shellOk = rd.GetBoolean(11), locked = rd.GetBoolean(12), latest });
@@ -463,13 +487,15 @@ chmod 755 /opt/deskask-agent/deskask-agent
         admin(r.MapGet("/api/assets/recycle", async (ITenantContext t, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
-            await using (var p = new NpgsqlCommand("delete from assets.agents where deleted_at < now() - interval '30 days'; delete from assets.enroll_tokens where deleted_at < now() - interval '30 days'", db)) await p.ExecuteNonQueryAsync(ct);
-            var agents = new List<object>(); var tokens = new List<object>();
+            await using (var p = new NpgsqlCommand("delete from assets.agents where deleted_at < now() - interval '30 days' or uninstall_at < now() - interval '30 days'; delete from assets.enroll_tokens where deleted_at < now() - interval '30 days'; delete from assets.collectors where deleted_at < now() - interval '30 days'", db)) await p.ExecuteNonQueryAsync(ct);
+            var agents = new List<object>(); var tokens = new List<object>(); var collectors = new List<object>();
+            await using (var c = new NpgsqlCommand("select c.id, c.name, coalesce(co.name,''), jsonb_array_length(c.binned_assets), c.deleted_at from assets.collectors c left join assets.companies co on co.id = c.company_id where c.deleted_at is not null order by c.deleted_at desc", db))
+            { await using var rd = await c.ExecuteReaderAsync(ct); while (await rd.ReadAsync(ct)) collectors.Add(new { id = rd.GetString(0), name = rd.GetString(1), company = rd.GetString(2), devices = rd.GetInt32(3), deletedAt = rd.GetDateTime(4) }); }
             await using (var c = new NpgsqlCommand("select id, asset_id, hostname, platform, deleted_at from assets.agents where deleted_at is not null order by deleted_at desc", db))
             { await using var rd = await c.ExecuteReaderAsync(ct); while (await rd.ReadAsync(ct)) agents.Add(new { id = rd.GetString(0), assetId = rd.IsDBNull(1) ? (long?)null : rd.GetInt64(1), hostname = rd.GetString(2), platform = rd.GetString(3), deletedAt = rd.GetDateTime(4) }); }
             await using (var c = new NpgsqlCommand("select e.id, e.label, e.prefix, coalesce(c.name,''), e.deleted_at from assets.enroll_tokens e left join assets.companies c on c.id = e.company_id where e.deleted_at is not null and e.kind = 'agent' order by e.deleted_at desc", db))
             { await using var rd = await c.ExecuteReaderAsync(ct); while (await rd.ReadAsync(ct)) tokens.Add(new { id = rd.GetInt32(0), label = rd.GetString(1), prefix = rd.GetString(2), company = rd.GetString(3), deletedAt = rd.GetDateTime(4) }); }
-            return Results.Ok(new { agents, tokens });
+            return Results.Ok(new { agents, tokens, collectors });
         }));
         admin(r.MapPost("/api/assets/recycle/{kind}/{id}/restore", async (string kind, string id, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
         {
@@ -479,6 +505,14 @@ chmod 755 /opt/deskask-agent/deskask-agent
                 await using var c = new NpgsqlCommand("update assets.agents set deleted_at = null where id = @i and deleted_at is not null returning asset_id", db); P(c, "i", id);
                 var asset = await c.ExecuteScalarAsync(ct); if (asset == null) return Results.NotFound();
                 if (asset is long aid) { await using var a = new NpgsqlCommand("update assets.assets set agent_id = @g where id = @a and agent_id = ''", db); P(a, "g", id); P(a, "a", aid); await a.ExecuteNonQueryAsync(ct); }
+            }
+            else if (kind == "collector")
+            {
+                await using var c = new NpgsqlCommand("update assets.collectors set deleted_at = null where id = @i and deleted_at is not null returning binned_assets::text", db); P(c, "i", id);
+                if (await c.ExecuteScalarAsync(ct) is not string list) return Results.NotFound();
+                // give back the devices it watched, unless another controller took them meanwhile
+                await using var a = new NpgsqlCommand(@"update assets.assets a set collector_id = @i, monitor = x.monitor from jsonb_to_recordset(@l::jsonb) as x(id bigint, monitor text)
+                    where a.id = x.id and a.collector_id = ''", db); P(a, "i", id); P(a, "l", list); await a.ExecuteNonQueryAsync(ct);
             }
             else if (kind == "token" && int.TryParse(id, out var tid))
             {
@@ -495,6 +529,7 @@ chmod 755 /opt/deskask-agent/deskask-agent
             await using var db = await Open(t, ct);
             NpgsqlCommand c;
             if (kind == "agent") { c = new NpgsqlCommand("delete from assets.agents where id = @i and deleted_at is not null", db); P(c, "i", id); }
+            else if (kind == "collector") { c = new NpgsqlCommand("delete from assets.collectors where id = @i and deleted_at is not null", db); P(c, "i", id); }
             else if (kind == "token" && int.TryParse(id, out var tid)) { c = new NpgsqlCommand("delete from assets.enroll_tokens where id = @i and deleted_at is not null", db); P(c, "i", tid); }
             else return Results.NotFound();
             await using (c) if (await c.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound();
@@ -507,10 +542,7 @@ chmod 755 /opt/deskask-agent/deskask-agent
             await using var db = await Open(t, ct);
             await using var f = new NpgsqlCommand("select asset_id from assets.agents where id = @i", db); P(f, "i", id);
             var asset = await f.ExecuteScalarAsync(ct); if (asset == null) return Results.NotFound();
-            await Enqueue(db, hub, t, id, "uninstall", new { }, ct);
-            await using (var a = new NpgsqlCommand("update assets.assets set agent_id = '' where agent_id = @i", db)) { P(a, "i", id); await a.ExecuteNonQueryAsync(ct); }
-            // the uninstall message is delivered with the next poll; the agent record goes right away
-            await using (var d = new NpgsqlCommand("delete from assets.agents where id = @i", db)) { P(d, "i", id); await d.ExecuteNonQueryAsync(ct); }
+            await Uninstall(db, hub, t, id, ct); // the order is delivered with the next poll; then the record goes
             await audit.WriteAsync("assets.agent_removed", id, ct: ct);
             return Results.Ok(new { ok = true });
         }));

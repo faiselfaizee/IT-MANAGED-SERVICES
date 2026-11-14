@@ -42,10 +42,10 @@ export function Home({ who, live, assets }: { who: WhoAmI | null; live: boolean;
           <a className="open" href="#/assets">Open Assets</a></div>
         {s && <div className="rings">
           <Ring title="Agents" unit="devices" empty="No devices in service yet." parts={[
-            { key: 'on', label: 'Live', value: n(ag.online), tone: 'ok', href: '#/assets?agent=online' },
-            { key: 'due', label: 'Live, update due', value: n(ag.updateDue), tone: 'warn', href: '#/assets?agent=update' },
-            { key: 'off', label: 'Not reporting', value: n(ag.offline), tone: 'bad', href: '#/assets?agent=offline' },
-            { key: 'none', label: 'No agent', value: n(ag.none), tone: 'none', href: '#/assets?agent=none' }]} />
+            { key: 'on', label: 'Live', value: n(ag.online), tone: 'ok', href: '#/assets/list?agent=online' },
+            { key: 'due', label: 'Live, update due', value: n(ag.updateDue), tone: 'warn', href: '#/assets/list?agent=update' },
+            { key: 'off', label: 'Not reporting', value: n(ag.offline), tone: 'bad', href: '#/assets/list?agent=offline' },
+            { key: 'none', label: 'No agent', value: n(ag.none), tone: 'none', href: '#/assets/list?agent=none' }]} />
           <Ring title="Compliance" unit="with agent" empty="No device reports through an agent yet." parts={[
             { key: 'c', label: 'Compliant', value: n(co.compliant), tone: 'ok' },
             { key: 'nc', label: 'Not compliant', value: n(co.nonCompliant), tone: 'bad' },

@@ -363,7 +363,7 @@ func readNetwork(ctx context.Context, creds []config.Cred, target, name string) 
 	var inv map[string]any
 	var snmpErr error = errors.New("no SNMP community is saved for this customer")
 	for _, c := range pick(creds, "snmp", hostOnly(target)) {
-		i, err := SNMPInventory(hostOnly(target), c.Community, name)
+		i, err := SNMPInventoryWith(hostOnly(target), c, name)
 		if err == nil {
 			inv, snmpErr = i, nil
 			break

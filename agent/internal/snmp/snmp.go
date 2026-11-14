@@ -262,8 +262,20 @@ func parseResponse(b []byte) (reqID int32, errStatus int64, oid string, val Valu
 	if _, _, err = m.tlv(); err != nil { // community
 		return
 	}
-	tag, pdu, err := m.tlv()
-	if err != nil || tag != pduResponse {
+	start := m.p
+	if _, _, err = m.tlv(); err != nil {
+		return
+	}
+	return parsePDU(msg[start:m.p])
+}
+
+func randInt31() int32 { return rand.Int31() }
+
+// parsePDU reads a response PDU (its whole TLV): request id, error status and the first variable.
+func parsePDU(b []byte) (reqID int32, errStatus int64, oid string, val Value, err error) {
+	r := &reader{b: b}
+	tag, pdu, err := r.tlv()
+	if err != nil || (tag != pduResponse && tag != pduReport) {
 		return 0, 0, "", val, errors.New("snmp: unexpected answer type")
 	}
 	p := &reader{b: pdu}
@@ -304,6 +316,7 @@ func parseResponse(b []byte) (reqID int32, errStatus int64, oid string, val Valu
 type Client struct {
 	Addr      string // host or host:port; port 161 by default
 	Community string
+	V3        *V3           // set for SNMP version 3; Community is then not used
 	Timeout   time.Duration // per try; default 2 s
 	Retries   int           // default 1
 }
@@ -327,6 +340,9 @@ func (c *Client) ask(pdu byte, oid string) (string, Value, error) {
 		return "", Value{}, err
 	}
 	defer conn.Close()
+	if c.V3 != nil {
+		return c.askV3(conn, to, tries, pdu, oid)
+	}
 	for i := 0; i < tries; i++ {
 		id := rand.Int31()
 		req, err := buildRequest(pdu, c.Community, id, oid)
@@ -363,6 +379,87 @@ func (c *Client) ask(pdu byte, oid string) (string, Value, error) {
 		return "", Value{}, errors.New("snmp: no answer (wrong community, SNMP off or blocked)")
 	}
 	return "", Value{}, last
+}
+
+// askV3 sends one SNMPv3 request: it learns the engine on first use and follows the device's clock when told it is out of the window.
+func (c *Client) askV3(conn net.Conn, to time.Duration, tries int, pdu byte, oid string) (string, Value, error) {
+	v := c.V3
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	exchange := func(req []byte, want int32) ([]byte, error) {
+		var last error
+		for i := 0; i < tries; i++ {
+			_ = conn.SetDeadline(time.Now().Add(to))
+			if _, err := conn.Write(req); err != nil {
+				last = err
+				continue
+			}
+			buf := make([]byte, 65535)
+			for {
+				n, err := conn.Read(buf)
+				if err != nil {
+					last = err
+					break
+				}
+				if a, err := parseV3Header(buf[:n]); err == nil && a.msgID != want {
+					continue // an old answer
+				}
+				return append([]byte{}, buf[:n]...), nil
+			}
+		}
+		if ne, ok := last.(net.Error); ok && ne.Timeout() {
+			return nil, errors.New("snmp: no answer (SNMPv3 not enabled, wrong user, or blocked)")
+		}
+		return nil, last
+	}
+	if v.engineID == nil {
+		var want int32
+		err := v.discover(func(req []byte) ([]byte, error) {
+			a, _ := parseV3(req, nil)
+			if a != nil {
+				want = a.msgID
+			}
+			return exchange(req, want)
+		})
+		if err != nil {
+			return "", Value{}, err
+		}
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		id := rand.Int31()
+		req, err := v.request(pdu, id, oid)
+		if err != nil {
+			return "", Value{}, err
+		}
+		raw, err := exchange(req, id)
+		if err != nil {
+			return "", Value{}, err
+		}
+		a, err := parseV3(raw, v)
+		if err != nil {
+			return "", Value{}, err
+		}
+		if a.pduTag == pduReport {
+			ro := reportOID(a.pdu)
+			if ro == oidNotInTime && attempt == 0 { // follow the device's clock and try once more
+				v.boots, v.timeAt, v.learned = a.boots, a.time, time.Now()
+				continue
+			}
+			if t, ok := reportText[ro]; ok {
+				return "", Value{}, errors.New("snmp: " + t)
+			}
+			return "", Value{}, fmt.Errorf("snmp: the device refused the request (report %s)", ro)
+		}
+		_, es, o, val, err := parsePDU(a.pdu)
+		if err != nil {
+			return "", Value{}, err
+		}
+		if es != 0 {
+			return "", Value{}, fmt.Errorf("snmp: the device answered with error %d for %s", es, oid)
+		}
+		return o, val, nil
+	}
+	return "", Value{}, errors.New("snmp: " + reportText[oidNotInTime])
 }
 
 // Get reads one value. A value the device does not have comes back with Missing() true.

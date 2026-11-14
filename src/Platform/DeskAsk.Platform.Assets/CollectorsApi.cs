@@ -21,7 +21,7 @@ public static class CollectorsApi
     static readonly string[] Monitors = { "ping", "windows", "ssh", "snmp", "network", "vmware", "nutanix", "proxmox", "xen", "bmc", "device" };
     /// <summary>The modes in which the controller reads the device's details, not only whether it answers.</summary>
     static readonly string[] Reading = { "windows", "ssh", "snmp", "network", "vmware", "nutanix", "proxmox", "xen", "bmc" };
-    static readonly string[] NetKinds = { "snmp", "netssh", "netapi" };
+    static readonly string[] NetKinds = { "snmp", "snmp3", "netssh", "netapi" };
     static readonly string[] NetCategories = { "firewall", "switch", "wireless" };
     /// <summary>Login kinds sent only for their own read mode, with the hardware category they are filed under first.</summary>
     static readonly Dictionary<string, string> OwnKinds = new() { ["vmware"] = "virtualization", ["nutanix"] = "virtualization", ["proxmox"] = "virtualization", ["xen"] = "virtualization", ["bmc"] = "server" };
@@ -34,7 +34,7 @@ public static class CollectorsApi
         var m = Regex.Match(http.Request.Headers.Authorization.ToString(), @"^Bearer\s+(dkco_[A-Za-z0-9_-]{20,})$");
         var id = http.Request.Headers["X-Collector-Id"].ToString();
         if (!m.Success || id == "") return null;
-        await using var c = new NpgsqlCommand("select key_hash, company_id, name, platform, version, monitor_default, scan_cidrs, scan_req from assets.collectors where id = @i", db); AgentsApi.P(c, "i", id);
+        await using var c = new NpgsqlCommand("select key_hash, company_id, name, platform, version, monitor_default, scan_cidrs, scan_req from assets.collectors where id = @i and deleted_at is null", db); AgentsApi.P(c, "i", id);
         await using var r = await c.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) return null;
         if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(r.GetString(0)), Encoding.ASCII.GetBytes(AgentsApi.Hash(m.Groups[1].Value)))) return null;
@@ -403,13 +403,14 @@ chmod 755 /opt/deskask-collector/deskask-collector
 
             // the logins saved under Assets > Credentials, sealed in the database; sent only to this collector, over its own authenticated connection
             var saved = new List<(int? Company, string Kind, string Category, object Login)>();
-            await using (var c = new NpgsqlCommand("select name, kind, username, secret, company_id, category, vendor from assets.creds where kind in ('windows','ssh','snmp','sshpw','vmware','nutanix','proxmox','xen','bmc','netssh','netapi') order by id", db))
+            await using (var c = new NpgsqlCommand("select name, kind, username, secret, company_id, category, vendor, auth_proto, priv_proto, secret2 from assets.creds where kind in ('windows','ssh','snmp','snmp3','sshpw','vmware','nutanix','proxmox','xen','bmc','netssh','netapi') order by id", db))
             {
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 while (await rd.ReadAsync(ct))
                 {
                     string secret; try { secret = rd.GetString(3) == "" ? "" : SecretBox.Open(cfg, t.Require().Id, rd.GetString(3)); } catch (Exception) { continue; }
-                    saved.Add((rd.IsDBNull(4) ? null : rd.GetInt32(4), rd.GetString(1), rd.GetString(5), new { name = rd.GetString(0), kind = rd.GetString(1), user = rd.GetString(2), secret, vendor = rd.GetString(6) }));
+                    string s2; try { s2 = rd.GetString(9) == "" ? "" : SecretBox.Open(cfg, t.Require().Id, rd.GetString(9)); } catch (Exception) { continue; }
+                    saved.Add((rd.IsDBNull(4) ? null : rd.GetInt32(4), rd.GetString(1), rd.GetString(5), new { name = rd.GetString(0), kind = rd.GetString(1), user = rd.GetString(2), secret, vendor = rd.GetString(6), authProto = rd.GetString(7), privProto = rd.GetString(8), privSecret = s2 }));
                 }
             }
             var company = new Dictionary<long, int?>();
@@ -464,7 +465,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
             await using var db = await AgentsApi.Open(t, ct); var o = new List<object>(); var off = AgentsApi.Offline(cfg);
             await using var c = new NpgsqlCommand(@"select c.id, c.company_id, coalesce(co.name,''), c.name, c.platform, c.version, c.hostname, c.ip, c.last_seen, c.created_at, c.monitor_default, c.scan_cidrs, c.scan_req,
                 (select count(*) from assets.assets a where a.collector_id = c.id), (select count(*) from assets.found f where f.collector_id = c.id), c.auto_install
-                from assets.collectors c left join assets.companies co on co.id = c.company_id order by lower(c.name)", db);
+                from assets.collectors c left join assets.companies co on co.id = c.company_id where c.deleted_at is null order by lower(c.name)", db);
             await using var rd = await c.ExecuteReaderAsync(ct);
             while (await rd.ReadAsync(ct))
             {
@@ -507,10 +508,13 @@ chmod 755 /opt/deskask-collector/deskask-collector
         Admin(r.MapDelete("/api/assets/collectors/{id}", async (string id, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
         {
             await using var db = await AgentsApi.Open(t, ct);
-            await using (var u = new NpgsqlCommand("update assets.assets set collector_id = '', monitor = '' where collector_id = @i", db)) { AgentsApi.P(u, "i", id); await u.ExecuteNonQueryAsync(ct); }
-            await using var c = new NpgsqlCommand("delete from assets.collectors where id = @i", db); AgentsApi.P(c, "i", id);
+            // to the recycle bin for 30 days: it stops working at once, and the devices it watched are remembered so a restore gives them back
+            await using var c = new NpgsqlCommand(@"update assets.collectors set deleted_at = now(),
+                binned_assets = coalesce((select jsonb_agg(jsonb_build_object('id', a.id, 'monitor', a.monitor)) from assets.assets a where a.collector_id = @i), '[]')
+                where id = @i and deleted_at is null", db); AgentsApi.P(c, "i", id);
             if (await c.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound();
-            await audit.WriteAsync("assets.collector_removed", id, "", ct: ct);
+            await using (var u = new NpgsqlCommand("update assets.assets set collector_id = '', monitor = '' where collector_id = @i", db)) { AgentsApi.P(u, "i", id); await u.ExecuteNonQueryAsync(ct); }
+            await audit.WriteAsync("assets.collector_binned", id, "", ct: ct);
             return Results.NoContent();
         }));
         Admin(r.MapPost("/api/assets/collectors/{id}/scan", async (string id, ITenantContext t, AgentHub hub, IAuditLog audit, CancellationToken ct) =>
@@ -582,7 +586,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
             await using var db = await AgentsApi.Open(t, ct);
             if (col != "")
             {
-                await using var q = new NpgsqlCommand("select 1 from assets.collectors where id = @i", db); AgentsApi.P(q, "i", col);
+                await using var q = new NpgsqlCommand("select 1 from assets.collectors where id = @i and deleted_at is null", db); AgentsApi.P(q, "i", col);
                 if (await q.ExecuteScalarAsync(ct) == null) return Bad("bad_input", "collector not found");
             }
             await using var c = new NpgsqlCommand("update assets.assets set monitor = @m, collector_id = @c, read_req = @rr, bmc_address = coalesce(@b, bmc_address), updated_at = now() where id = @i", db); AgentsApi.P(c, "m", mode); AgentsApi.P(c, "c", col); AgentsApi.P(c, "i", id);

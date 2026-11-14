@@ -287,16 +287,17 @@ public static class AssetExport
         {
             var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             await using var db = await AgentsApi.Open(t, ct);
-            int? company = int.TryParse(http.Request.Query["company"].ToString(), out var co) ? co : null;
+            var lf = AssetsModule.ListFilter(http.Request.Query, cfg); if (lf.Error != null) return AgentsApi.Bad("bad_input", lf.Error);
+            var company = http.Request.Query["company"].ToString();
             var ids = new List<long>();
-            await using (var c = new NpgsqlCommand("select a.id from assets.assets a where (not @sc or a.company_id = any(@scope)) and (@co::int is null or a.company_id = @co) order by a.id limit 2000", db).Scoped(scope))
+            await using (var c = new NpgsqlCommand($"select a.id from assets.assets a left join assets.agents g on g.id = a.agent_id and g.deleted_at is null where (not @sc or a.company_id = any(@scope)) and {lf.Sql} order by a.id limit 2000", db).Scoped(scope))
             {
-                AgentsApi.P(c, "co", company); await using var rd = await c.ExecuteReaderAsync(ct);
+                lf.Bind(c); await using var rd = await c.ExecuteReaderAsync(ct);
                 while (await rd.ReadAsync(ct)) ids.Add(rd.GetInt64(0));
             }
             var sb = new StringBuilder(CsvHead); var off = Offline(cfg);
             foreach (var id in ids) { var f = await Build(db, id, off, ct); if (f != null) AppendCsv(sb, f); }
-            await audit.WriteAsync("assets.exported_full", "all", ids.Count + " assets" + (company == null ? "" : ", company " + company), ct: ct);
+            await audit.WriteAsync("assets.exported_full", "all", ids.Count + " assets" + (company == "" ? "" : ", company " + company) + (http.Request.QueryString.HasValue ? ", filtered" : ""), ct: ct);
             return Results.File(Encoding.UTF8.GetBytes(sb.ToString()), "text/csv; charset=utf-8", "assets-full-details.csv");
         }));
     }
