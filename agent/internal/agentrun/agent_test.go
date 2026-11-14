@@ -197,3 +197,42 @@ func TestAnUpdateThatNeverReachesThePlatformIsRolledBack(t *testing.T) {
 		t.Fatalf("expected a restart after the rollback, got %d", code)
 	}
 }
+
+func TestTheRunnerSendsPerformanceSamplesAndFollowsTheAskedInterval(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads /proc")
+	}
+	got := make(chan map[string]any, 10)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/agent/v1/metrics", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		got <- b
+		_, _ = w.Write([]byte(`{"every":15}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	old := MetricsEvery
+	MetricsEvery = 50 * time.Millisecond
+	defer func() { MetricsEvery = old }()
+	r := NewRunner(config.Agent{Server: srv.URL, AgentID: "gAAA", Key: "dkag_secretsecretsecretsecret"}, "1.0.0")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.metricsLoop(ctx)
+	select {
+	case b := <-got:
+		if b["mem_total"].(float64) <= 0 || b["cpu"].(float64) < 0 {
+			t.Fatalf("sample %v", b)
+		}
+		if _, ok := b["disks"].([]any); !ok {
+			t.Fatalf("no disks in %v", b)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no sample was sent")
+	}
+	select { // the platform asked for 15 seconds: no second sample within half a second
+	case <-got:
+		t.Fatal("the asked interval was not followed")
+	case <-time.After(500 * time.Millisecond):
+	}
+}

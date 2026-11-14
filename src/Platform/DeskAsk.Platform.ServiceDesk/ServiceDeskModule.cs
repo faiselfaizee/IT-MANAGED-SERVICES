@@ -30,6 +30,7 @@ public sealed class ServiceDeskModule : IPlatformModule
     {
         s.AddSingleton<ITenantSchema, ServiceDeskSchema>();
         s.AddScoped<IInboundMailHandler, InboundHandler>();
+        s.AddScoped<ITicketDesk, TicketDesk>();
         s.AddSingleton<IJobHandler, SlaJob>();
         s.AddSingleton<IJobHandler, WebhookJob>();
         s.AddSingleton<IJobHandler, ReportMailJob>();

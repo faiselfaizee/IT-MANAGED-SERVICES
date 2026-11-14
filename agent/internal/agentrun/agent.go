@@ -15,6 +15,7 @@ import (
 	"github.com/deskask/platform/agent/internal/client"
 	"github.com/deskask/platform/agent/internal/config"
 	"github.com/deskask/platform/agent/internal/inventory"
+	"github.com/deskask/platform/agent/internal/metrics"
 	"github.com/deskask/platform/agent/internal/svc"
 )
 
@@ -116,6 +117,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 	}()
 	go r.inventoryLoop(ctx)
+	go r.metricsLoop(ctx)
 	failures := 0
 	for ctx.Err() == nil {
 		var out struct {
@@ -249,4 +251,43 @@ func (r *Runner) SendInventory(ctx context.Context) error {
 		go r.update(ctx, out.Update.Version, false)
 	}
 	return nil
+}
+
+// MetricsEvery is how often a performance sample is sent; the platform may ask for another interval in its answer.
+var MetricsEvery = time.Minute
+
+// metricsLoop sends processor, memory and disk use once a minute for the Monitoring module. A server that does not know the
+// endpoint yet (older than 3.0) is asked again an hour later; a system the agent cannot read stops the loop.
+func (r *Runner) metricsLoop(ctx context.Context) {
+	var s metrics.Sampler
+	if _, err := s.Take(); err != nil { // the first reading only primes the processor counters
+		log.Printf("performance data not sent: %v", err)
+		return
+	}
+	every := MetricsEvery
+	for ctx.Err() == nil {
+		sleep(ctx, every)
+		smp, err := s.Take()
+		if err != nil {
+			log.Printf("performance data: %v", err)
+			continue
+		}
+		var out struct {
+			Every int `json:"every"`
+		}
+		err = r.cl.Do(ctx, "POST", "/agent/v1/metrics", smp, &out)
+		var he *client.Error
+		switch {
+		case err == nil:
+			if out.Every >= 15 && out.Every <= 3600 {
+				every = time.Duration(out.Every) * time.Second
+			} else {
+				every = MetricsEvery
+			}
+		case errors.As(err, &he) && he.Status == 404:
+			every = time.Hour
+		default:
+			every = MetricsEvery
+		}
+	}
 }

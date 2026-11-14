@@ -20,6 +20,10 @@ public sealed class AccessService : IAccess
         if (module == Modules.Assets && role == "engineer" && (action == Acts.Add || action == Acts.Modify)) return (true, false);
         if (module == Modules.Assets && action == Acts.Read)
             return role switch { "engineer" or "viewer" => (true, false), "cadmin" => (false, true), _ => (false, false) };
+        // monitoring: staff and viewers see every customer, engineers acknowledge and mute; a customer administrator sees their own devices
+        if (module == Modules.Monitoring && action == Acts.Read)
+            return role switch { "engineer" or "viewer" => (true, false), "cadmin" => (false, true), _ => (false, false) };
+        if (module == Modules.Monitoring && action == Acts.Modify && role == "engineer") return (true, false);
         return (false, false);
     }
 

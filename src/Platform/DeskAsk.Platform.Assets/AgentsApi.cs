@@ -50,6 +50,19 @@ public sealed class AssetsJanitorJob : IJobHandler
         await Sql("delete from assets.deploy_log where at < now() - interval '30 days'");
         await Sql("delete from assets.agent_q where created_at < now() - interval '3 days'");
         await Sql("delete from assets.jobs where created_at < now() - interval '180 days'");
+        // performance data: minute points for two days, hourly figures for 90 days (rolled up a few times an hour)
+        if (DateTime.UtcNow.Minute % 15 == 3)
+        {
+            await Sql(@"insert into assets.metrics_hour (asset_id, hour, cpu_avg, cpu_max, mem_avg, mem_max, disk_free_min, n)
+                select m.asset_id, date_trunc('hour', m.at), avg(m.cpu), max(m.cpu), avg(m.mem), max(m.mem),
+                       min((select min((d->>'pct')::real) from jsonb_array_elements(m.disks) d)), count(*)
+                from assets.metrics m where m.at >= date_trunc('hour', now()) - interval '2 hours' and m.at < date_trunc('hour', now())
+                group by 1, 2
+                on conflict (asset_id, hour) do update set cpu_avg = excluded.cpu_avg, cpu_max = excluded.cpu_max, mem_avg = excluded.mem_avg,
+                  mem_max = excluded.mem_max, disk_free_min = excluded.disk_free_min, n = excluded.n");
+            await Sql("delete from assets.metrics where at < now() - interval '2 days'");
+            await Sql("delete from assets.metrics_hour where hour < now() - interval '90 days'");
+        }
     }
 }
 

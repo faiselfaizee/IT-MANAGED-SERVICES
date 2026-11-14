@@ -15,6 +15,7 @@ public static class MailTemplates
 {
     public const string SettingKey = "mail.templates";
     static readonly string[] Ticket = { "number", "subject", "status", "priority", "message", "requester", "company", "assignee", "by", "link", "site" };
+    static readonly string[] Alert = { "severity", "device", "tag", "company", "rule", "message", "opened", "duration", "ticket", "link", "site" };
 
     public static readonly TemplateDef[] All =
     {
@@ -33,6 +34,12 @@ public static class MailTemplates
         new("ticket_assigned", "Ticket assigned", "Sent to an engineer when a ticket is assigned to them.", Ticket,
             "[{{number}}] Assigned to you: {{subject}}",
             "Hello {{assignee}},\n\n{{by}} assigned ticket {{number}} to you.\n\nSubject: {{subject}}\nPriority: {{priority}}\nRaised by: {{requester}} ({{company}})\n\n{{message}}\n\nOpen the ticket:\n{{link}}"),
+        new("monitoring_alert", "Monitoring alert", "Sent to the alert recipients when Monitoring opens an alert or raises it to critical.", Alert,
+            "[{{severity}}] {{company}}: {{device}} - {{rule}}",
+            "{{severity}} alert for {{device}} ({{tag}}, {{company}})\n\n{{message}}\n\nRule: {{rule}}\nSince: {{opened}}\n{{ticket}}\nOpen the device:\n{{link}}\n\n{{site}}"),
+        new("monitoring_resolved", "Monitoring alert cleared", "Sent to the alert recipients when an alert clears, if that is switched on in Monitoring settings.", Alert,
+            "[Cleared] {{company}}: {{device}} - {{rule}}",
+            "The alert for {{device}} ({{tag}}, {{company}}) has cleared after {{duration}}.\n\n{{message}}\n\nOpen the device:\n{{link}}\n\n{{site}}"),
     };
 
     public static TemplateDef? Find(string key) => All.FirstOrDefault(t => t.Key == key);

@@ -208,3 +208,47 @@ public interface IInboundMailHandler
     /// <summary>Opens a ticket from the message. The company is optional.</summary>
     Task<string> CreateTicketAsync(InboundMail m, int? companyId, CancellationToken ct = default);
 }
+
+/// <summary>Free space on one disk or datastore. FreePct is 0 to 100.</summary>
+public sealed record DiskUse(string Name, double FreePct, long FreeBytes, long TotalBytes);
+/// <summary>A service check on a device: last result, failures in a row and, for certificates, days left.</summary>
+public sealed record CheckState(int Id, string Name, string Type, bool? Ok, int Fails, double? CertDays, string Detail, DateTime? At);
+/// <summary>A hardware part a controller reports as not OK (power supply, drive, fan, hypervisor host ...).</summary>
+public sealed record PartFault(string Part, string Name, string State);
+/// <summary>
+/// One device in service as Monitoring sees it. The Assets module owns the data (agents, site controllers, service checks).
+/// Kind is computer, server, network, printer or other. PingUp is null when no site controller watches it.
+/// </summary>
+public sealed record DeviceState(long Id, string Tag, string Name, int? CompanyId, string Company, string Kind, string Ip, string Os,
+    bool HasAgent, string AgentVersion, DateTime? AgentSeen, bool? PingUp, DateTime? DownSince, int RttMs, DateTime? CheckedAt,
+    DateTime? MetricsAt, double? Cpu, double? Mem, long MemTotal, long UptimeS, IReadOnlyList<DiskUse> Disks,
+    IReadOnlyList<CheckState> Checks, IReadOnlyList<PartFault> Faults);
+/// <summary>The lowest processor and memory use over a time window (so "above 90% for 15 minutes" means the lowest was above 90).</summary>
+public sealed record Sustained(double? MinCpu, double? MinMem, int Samples, DateTime First);
+/// <summary>One point of a performance chart: minute values, or hourly average and peak.</summary>
+public sealed record MetricPoint(DateTime At, double? Cpu, double? CpuMax, double? Mem, double? MemMax, double? DiskFreeMin);
+
+/// <summary>Live state of devices for the Monitoring module, from the Assets module (read only).</summary>
+public interface IDeviceHealth
+{
+    /// <summary>Every device in service (not retired or lost), limited to these companies (null = all), or one device.</summary>
+    Task<IReadOnlyList<DeviceState>> SnapshotAsync(IReadOnlyList<int>? companies, long? assetId = null, CancellationToken ct = default);
+    /// <summary>Per device, the lowest processor and memory use in the last minutes.</summary>
+    Task<IReadOnlyDictionary<long, Sustained>> SustainedAsync(int minutes, CancellationToken ct = default);
+    /// <summary>Chart points: minute values (kept two days) or hourly figures (kept 90 days).</summary>
+    Task<IReadOnlyList<MetricPoint>> SeriesAsync(long assetId, DateTime from, DateTime to, bool hourly, CancellationToken ct = default);
+}
+
+/// <summary>What another module asks the Service Desk to open.</summary>
+public sealed record TicketRequest(string Subject, string Body, string Priority, int? CompanyId, long? AssetId, string AssetName, string Source, string CreatedBy);
+
+/// <summary>Opening tickets from other modules (Monitoring alerts). Implemented by the Service Desk.</summary>
+public interface ITicketDesk
+{
+    /// <summary>Opens a ticket with the customer's service levels. Returns its id and number (TKT-000123).</summary>
+    Task<(long Id, string Number)> OpenAsync(TicketRequest r, CancellationToken ct = default);
+    /// <summary>Adds a system note to the ticket (for example "the alert has cleared"). Does nothing for an unknown id.</summary>
+    Task NoteAsync(long ticketId, string text, CancellationToken ct = default);
+    /// <summary>The ticket's number and status, or null when it no longer exists.</summary>
+    Task<(string Number, string Status)?> GetAsync(long ticketId, CancellationToken ct = default);
+}

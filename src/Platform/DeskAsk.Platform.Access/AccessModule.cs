@@ -47,7 +47,7 @@ public sealed class AccessModule : IPlatformModule
         s.AddScoped<IAccess, AccessService>();
     }
 
-    static readonly string[] GrantModules = { Modules.Assets, Modules.ServiceDesk };
+    static readonly string[] GrantModules = { Modules.Assets, Modules.ServiceDesk, Modules.Monitoring };
     static IResult Bad(string error, string? detail = null) => Results.BadRequest(new { error, detail });
     static async Task<NpgsqlConnection> Open(ITenantContext t, CancellationToken ct) { var db = new NpgsqlConnection(t.Require().ConnectionString); await db.OpenAsync(ct); return db; }
     static void P(NpgsqlCommand c, string n, object? v) => c.Parameters.AddWithValue(n, v ?? DBNull.Value);

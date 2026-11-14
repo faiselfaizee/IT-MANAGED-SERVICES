@@ -322,7 +322,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
             foreach (var h in Items(res, "health", 5000))
             {
                 var id = AssetOf(h); if (id == 0) continue; var up = Flag(h, "up");
-                await using var c = new NpgsqlCommand(up ? "update assets.assets set check_up = true, check_rtt = @r, checked_at = now(), last_seen = now() where id = @i" : "update assets.assets set check_up = false, check_rtt = 0, checked_at = now() where id = @i", db);
+                await using var c = new NpgsqlCommand(up ? "update assets.assets set check_up = true, check_rtt = @r, checked_at = now(), last_seen = now(), check_down_at = null where id = @i" : "update assets.assets set check_up = false, check_rtt = 0, checked_at = now(), check_down_at = coalesce(check_down_at, now()) where id = @i", db);
                 AgentsApi.P(c, "r", (int)Math.Clamp(Math.Round(Num(h, "rtt_ms")), 0, 60000)); AgentsApi.P(c, "i", id); await c.ExecuteNonQueryAsync(ct);
             }
             foreach (var iv in Items(res, "inventories", 500))
@@ -363,7 +363,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
                     var cid = Int(ck, "id"); if (cid == null || !known.TryGetValue(cid.Value, out var aid) || (AgentsApi.Str(ck, "asset") ?? "") != aid.ToString()) continue;
                     var ok = Flag(ck, "ok"); var ms = Math.Clamp(Num(ck, "ms"), 0, 600000);
                     double? days = types[cid.Value] == "ssl" && (ok || Num(ck, "days", -9999) != 0) && Num(ck, "days", -9999) > -9000 ? Num(ck, "days") : null;
-                    await using var u = new NpgsqlCommand("update assets.service_checks set last_at = now(), last_ok = @o, last_ms = @m, last_days = @d, last_detail = @t where id = @i", db);
+                    await using var u = new NpgsqlCommand("update assets.service_checks set last_at = now(), last_ok = @o, last_ms = @m, last_days = @d, last_detail = @t, fails = case when @o then 0 else fails + 1 end where id = @i", db);
                     AgentsApi.P(u, "o", ok); AgentsApi.P(u, "m", (float)ms); AgentsApi.P(u, "d", days == null ? null : (float)days.Value); AgentsApi.P(u, "t", AgentsApi.Clip(AgentsApi.Str(ck, "detail"), 300)); AgentsApi.P(u, "i", cid.Value);
                     await u.ExecuteNonQueryAsync(ct);
                     await using var h = new NpgsqlCommand("insert into assets.check_results (check_id, ok, ms, days) values (@i,@o,@m,@d)", db);

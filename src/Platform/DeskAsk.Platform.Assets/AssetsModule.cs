@@ -250,6 +250,22 @@ public sealed class AssetsSchema : ITenantSchema
             alter table assets.creds add column if not exists secret2 text not null default ''"),
         new(19, "an uninstalled agent keeps its record until the order is delivered", @"
             alter table assets.agents add column if not exists uninstall_at timestamptz"),
+        new(20, "performance data for Monitoring", @"
+            create table if not exists assets.metrics (
+              asset_id bigint not null references assets.assets(id) on delete cascade, at timestamptz not null default now(),
+              cpu real, mem real, disks jsonb not null default '[]', primary key (asset_id, at));
+            create index if not exists metrics_at on assets.metrics (at);
+            create table if not exists assets.metrics_hour (
+              asset_id bigint not null references assets.assets(id) on delete cascade, hour timestamptz not null,
+              cpu_avg real, cpu_max real, mem_avg real, mem_max real, disk_free_min real, n int not null default 0, primary key (asset_id, hour));
+            alter table assets.assets add column if not exists m_at timestamptz;
+            alter table assets.assets add column if not exists m_cpu real;
+            alter table assets.assets add column if not exists m_mem real;
+            alter table assets.assets add column if not exists m_mem_total bigint not null default 0;
+            alter table assets.assets add column if not exists m_disks jsonb not null default '[]';
+            alter table assets.assets add column if not exists m_uptime bigint not null default 0;
+            alter table assets.assets add column if not exists check_down_at timestamptz;
+            alter table assets.service_checks add column if not exists fails int not null default 0"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -300,6 +316,7 @@ public sealed class AssetsModule : IPlatformModule
         s.AddScoped<AssetsDirectory>();
         s.AddScoped<ICompanyDirectory>(sp => sp.GetRequiredService<AssetsDirectory>());
         s.AddScoped<IAssetDirectory>(sp => sp.GetRequiredService<AssetsDirectory>());
+        s.AddScoped<IDeviceHealth, DeviceHealth>();
         s.AddSingleton<IJobHandler, AssetsJanitorJob>();
         s.AddSingleton(new RecurringJob("assets.janitor", AssetsJanitorJob.JobType, TimeSpan.FromMinutes(1)));
         s.AddSingleton<IJobHandler, RenewalsJob>();
@@ -520,6 +537,7 @@ public sealed class AssetsModule : IPlatformModule
         AgentUpdateApi.Map(r, Key);
         ConfigsApi.Map(r, Key);
         AssetDash.Map(r, Key);
+        DeviceHealth.Map(r, Key);
         RenewalsApi.Map(r, Key);
 
         // ---- types

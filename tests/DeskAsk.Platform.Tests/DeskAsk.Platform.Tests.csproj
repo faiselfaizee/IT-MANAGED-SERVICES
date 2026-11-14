@@ -10,6 +10,7 @@
     <ProjectReference Include="..\..\src\Platform\DeskAsk.Platform.Access\DeskAsk.Platform.Access.csproj" />
     <ProjectReference Include="..\..\src\Platform\DeskAsk.Platform.Mail\DeskAsk.Platform.Mail.csproj" />
     <ProjectReference Include="..\..\src\Platform\DeskAsk.Platform.ServiceDesk\DeskAsk.Platform.ServiceDesk.csproj" />
+    <ProjectReference Include="..\..\src\Platform\DeskAsk.Platform.Monitoring\DeskAsk.Platform.Monitoring.csproj" />
     <ProjectReference Include="..\..\src\Platform\DeskAsk.Platform.Jobs\DeskAsk.Platform.Jobs.csproj" />
     <ProjectReference Include="..\..\src\Platform\DeskAsk.Platform.Licensing\DeskAsk.Platform.Licensing.csproj" />
     <ProjectReference Include="..\..\src\Platform\DeskAsk.Platform.Tenancy\DeskAsk.Platform.Tenancy.csproj" />
