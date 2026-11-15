@@ -22,8 +22,9 @@ const Mail = lazy(() => import('./Mail'));
 const Updates = lazy(() => import('./Updates'));
 const ServiceDeskApp = lazy(() => import('./servicedesk/ServiceDeskApp'));
 const MonitoringApp = lazy(() => import('./monitoring/MonitoringApp'));
+const VaultApp = lazy(() => import('./vault/VaultApp'));
 
-export function Home({ who, live, assets, monitoring = false }: { who: WhoAmI | null; live: boolean; assets: boolean; monitoring?: boolean }) {
+export function Home({ who, live, assets, monitoring = false, vault = false }: { who: WhoAmI | null; live: boolean; assets: boolean; monitoring?: boolean; vault?: boolean }) {
   const mon = useLoad<Rec>(live && monitoring ? '/api/monitoring/dashboard' : null);
   const mo = (mon.data?.all ?? null) as Rec | null;
   const sum = useLoad<Rec>(live && assets ? '/api/assets/summary' : null);
@@ -98,7 +99,12 @@ export function Home({ who, live, assets, monitoring = false }: { who: WhoAmI | 
             { key: 'c', label: 'Under 10% free', value: n(mo.diskCritical), tone: 'bad', href: '#/monitoring/devices?disk=critical' }]} />
         </div>}
       </section>}
-      {MODULES.filter((m) => m !== 'Assets' && m !== 'Service Desk' && (m !== 'Monitoring' || !monitoring)).map((m) => <div key={m} className="tile tile-soon" aria-disabled="true">
+      {vault && <section className="tile" aria-labelledby="t-vault">
+        <div className="tile-head"><span className="chip"><Icon name="Vault" size={22} /></span>
+          <div><h2 id="t-vault"><a href="#/vault">Vault</a></h2><p className="muted">Customer passwords, encrypted on your computer before they are saved</p></div>
+          <a className="open" href="#/vault">Open the Vault</a></div>
+      </section>}
+      {MODULES.filter((m) => m !== 'Assets' && m !== 'Service Desk' && (m !== 'Monitoring' || !monitoring) && (m !== 'Vault' || !vault)).map((m) => <div key={m} className="tile tile-soon" aria-disabled="true">
         <span className="chip"><Icon name={m} size={22} /></span>
         <h2>{m}</h2>
         <p className="muted">{ABOUT[m]}</p>
@@ -124,6 +130,9 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const inDesk = parts[0] === 'servicedesk';
   const canMon = !!fetcher || (!!mine.data?.monitoring?.read && mine.data.monitoring.read !== 'none');
   const inMon = parts[0] === 'monitoring' && canMon;
+  const mods = useLoad<Rec[]>(fetcher ? null : '/api/platform/modules');
+  const canVault = !fetcher && !!me.data && me.data.role !== 'customer' && !!(Array.isArray(mods.data) && mods.data.find((m) => m.key === 'vault')?.licensed);
+  const inVault = parts[0] === 'vault' && canVault;
   const inUsers = parts[0] === 'users' && isAdmin;
   const inAccess = parts[0] === 'access' && isAdmin;
   const inLicence = parts[0] === 'licence' && isAdmin;
@@ -133,13 +142,15 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
     <div className="shell">
       <nav aria-label="Modules" className="side">
         <a className="brand" href="#/" aria-label="DeskAsk Platform home"><Logo /><strong>DeskAsk</strong></a>
-        <a href="#/" className={!inAssets && !inDesk && !inMon && !inUsers && !inAccess && !inLicence && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
+        <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inUsers && !inAccess && !inLicence && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
         {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
           ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
           : m === 'Service Desk'
             ? <a key={m} href="#/servicedesk" className={inDesk ? 'on' : ''}><Icon name={m} />{m}</a>
           : m === 'Monitoring' && canMon
             ? <a key={m} href="#/monitoring" className={inMon ? 'on' : ''}><Icon name={m} />{m}</a>
+          : m === 'Vault' && canVault
+            ? <a key={m} href="#/vault" className={inVault ? 'on' : ''}><Icon name={m} />{m}</a>
             : <span key={m} title="Not built yet"><Icon name={m} />{m}<em>Soon</em></span>)}
         {isAdmin ? <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a> : null}
         {isAdmin ? <a href="#/access" className={inAccess ? 'on' : ''}><Icon name="access" />Access</a> : null}
@@ -157,12 +168,13 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           ? <Suspense fallback={<p className="muted">Loading…</p>}><AssetsApp /></Suspense>
           : inDesk ? <Suspense fallback={<p className="muted">Loading…</p>}><ServiceDeskApp /></Suspense>
           : inMon ? <Suspense fallback={<p className="muted">Loading…</p>}><MonitoringApp /></Suspense>
+          : inVault ? <Suspense fallback={<p className="muted">Loading…</p>}><VaultApp /></Suspense>
           : inUpdates ? <Suspense fallback={<p className="muted">Loading…</p>}><Updates /></Suspense>
           : inMail ? <Suspense fallback={<p className="muted">Loading…</p>}><Mail /></Suspense>
           : inLicence ? <Suspense fallback={<p className="muted">Loading…</p>}><Licence /></Suspense>
           : inAccess ? <Suspense fallback={<p className="muted">Loading…</p>}><Access /></Suspense>
           : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><Users meId={me.data?.sub} /></Suspense>
-          : !err ? <Home who={who} live={!fetcher} assets={canAssets} monitoring={canMon && !fetcher} /> : null}
+          : !err ? <Home who={who} live={!fetcher} assets={canAssets} monitoring={canMon && !fetcher} vault={canVault} /> : null}
       </main>
     </div>
   );

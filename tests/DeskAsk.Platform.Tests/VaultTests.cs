@@ -235,6 +235,10 @@ public class VaultTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.NotFound, (await anon.PostAsync($"/api/public/vault/sends/{sid}/open", Json(new { }))).StatusCode);
         Assert.Equal(0L, Convert.ToInt64(await Scalar($"select count(*) from vault.sends where id = '{sid}' and data_enc is not null")));
         Assert.False((await J(await eng.GetAsync("/api/vault/sends"))).GetProperty("items")[0].GetProperty("active").GetBoolean());
+        var sid2 = (await J(await eng.PostAsync("/api/vault/sends", Json(new { dataEnc = Enc("vpn"), hours = 2, maxViews = 1, passcode = true, passcodeCheck = "Y2hlY2stdmFsdWUtZm9yLXRlc3Rz" })))).GetProperty("id").GetString()!;
+        Assert.Equal(HttpStatusCode.Forbidden, (await anon.PostAsync($"/api/public/vault/sends/{sid2}/open", Json(new { passcodeCheck = "wrong-wrong-wrong-wrong" }))).StatusCode);
+        Assert.Equal(1, (await J(await anon.GetAsync($"/api/public/vault/sends/{sid2}"))).GetProperty("viewsLeft").GetInt32()); // a wrong passcode does not use the view
+        Assert.Equal(Enc("vpn"), (await J(await anon.PostAsync($"/api/public/vault/sends/{sid2}/open", Json(new { passcodeCheck = "Y2hlY2stdmFsdWUtZm9yLXRlc3Rz" })))).GetProperty("dataEnc").GetString());
 
         // trash: delete, restore, purge
         Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync($"/api/vault/items/{fw}")).StatusCode);

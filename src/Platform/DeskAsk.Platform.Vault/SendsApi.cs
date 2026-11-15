@@ -25,11 +25,13 @@ public static class SendsApi
             if (!VaultModule.Blob(data, 70000)) return VaultModule.Bad("bad_input", "The text is not encrypted properly (or is larger than 50 KB).");
             var label = (VaultModule.Str(b, "label") ?? "").Trim(); if (label.Length > 80) return VaultModule.Bad("bad_input", "Keep the label under 80 characters.");
             var hours = Math.Clamp(VaultModule.Int(b, "hours") ?? 24, 1, 24 * 30); var views = Math.Clamp(VaultModule.Int(b, "maxViews") ?? 1, 1, 100);
+            var passcode = VaultModule.Bool(b, "passcode"); var check = VaultModule.Str(b, "passcodeCheck");
+            if (passcode && (check == null || check.Length is < 20 or > 100)) return VaultModule.Bad("bad_input", "passcodeCheck is needed with a passcode.");
             var id = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
             await using var db = await VaultModule.Open(t, ct);
-            await using var c = new NpgsqlCommand("insert into vault.sends (id, data_enc, label, created_by, created_by_id, expires_at, max_views, passcode) values (@i, @d, @l, @b, @u, now() + make_interval(hours => @h), @v, @p)", db);
+            await using var c = new NpgsqlCommand("insert into vault.sends (id, data_enc, label, created_by, created_by_id, expires_at, max_views, passcode, passcode_check) values (@i, @d, @l, @b, @u, now() + make_interval(hours => @h), @v, @p, @c)", db);
             VaultModule.P(c, "i", id); VaultModule.P(c, "d", data); VaultModule.P(c, "l", label); VaultModule.P(c, "b", VaultModule.Actor(http.User)); VaultModule.P(c, "u", VaultModule.Me(http.User));
-            VaultModule.P(c, "h", hours); VaultModule.P(c, "v", views); VaultModule.P(c, "p", VaultModule.Bool(b, "passcode"));
+            VaultModule.P(c, "h", hours); VaultModule.P(c, "v", views); VaultModule.P(c, "p", passcode); VaultModule.P(c, "c", passcode ? check : null);
             await c.ExecuteNonQueryAsync(ct);
             await audit.WriteAsync("vault.send_created", id, $"\"{label}\", {hours} hours, {views} views", ct: ct);
             return Results.Ok(new { id });
@@ -67,10 +69,25 @@ public static class SendsApi
             return Results.Ok(new { passcode = rd.GetBoolean(0), expiresAt = rd.GetDateTime(1), viewsLeft = rd.GetInt32(2), from = rd.GetString(3) });
         }).AllowAnonymous().RequireModule(key);
 
-        r.MapPost("/api/public/vault/sends/{id}/open", async (string id, HttpContext http, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        r.MapPost("/api/public/vault/sends/{id}/open", async (string id, JsonElement b, HttpContext http, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
         {
             if (!Id.IsMatch(id)) return Results.NotFound();
             await using var db = await VaultModule.Open(t, ct);
+            // a passcode is checked before a view is used up; ten wrong tries end the link
+            await using (var q = new NpgsqlCommand("select passcode_check from vault.sends where id = @i and passcode and data_enc is not null and deleted_at is null and expires_at > now() and views < max_views", db))
+            {
+                VaultModule.P(q, "i", id);
+                if (await q.ExecuteScalarAsync(ct) is string want)
+                {
+                    var got = VaultModule.Str(b, "passcodeCheck") ?? "";
+                    if (!CryptographicOperations.FixedTimeEquals(System.Text.Encoding.ASCII.GetBytes(got), System.Text.Encoding.ASCII.GetBytes(want)))
+                    {
+                        await using var w = new NpgsqlCommand("update vault.sends set tries = tries + 1, data_enc = case when tries + 1 >= 10 then null else data_enc end where id = @i returning 10 - tries", db); VaultModule.P(w, "i", id);
+                        var leftTries = await w.ExecuteScalarAsync(ct) as int? ?? 0;
+                        return Results.Json(new { error = "passcode", detail = leftTries > 0 ? $"Wrong passcode. {leftTries} tries left." : "Wrong passcode too often: the link no longer works." }, statusCode: 403);
+                    }
+                }
+            }
             await using var c = new NpgsqlCommand(@"update vault.sends set views = views + 1, data_enc = case when views + 1 >= max_views then null else data_enc end
                 from (select id, data_enc as d from vault.sends where id = @i and data_enc is not null and deleted_at is null and expires_at > now() and views < max_views for update) o
                 where vault.sends.id = o.id returning o.d, max_views - views", db);

@@ -132,7 +132,7 @@ public sealed class VaultSchema : ITenantSchema
             create table if not exists vault.sends (
               id text primary key, data_enc text, label text not null default '', created_by text not null, created_by_id uuid not null,
               created_at timestamptz not null default now(), expires_at timestamptz not null, max_views int not null, views int not null default 0,
-              passcode boolean not null default false, deleted_at timestamptz);
+              passcode boolean not null default false, passcode_check text, tries int not null default 0, deleted_at timestamptz);
             create table if not exists vault.breach_cache (prefix text primary key, body text not null, at timestamptz not null default now())"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) => SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);

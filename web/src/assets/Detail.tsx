@@ -25,6 +25,7 @@ function tabsFor(d: Rec): (readonly [string, string])[] {
 export default function Detail({ id, tab }: { id: string; tab: string }) {
   const { data: d, error, loading, reload } = useLoad<Rec>(`/api/assets/${id}/device`);
   const perms = usePerms('assets');
+  const vault = useLoad<Rec>(`/api/vault/assets/${id}/items`, [id]);
   const [modal, setModal] = useState<'' | 'ownership' | 'handover' | 'qr' | 'edit' | 'ask'>('');
   if (!d) return <Loading loading={loading} error={error} />;
   const online = d.agent.online as boolean, hasAgent = !!d.agent.id;
@@ -35,6 +36,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
       {perms.admin && <button onClick={() => setModal('ownership')}>Customer &amp; category</button>}
       {perms.admin && <button onClick={() => setModal('handover')}>{d.ownership.assignedTo ? 'Hand over' : 'Allocate'}</button>}
       <button onClick={() => setModal('qr')}>QR label</button>
+      {vault.data && <a className="button" href={`#/vault?asset=${id}`}>Passwords in the Vault ({((vault.data.items ?? []) as Rec[]).length})</a>}
       <Act label="Export PDF" run={() => saveFile(`/api/assets/${id}/export.pdf`, `${d.tag}.pdf`)} />
       <Act label="Export all details (CSV)" run={() => saveFile(`/api/assets/${id}/export.csv`, `${d.tag}-details.csv`)} />
       {perms.modify && <button onClick={() => setModal('edit')}>Edit</button>}
