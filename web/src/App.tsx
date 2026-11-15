@@ -40,6 +40,23 @@ export function Home({ who, live, assets, monitoring = false, vault = false }: {
       <p>Your IT operations in one place.</p>
     </header>
     <div className="tiles">
+      <section className="tile tile-wide" aria-labelledby="t-desk">
+        <div className="tile-head"><span className="chip"><Icon name="Service Desk" size={22} /></span>
+          <div><h2 id="t-desk"><a href="#/servicedesk">Service Desk</a></h2><p className="muted">{d ? `${openAll} open tickets, ${n(d.unassigned)} unassigned` : 'Tickets with service levels and customer sign-in'}</p></div>
+          <a className="open" href="#/servicedesk">Open Service Desk</a></div>
+        {d && <div className="rings">
+          <Ring title="Open tickets" unit="open" empty="No open tickets." parts={[
+            { key: 'o', label: 'New', value: n(d.open), tone: 'info', href: '#/servicedesk' },
+            { key: 'p', label: 'In progress', value: n(d.progress), tone: 'ok', href: '#/servicedesk' },
+            { key: 'h', label: 'Awaiting customer', value: n(d.hold), tone: 'none', href: '#/servicedesk' }]} />
+          <Ring title="Service level" unit="open" empty="No open tickets." parts={[
+            { key: 'in', label: 'On time', value: Math.max(openAll - n(d.overdue), 0), tone: 'ok' },
+            { key: 'late', label: 'Overdue', value: n(d.overdue), tone: 'bad' }]} />
+          <Ring title="Closed" unit="tickets" empty="No tickets solved yet." parts={[
+            { key: 'r', label: 'Resolved', value: n(d.resolved), tone: 'ok' },
+            { key: 'c', label: 'Closed', value: n(d.closed), tone: 'none' }]} />
+        </div>}
+      </section>
       {assets && <section className="tile tile-wide" aria-labelledby="t-assets">
         <div className="tile-head"><span className="chip"><Icon name="Assets" size={22} /></span>
           <div><h2 id="t-assets"><a href="#/assets">Assets</a></h2><p className="muted">{s ? `${n(s.total)} assets, ${n(s.total) - n(s.byStatus?.retired) - n(s.byStatus?.lost)} in service` : 'Every device, licence and contract'}</p></div>
@@ -62,23 +79,6 @@ export function Home({ who, live, assets, monitoring = false, vault = false }: {
         </div>}
         {s && n(co.nonCompliant) > 0 && <p className="muted tile-foot">Compliant means antivirus on and patches from the last 30 days. {n(co.antivirusOff)} with antivirus off, {n(co.patchesOlderThan30Days)} with older patches.</p>}
       </section>}
-      <section className="tile tile-wide" aria-labelledby="t-desk">
-        <div className="tile-head"><span className="chip"><Icon name="Service Desk" size={22} /></span>
-          <div><h2 id="t-desk"><a href="#/servicedesk">Service Desk</a></h2><p className="muted">{d ? `${openAll} open tickets, ${n(d.unassigned)} unassigned` : 'Tickets with service levels and customer sign-in'}</p></div>
-          <a className="open" href="#/servicedesk">Open Service Desk</a></div>
-        {d && <div className="rings">
-          <Ring title="Open tickets" unit="open" empty="No open tickets." parts={[
-            { key: 'o', label: 'New', value: n(d.open), tone: 'info', href: '#/servicedesk' },
-            { key: 'p', label: 'In progress', value: n(d.progress), tone: 'ok', href: '#/servicedesk' },
-            { key: 'h', label: 'Awaiting customer', value: n(d.hold), tone: 'none', href: '#/servicedesk' }]} />
-          <Ring title="Service level" unit="open" empty="No open tickets." parts={[
-            { key: 'in', label: 'On time', value: Math.max(openAll - n(d.overdue), 0), tone: 'ok' },
-            { key: 'late', label: 'Overdue', value: n(d.overdue), tone: 'bad' }]} />
-          <Ring title="Closed" unit="tickets" empty="No tickets solved yet." parts={[
-            { key: 'r', label: 'Resolved', value: n(d.resolved), tone: 'ok' },
-            { key: 'c', label: 'Closed', value: n(d.closed), tone: 'none' }]} />
-        </div>}
-      </section>
       {monitoring && <section className="tile tile-wide" aria-labelledby="t-mon">
         <div className="tile-head"><span className="chip"><Icon name="Monitoring" size={22} /></span>
           <div><h2 id="t-mon"><a href="#/monitoring">Monitoring</a></h2><p className="muted">{mo ? `${n(mo.watched)} of ${n(mo.devices)} devices watched, ${n(mo.alertsCritical) + n(mo.alertsWarning)} open alerts` : 'Alerts for devices that are down, busy, full or failing'}</p></div>
