@@ -5,6 +5,7 @@ import Locations from './Locations';
 import Vendors from './Vendors';
 import Contracts, { useAmcAccess } from './Contracts';
 import Renewals from './Renewals';
+import Duplicates from './Duplicates';
 import DeleteRequests from './DeleteRequests';
 import Credentials from './Credentials';
 import Detail from './Detail';
@@ -18,14 +19,14 @@ import { RemoteLog, Repository, Settings } from './Admin';
 
 const NAV: [string, string][] = [
   ['', 'Dashboard'], ['list', 'All assets'], ['reports', 'Patch report'], ['software', 'Software'], ['discover', 'Discover'], ['fleet', 'Agents & collectors'], ['delete-requests', 'Delete requests'], ['companies', 'Companies'], ['locations', 'Locations'], ['vendors', 'Vendors'], ['credentials', 'Credentials'],
-  ['amc', 'AMC'], ['rentals', 'Rentals'], ['renewals', 'Renewals'], ['remote-log', 'Remote activity'], ['commands', 'Command repository'], ['settings', 'Settings'],
+  ['duplicates', 'Duplicates'], ['amc', 'AMC'], ['rentals', 'Rentals'], ['renewals', 'Renewals'], ['remote-log', 'Remote activity'], ['commands', 'Command repository'], ['settings', 'Settings'],
 ];
 
 /** The Assets module: routes inside the #/assets address. */
 export default function AssetsApp() {
   const perms = usePerms('assets'); const amcOk = useAmcAccess(); const parts = useHash(); const [, a, b] = parts;
   // administrators see every page; other people see the pages they may read (a customer administrator sees only assets and companies)
-  const nav = NAV.filter(([k]) => perms.admin || ['', 'list', 'reports', 'companies', 'locations', 'vendors', 'renewals'].includes(k) || (k === 'delete-requests' && (perms.modify || perms.delete)) || (perms.readAll && ['software', 'amc', 'rentals'].includes(k)) || (k === 'amc' && amcOk)); const section = /^\d+$/.test(a ?? '') ? 'list' : a === 'customer' ? '' : a ?? '';
+  const nav = NAV.filter(([k]) => perms.admin || ['', 'list', 'reports', 'companies', 'locations', 'vendors', 'renewals', 'duplicates'].includes(k) || (k === 'delete-requests' && (perms.modify || perms.delete)) || (perms.readAll && ['software', 'amc', 'rentals'].includes(k)) || (k === 'amc' && amcOk)); const section = /^\d+$/.test(a ?? '') ? 'list' : a === 'customer' ? '' : a ?? '';
   let page;
   if (/^\d+$/.test(a ?? '')) page = <Detail id={a} tab={b ?? 'overview'} />;
   else switch (a) {
@@ -43,6 +44,7 @@ export default function AssetsApp() {
     case 'amc': page = <Contracts kind="amc" />; break;
     case 'rentals': page = <Contracts kind="rentals" />; break;
     case 'renewals': page = <Renewals />; break;
+    case 'duplicates': page = <Duplicates />; break;
     case 'remote-log': page = <RemoteLog />; break;
     case 'commands': page = <Repository />; break;
     case 'settings': page = <Settings />; break;

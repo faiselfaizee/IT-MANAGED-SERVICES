@@ -3,6 +3,7 @@ import { api, download, go, openPage, saveFile, useLoad, type Rec } from '../htt
 import { usePerms } from '../perms';
 import { Act, Badge, Empty, Err, Field, Loading, Modal, fmtDay, useSubmit } from '../ui';
 import { PurchaseFields, purchaseBody } from './Purchase';
+import { DuplicateNotice, matchesOf } from './Duplicates';
 
 const STATUSES = ['stock', 'in_use', 'repair', 'retired', 'lost'];
 const label = (s: string) => s.replace('_', ' ');
@@ -49,6 +50,7 @@ export default function List() {
       <button onClick={() => download('/api/assets/export.csv?' + exportQs, 'assets.csv')}>Export list (CSV)</button>
       <Act label="Export all details (CSV)" run={() => saveFile('/api/assets/export-full.csv?' + exportQs, 'assets-full-details.csv')} />
     </div>
+    {perms.modify && sel.size > 0 && <BulkMonitor ids={[...sel]} onDone={() => undefined} />}
     {perms.admin && sel.size > 0 && <BulkAgents ids={[...sel]} total={total} query={q} onSelect={(ids) => setSel(new Set(ids))} onDone={() => { setSel(new Set()); reload(); }} />}
     <Loading loading={loading && !data} error={error} />
     {data && (items.length === 0 ? <Empty>No assets match.</Empty> : <table><thead><tr><th><input type="checkbox" aria-label="Select all" checked={items.every((i) => sel.has(i.id))} onChange={(e) => setSel(e.target.checked ? new Set([...sel, ...items.map((i) => i.id)]) : new Set([...sel].filter((x) => !items.some((i) => i.id === x))))} /></th>
@@ -63,6 +65,13 @@ export default function List() {
 }
 
 /** Agent actions for the chosen assets: update, move to the recycle bin, uninstall; and choosing every asset that matches the filters. */
+/** Choose which of the selected assets monitoring watches. */
+function BulkMonitor({ ids, onDone }: { ids: number[]; onDone: () => void }) {
+  const [msg, setMsg] = useState('');
+  const run = async (monitored: boolean) => { try { const r = await api<Rec>('/api/assets/bulk-monitor', { body: { ids, monitored } }); setMsg(`${monitored ? 'Monitoring switched on' : 'Monitoring switched off'} for ${r.changed} asset${r.changed === 1 ? '' : 's'}.`); onDone(); } catch (e) { setMsg((e as Error).message); } };
+  return <div className="tools"><button onClick={() => void run(true)}>Monitor selected</button><button onClick={() => void run(false)}>Stop monitoring selected</button>{msg && <span className="muted">{msg}</span>}</div>;
+}
+
 function BulkAgents({ ids, total, query, onSelect, onDone }: { ids: number[]; total: number; query: string; onSelect: (ids: number[]) => void; onDone: () => void }) {
   const [msg, setMsg] = useState(''); const [busy, setBusy] = useState(false);
   const run = async (action: 'update' | 'bin' | 'uninstall') => {
@@ -109,11 +118,18 @@ function AgentCell({ a }: { a: Rec }) {
 }
 
 function AddAsset({ onClose }: { onClose: (id?: number) => void }) {
-  const [v, setV] = useState<Rec>({ name: '', status: 'in_use', manufacturer: '', model: '', serial: '', location: '', assignedTo: '', companyId: null }); const types = useLoad<Rec[]>('/api/assets/types');
+  const [v, setV] = useState<Rec>({ name: '', status: 'in_use', manufacturer: '', model: '', serial: '', location: '', assignedTo: '', companyId: null, ipAddress: '', macAddress: '', hostname: '', monitored: true }); const types = useLoad<Rec[]>('/api/assets/types');
   const companies = useLoad<Rec[]>('/api/assets/companies'); const cos = Array.isArray(companies.data) ? companies.data : [];
-  const f = useSubmit(() => undefined); const [err, setErr] = useState('');
+  const f = useSubmit(() => undefined); const [err, setErr] = useState(''); const [dup, setDup] = useState<ReturnType<typeof matchesOf>>(null);
   const set = (k: string, x: string) => setV({ ...v, [k]: x });
   const companyId = (v.companyId ?? (cos.length === 1 ? cos[0].id : null)) as number | null;
+  const create = async (confirmDuplicate: boolean) => {
+    setErr(''); if (!confirmDuplicate) setDup(null);
+    try {
+      const r = await api<Rec>('/api/assets', { body: { name: v.name, typeId: v.typeId, status: v.status, manufacturer: v.manufacturer, model: v.model, serial: v.serial, assignedTo: v.assignedTo, companyId, ...purchaseBody(v), ipAddress: String(v.ipAddress).trim(), macAddress: String(v.macAddress).trim(), hostname: String(v.hostname).trim(), monitored: v.monitored, confirmDuplicate } });
+      onClose(r.id);
+    } catch (e) { const m = matchesOf(e); if (m) setDup(m); else setErr((e as Error).message); }
+  };
   return <Modal title="Add asset" onClose={() => onClose()}><div className="form">
     <Field label="Name"><input value={v.name} onChange={(e) => set('name', e.target.value)} autoFocus /></Field>
     <div className="row"><Field label="Customer"><select value={companyId ?? ''} onChange={(e) => setV({ ...v, companyId: e.target.value ? Number(e.target.value) : null, siteId: null, vendorId: null })}>{cos.length !== 1 && <option value="">(own organisation)</option>}{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
@@ -121,11 +137,15 @@ function AddAsset({ onClose }: { onClose: (id?: number) => void }) {
       <Field label="Status"><select value={v.status} onChange={(e) => set('status', e.target.value)}>{STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}</select></Field></div>
     <div className="row"><Field label="Manufacturer"><input value={v.manufacturer} onChange={(e) => set('manufacturer', e.target.value)} /></Field><Field label="Model"><input value={v.model} onChange={(e) => set('model', e.target.value)} /></Field><Field label="Serial number"><input value={v.serial} onChange={(e) => set('serial', e.target.value)} /></Field></div>
     <Field label="Assigned to (name or email)"><input value={v.assignedTo} onChange={(e) => set('assignedTo', e.target.value)} /></Field>
+    <div className="row"><Field label="IP address (DeskAsk reaches the device here)"><input value={v.ipAddress} onChange={(e) => set('ipAddress', e.target.value)} placeholder="10.0.0.25" spellCheck={false} /></Field>
+      <Field label="MAC address"><input value={v.macAddress} onChange={(e) => set('macAddress', e.target.value)} placeholder="00:1A:2B:3C:4D:5E" spellCheck={false} /></Field></div>
+    <Field label="Host name"><input value={v.hostname} onChange={(e) => set('hostname', e.target.value)} spellCheck={false} /></Field>
+    <label><input type="checkbox" checked={v.monitored} onChange={(e) => setV({ ...v, monitored: e.target.checked })} /> Monitor this asset (alerts, services, checks)</label>
+    <p className="muted small">To install the agent from a controller, save the asset with its IP address, then open it and use "Install agent through the controller".</p>
     <PurchaseFields v={v} set={(p) => setV({ ...v, ...p })} companyId={companyId} />
+    {dup && <DuplicateNotice info={dup} busy={f.busy} onAnyway={() => void create(true)} />}
     <Err text={err || f.err} /><div className="actions"><button onClick={() => onClose()}>Cancel</button>
-      <button className="primary" disabled={!String(v.name).trim()} onClick={async () => { setErr(''); try {
-        const r = await api<Rec>('/api/assets', { body: { name: v.name, typeId: v.typeId, status: v.status, manufacturer: v.manufacturer, model: v.model, serial: v.serial, assignedTo: v.assignedTo, companyId, ...purchaseBody(v) } }); onClose(r.id);
-      } catch (e) { setErr((e as Error).message); } }}>Create</button></div></div></Modal>;
+      <button className="primary" disabled={!String(v.name).trim()} onClick={() => void create(false)}>Create</button></div></div></Modal>;
 }
 
 export function PrintDialog({ ids, onClose }: { ids: number[]; onClose: () => void }) {

@@ -38,10 +38,10 @@ export function SitePicker({ companyId, value, onChange }: { companyId: number |
 }
 
 /** The vendors that fit this customer: its own and the shared ones. */
-export function VendorPicker({ companyId, value, onChange }: { companyId: number | null | undefined; value: number | null; onChange: (id: number | null) => void }) {
+export function VendorPicker({ companyId, value, onChange, label = 'Bought from (vendor)' }: { companyId: number | null | undefined; value: number | null; onChange: (id: number | null) => void; label?: string }) {
   const all = useLoad<Rec>(`/api/assets/vendors${companyId ? `?company=${companyId}` : ''}`, [companyId]);
   const list = ((all.data?.items ?? []) as Rec[]).filter((v) => (v.companyId == null || v.companyId === companyId) && (v.active !== false || v.id === value));
-  return <Field label="Bought from (vendor)"><select value={value ?? ''} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}>
+  return <Field label={label}><select value={value ?? ''} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}>
     <option value="">(not recorded)</option>
     {list.map((v) => <option key={v.id} value={v.id}>{v.name}{v.companyId == null ? '' : ' (this customer)'}</option>)}
   </select></Field>;

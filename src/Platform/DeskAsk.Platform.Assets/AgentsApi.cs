@@ -101,7 +101,7 @@ public static class AgentsApi
     internal static string? AgentFile(IConfiguration cfg, string platform) => Files.TryGetValue(platform, out var f) && File.Exists(Path.Combine(AgentDir(cfg), f)) ? Path.Combine(AgentDir(cfg), f) : null;
     internal static string LinuxFlavour(HttpContext h) => h.Request.Query["arch"] == "arm64" ? "linux-arm64" : "linux";
 
-    static bool BadSerial(string s) { var v = s.Trim().ToLowerInvariant(); return v.Length < 4 || v.Contains("o.e.m") || v.Contains("default string") || v.Contains("not specified") || v.Contains("to be filled") || v.Contains("system serial") || v.Trim('0', '-', ' ', 'x', 'f') == ""; }
+    internal static bool BadSerial(string s) { var v = s.Trim().ToLowerInvariant(); return v.Length < 4 || v.Contains("o.e.m") || v.Contains("default string") || v.Contains("not specified") || v.Contains("to be filled") || v.Contains("system serial") || v.Trim('0', '-', ' ', 'x', 'f') == ""; }
 
     // ---------------------------------------------------------------- install scripts
     internal const string PsAdmin = "if(-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Run this in PowerShell as administrator.'}";

@@ -164,7 +164,7 @@ public sealed class DeviceHealth : IDeviceHealth
     public async Task<IReadOnlyList<DeviceState>> SnapshotAsync(IReadOnlyList<int>? companies, long? assetId = null, CancellationToken ct = default)
     {
         await using var db = await Open(ct);
-        var where = "a.status not in ('retired','lost') and (not @sc or a.company_id = any(@scope)) and (@id = 0 or a.id = @id)";
+        var where = "a.status not in ('retired','lost') and a.monitored and (not @sc or a.company_id = any(@scope)) and (@id = 0 or a.id = @id)";
         void Bind(NpgsqlCommand c) { AssetsAccess.Bind(c, companies); AgentsApi.P(c, "id", assetId ?? 0); }
 
         var checks = new Dictionary<long, List<CheckState>>();

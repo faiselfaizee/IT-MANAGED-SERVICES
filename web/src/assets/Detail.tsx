@@ -8,6 +8,7 @@ import { AgentInstall } from './AgentInstall';
 import { AgentUpdate } from './AgentUpdate';
 import { DEEP, Hardware, Watch } from './Hardware';
 import { Configs } from './Configs';
+import { DuplicateNotice, matchesOf } from './Duplicates';
 
 const TABS = [
   ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['tickets', 'Tickets'],
@@ -69,12 +70,13 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
 
 function Overview({ id, d, reload, admin }: { id: string; d: Rec; reload: () => void; admin: boolean }) {
   const i = d.identity, s = d.system, o = d.ownership, a = d.agent, rm = d.remote;
+  const cov = useLoad<Rec>(`/api/assets/${id}/coverage`, [d]).data;
   const warrantyLeft = o.warrantyEnd ? Math.ceil((new Date(o.warrantyEnd).getTime() - Date.now()) / 86400000) : null;
   return <div className="grid">
     <Card title="Identity"><Dl rows={[['Make', i.make], ['Model', i.model], ['Serial number', i.serial], ['BIOS', i.bios], ['Processor', [i.cpuMake, i.cpuModel].filter(Boolean).join(' ')], ['Sockets / cores', i.cpus ? `${i.cpus} / ${i.cores}${i.logical ? ` (${i.logical} threads)` : ''}` : ''], ['Memory', i.ramBytes ? fmtBytes(i.ramBytes) : ''], ['Storage', i.storageBytes ? fmtBytes(i.storageBytes) : '']]} /></Card>
     <Card title="System"><Dl rows={[['Host name', s.hostname], ['DNS name', s.dnsName], ['IP address', s.ip], ['Domain', s.domainType ? `${s.domainType}${s.domain ? ': ' + s.domain : ''}` : ''], ['Operating system', [s.os, s.osVersion].filter(Boolean).join(' ')], ['Antivirus', s.antivirus ? <Badge tone={s.antivirus === 'Protected' ? 'ok' : 'warn'}>{s.antivirus}</Badge> : ''], ['Last patch', s.lastPatch], ['Uptime', s.uptimeSeconds ? fmtUptime(s.uptimeSeconds) : '']]} /></Card>
     <Card title="Ownership"><Dl rows={[['Customer', d.company || '(own)'], ['Category', d.category], ['Status', d.status], ['Assigned to', o.assignedTo], ['Site', o.site ? `${o.site}${o.siteCode ? ` (${o.siteCode})` : ''}` : ''], ['Room or area', o.location],
-      ['Vendor', o.vendor], ['Purchase order', o.poNumber], ['Invoice', o.invoiceNumber], ['Purchased', o.purchaseDate], ['Warranty period', o.warrantyMonths ? `${o.warrantyMonths} months` : ''], ['Warranty ends', o.warrantyEnd ? <>{fmtDay(o.warrantyEnd)} {warrantyLeft !== null && <Badge tone={warrantyLeft < 0 ? 'bad' : warrantyLeft < 60 ? 'warn' : 'ok'}>{warrantyLeft < 0 ? 'expired' : warrantyLeft + ' days left'}</Badge>}</> : ''], ['AMC', o.amc || (o.underAmc ? 'Yes' : '')], ['Notes', o.notes]]} /></Card>
+      ['Vendor', o.vendor], ['Purchase order', o.poNumber], ['Invoice', o.invoiceNumber], ['Purchased', o.purchaseDate], ['Warranty period', o.warrantyMonths ? `${o.warrantyMonths} months` : ''], ['Warranty ends', o.warrantyEnd ? <>{fmtDay(o.warrantyEnd)} {warrantyLeft !== null && <Badge tone={warrantyLeft < 0 ? 'bad' : warrantyLeft < 60 ? 'warn' : 'ok'}>{warrantyLeft < 0 ? 'expired' : warrantyLeft + ' days left'}</Badge>}</> : ''], ['AMC', cov?.amc ? `${cov.amc.title}${cov.amc.vendor ? ' (' + cov.amc.vendor + ')' : ''}` : o.amc || (o.underAmc ? 'Yes' : '')], ['Rental', cov?.rental ? `${cov.rental.title}${cov.rental.vendor ? ' (' + cov.rental.vendor + ')' : ''}` : ''], ['Monitoring', cov ? (cov.monitored ? 'On' : 'Not monitored') : ''], ['Notes', o.notes]]} /></Card>
     <Card title="Agent &amp; remote access">
       <Dl rows={[['Agent', a.id ? (a.online ? 'Online' : 'Offline') : 'None'], ['Last seen', a.lastSeen ? `${ago(a.lastSeen)} (${fmtDate(a.lastSeen)})` : ''], ['Data from', a.source], ['Inventory at', a.inventoryAt ? fmtDate(a.inventoryAt) : '']]} />
       <p><label><input type="checkbox" checked={rm.assetAllows} onChange={async (e) => { await api(`/api/assets/${id}/remote`, { body: { on: e.target.checked } }); reload(); }} /> Allow remote commands, shell and remote control on this device</label></p>
@@ -165,26 +167,45 @@ export function QrDialog({ id, tag, onClose }: { id: string; tag: string; onClos
 const STATUS_CHOICES = ['stock', 'in_use', 'repair', 'retired', 'lost'];
 
 function EditAsset({ id, d, onClose }: { id: string; d: Rec; onClose: (changed: boolean) => void }) {
-  const full = useLoad<Rec>(`/api/assets/${id}`);
+  const full = useLoad<Rec>(`/api/assets/${id}`); const cov = useLoad<Rec>(`/api/assets/${id}/coverage`);
   const a = (full.data?.asset ?? null) as Rec | null;
-  if (!a) return <Modal title={`Edit ${d.tag}`} onClose={() => onClose(false)}><Loading loading error={full.error} /></Modal>;
-  return <EditForm id={id} d={d} a={a} onClose={onClose} />;
+  if (!a || !cov.data) return <Modal title={`Edit ${d.tag}`} onClose={() => onClose(false)}><Loading loading={!full.error && !cov.error} error={full.error || cov.error} /></Modal>;
+  return <EditForm id={id} d={d} a={a} cov={cov.data} onClose={onClose} />;
 }
-function EditForm({ id, d, a, onClose }: { id: string; d: Rec; a: Rec; onClose: (changed: boolean) => void }) {
+function EditForm({ id, d, a, cov, onClose }: { id: string; d: Rec; a: Rec; cov: Rec; onClose: (changed: boolean) => void }) {
   const [v, setV] = useState<Rec>({ name: a.name ?? '', status: a.status ?? 'in_use', manufacturer: a.manufacturer ?? '', model: a.model ?? '', serial: a.serial ?? '', assignedTo: a.assignedTo ?? '',
     ipAddress: d.system?.ip ?? '', location: a.location ?? '', siteId: a.siteId ?? null, vendorId: a.vendorId ?? null, poNumber: a.poNumber ?? '', invoiceNumber: a.invoiceNumber ?? '',
-    purchaseDate: a.purchaseDate ?? '', warrantyMonths: a.warrantyMonths ?? null, warrantyEnd: a.warrantyEnd ?? '' });
+    purchaseDate: a.purchaseDate ?? '', warrantyMonths: a.warrantyMonths ?? null, warrantyEnd: a.warrantyEnd ?? '',
+    hostname: cov.hostname ?? '', macAddress: cov.macAddress ?? '', monitored: cov.monitored !== false, amcId: cov.amc?.id ?? null, rentalId: cov.rental?.id ?? null });
+  const [dup, setDup] = useState<ReturnType<typeof matchesOf>>(null);
   const f = useSubmit(() => onClose(true)); const set = (k: string, x: string) => setV({ ...v, [k]: x });
+  const save = (confirmDuplicate: boolean) => { setDup(null); return f.submit(async () => {
+    try {
+      await api(`/api/assets/${id}`, { method: 'PUT', body: { name: v.name, status: v.status, manufacturer: v.manufacturer, model: v.model, serial: v.serial, assignedTo: v.assignedTo, ipAddress: String(v.ipAddress).trim(), ...purchaseBody(v), hostname: String(v.hostname).trim(), macAddress: String(v.macAddress).trim(), monitored: v.monitored, confirmDuplicate } });
+    } catch (e) { const m = matchesOf(e); if (m) { setDup(m); throw new Error(''); } throw e; }
+    const body: Rec = {}; if ((v.amcId ?? null) !== (cov.amc?.id ?? null) && cov.canEditAmc) body.amcId = v.amcId; if ((v.rentalId ?? null) !== (cov.rental?.id ?? null) && cov.canEditRental) body.rentalId = v.rentalId;
+    if (Object.keys(body).length) await api(`/api/assets/${id}/coverage`, { method: 'PUT', body });
+  }); };
   return <Modal title={`Edit ${d.tag}`} onClose={() => onClose(false)}><div className="form">
     <Field label="Name"><input value={v.name} onChange={(e) => set('name', e.target.value)} autoFocus /></Field>
     <div className="row"><Field label="Status"><select value={v.status} onChange={(e) => set('status', e.target.value)}>{STATUS_CHOICES.map((x) => <option key={x} value={x}>{x.replace('_', ' ')}</option>)}</select></Field>
       <Field label="Assigned to (name or email)"><input value={v.assignedTo} onChange={(e) => set('assignedTo', e.target.value)} /></Field></div>
     <Field label="IP address (the address DeskAsk uses to reach it)"><input value={v.ipAddress} onChange={(e) => set('ipAddress', e.target.value)} placeholder="10.0.0.25" spellCheck={false} /></Field>
+    <div className="row"><Field label="Host name"><input value={v.hostname} onChange={(e) => set('hostname', e.target.value)} spellCheck={false} /></Field>
+      <Field label="MAC address"><input value={v.macAddress} onChange={(e) => set('macAddress', e.target.value)} placeholder="00:1A:2B:3C:4D:5E" spellCheck={false} /></Field></div>
+    <label><input type="checkbox" checked={v.monitored} onChange={(e) => setV({ ...v, monitored: e.target.checked })} /> Monitor this asset (alerts, services, checks)</label>
+    {d.agent?.id && <p className="muted small">This asset has an agent. After you change the IP address or host name the agent is asked to report again, and what it sees replaces what you typed.</p>}
+    <div className="row"><Field label="Under AMC"><select value={v.amcId ?? ''} disabled={!cov.canEditAmc} onChange={(e) => setV({ ...v, amcId: e.target.value ? Number(e.target.value) : null })}><option value="">No AMC</option>
+        {(cov.amcChoices as Rec[]).map((c) => <option key={c.id} value={c.id}>{c.title}{c.vendor ? ` (${c.vendor})` : ''}{c.end ? ` to ${c.end}` : ''}</option>)}</select></Field>
+      <Field label="Under rental"><select value={v.rentalId ?? ''} disabled={!cov.canEditRental} onChange={(e) => setV({ ...v, rentalId: e.target.value ? Number(e.target.value) : null })}><option value="">Not rented</option>
+        {(cov.rentalChoices as Rec[]).map((c) => <option key={c.id} value={c.id}>{c.title}{c.vendor ? ` (${c.vendor})` : ''}{c.end ? ` to ${c.end}` : ''}</option>)}</select></Field></div>
+    <p className="muted small">Contracts and their vendors are kept under AMC and Rentals; vendors under Vendors.</p>
     <div className="row"><Field label="Manufacturer"><input value={v.manufacturer} onChange={(e) => set('manufacturer', e.target.value)} /></Field><Field label="Model"><input value={v.model} onChange={(e) => set('model', e.target.value)} /></Field><Field label="Serial number"><input value={v.serial} onChange={(e) => set('serial', e.target.value)} /></Field></div>
     <PurchaseFields v={v} set={(p) => setV({ ...v, ...p })} companyId={a.companyId} />
     {!a.companyId && <p className="muted small">Set the customer (Ownership) to choose a site.</p>}
+    {dup && <DuplicateNotice info={dup} busy={f.busy} onAnyway={() => void save(true)} />}
     <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button>
-      <button className="primary" disabled={f.busy || !String(v.name).trim()} onClick={() => f.submit(() => api(`/api/assets/${id}`, { method: 'PUT', body: { name: v.name, status: v.status, manufacturer: v.manufacturer, model: v.model, serial: v.serial, assignedTo: v.assignedTo, ipAddress: String(v.ipAddress).trim(), ...purchaseBody(v) } }))}>Save</button></div></div></Modal>;
+      <button className="primary" disabled={f.busy || !String(v.name).trim()} onClick={() => void save(false)}>Save</button></div></div></Modal>;
 }
 
 function AskDelete({ id, d, onClose }: { id: string; d: Rec; onClose: () => void }) {

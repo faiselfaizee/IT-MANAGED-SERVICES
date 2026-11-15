@@ -72,7 +72,7 @@ public static class AssetsDevice
             ram_bytes = coalesce(@ram, 0), total_storage_bytes = coalesce(@ts, 0), uptime_s = coalesce(@up, uptime_s),
             disks = @disks, nics = @nics, mac_addresses = @macs, connected_ips = @ips, installed_apps = @apps, antivirus = @av, antivirus_status = @avs,
             domain_type = @dt, domain_workgroup = coalesce(@dw, ''), bios_version = coalesce(@bios, ''), last_patch_date = @patch,
-            ip_address = case when ip_address = '' then @ip else ip_address end,
+            ip_address = case when @ip <> '' and (ip_address = '' or not (@ips ? ip_address)) then @ip else ip_address end,
             category = case when category = '' then 'IT hardware' else category end,
             hw_extra = coalesce(@hx::jsonb, hw_extra), read_req = false,
             source = @src, inventory_at = now(), updated_at = now(), updated_by = @actor
@@ -181,8 +181,8 @@ public static class AssetsDevice
     sealed record Contract(string Table, bool IsAmc);
     static async Task<List<object>> ListContracts(NpgsqlConnection db, Contract k, CancellationToken ct, IReadOnlyList<int>? scope = null)
     {
-        var extra = k.IsAmc ? ", m.coverage, m.visits, m.sla_pct, m.vendor_id, coalesce(v.name, ''), m.contract_no, m.cost, m.previous_id, (select n.id from assets.amc n where n.previous_id = m.id limit 1)" : "";
-        var join = k.IsAmc ? " left join assets.vendors v on v.id = m.vendor_id" : "";
+        var extra = k.IsAmc ? ", m.coverage, m.visits, m.sla_pct, m.vendor_id, coalesce(v.name, ''), m.contract_no, m.cost, m.previous_id, (select n.id from assets.amc n where n.previous_id = m.id limit 1)" : ", m.vendor_id, coalesce(v.name, ''), m.contract_no";
+        var join = " left join assets.vendors v on v.id = m.vendor_id";
         await using var c = new NpgsqlCommand($"select m.id, m.company_id, c.name, m.title, m.start_date, m.end_date, m.notes, m.asset_ids{extra} from assets.{k.Table} m left join assets.companies c on c.id = m.company_id{join} where (not @sc or m.company_id = any(@scope)) order by m.end_date desc nulls first, m.id desc", db).Scoped(scope);
         var rows = new List<object>(); await using var r = await c.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct))
@@ -192,7 +192,7 @@ public static class AssetsDevice
             if (k.IsAmc) rows.Add(new { id = r.GetInt32(0), companyId = r.IsDBNull(1) ? (int?)null : r.GetInt32(1), company = r.IsDBNull(2) ? "" : r.GetString(2), title = r.GetString(3), start = r.IsDBNull(4) ? "" : D(r.GetFieldValue<DateOnly>(4)), end = r.IsDBNull(5) ? "" : D(r.GetFieldValue<DateOnly>(5)), notes = r.GetString(6), assetIds = ids, active, coverage = r.GetString(8), visits = r.GetInt32(9), slaPct = r.GetInt32(10),
                 vendorId = r.IsDBNull(11) ? (int?)null : r.GetInt32(11), vendor = r.GetString(12), contractNo = r.GetString(13), cost = r.IsDBNull(14) ? (decimal?)null : r.GetDecimal(14),
                 previousId = r.IsDBNull(15) ? (int?)null : r.GetInt32(15), renewedById = r.IsDBNull(16) ? (int?)null : r.GetInt32(16) });
-            else rows.Add(new { id = r.GetInt32(0), companyId = r.IsDBNull(1) ? (int?)null : r.GetInt32(1), company = r.IsDBNull(2) ? "" : r.GetString(2), title = r.GetString(3), start = r.IsDBNull(4) ? "" : D(r.GetFieldValue<DateOnly>(4)), end = r.IsDBNull(5) ? "" : D(r.GetFieldValue<DateOnly>(5)), notes = r.GetString(6), assetIds = ids, active });
+            else rows.Add(new { id = r.GetInt32(0), companyId = r.IsDBNull(1) ? (int?)null : r.GetInt32(1), company = r.IsDBNull(2) ? "" : r.GetString(2), title = r.GetString(3), start = r.IsDBNull(4) ? "" : D(r.GetFieldValue<DateOnly>(4)), end = r.IsDBNull(5) ? "" : D(r.GetFieldValue<DateOnly>(5)), notes = r.GetString(6), assetIds = ids, active, vendorId = r.IsDBNull(8) ? (int?)null : r.GetInt32(8), vendor = r.GetString(9), contractNo = r.GetString(10) });
         }
         return rows;
     }
@@ -326,10 +326,10 @@ public static class AssetsDevice
                 if (start != null && end != null && end < start) return Bad("bad_input", "end is before start");
                 int visits = 0, sla = 0; int? vendorId = null; decimal? cost = null; var contractNo = Txt(body, "contractNo", 60, out _, out var e6);
                 var hasVendor = body.TryGetProperty("vendorId", out var vEl); var hasCost = body.TryGetProperty("cost", out var cEl);
+                if (e6 != null) return Bad("bad_input", e6);
+                if (hasVendor && vEl.ValueKind != JsonValueKind.Null) { if (!vEl.TryGetInt32(out var vi)) return Bad("bad_input", "vendorId must be a number"); vendorId = vi; }
                 if (k.IsAmc)
                 {
-                    if (e6 != null) return Bad("bad_input", e6);
-                    if (hasVendor && vEl.ValueKind != JsonValueKind.Null) { if (!vEl.TryGetInt32(out var vi)) return Bad("bad_input", "vendorId must be a number"); vendorId = vi; }
                     if (hasCost && cEl.ValueKind != JsonValueKind.Null) { if (!cEl.TryGetDecimal(out var cd) || cd < 0 || cd >= 1_000_000_000m) return Bad("bad_input", "cost must be a number of 0 or more"); cost = Math.Round(cd, 2); }
                     if (body.TryGetProperty("visits", out var v) && (!v.TryGetInt32(out visits) || visits < 0 || visits > 10000)) return Bad("bad_input", "visits must be 0 to 10000");
                     if (body.TryGetProperty("slaPct", out var s) && (!s.TryGetInt32(out sla) || sla < 0 || sla > 100)) return Bad("bad_input", "slaPct must be 0 to 100");
@@ -365,8 +365,8 @@ public static class AssetsDevice
                     P(c, "n", notes ?? ""); PJ(c, "a", JsonSerializer.Serialize(ids));
                     if (k.IsAmc) { P(c, "cv", coverage ?? ""); P(c, "v", visits); P(c, "sl", sla); }
                     var nid = (int)(await c.ExecuteScalarAsync(ct))!;
-                    if (k.IsAmc) await using (var x = new NpgsqlCommand("update assets.amc set vendor_id = @v, contract_no = @n, cost = @c where id = @i", db))
-                    { P(x, "v", vendorId); P(x, "n", contractNo ?? ""); x.Parameters.Add(new NpgsqlParameter("c", NpgsqlDbType.Numeric) { Value = cost.HasValue ? cost.Value : DBNull.Value }); P(x, "i", nid); await x.ExecuteNonQueryAsync(ct); }
+                    await using (var x = new NpgsqlCommand($"update assets.{k.Table} set vendor_id = @v, contract_no = @n{(k.IsAmc ? ", cost = @c" : "")} where id = @i", db))
+                    { P(x, "v", vendorId); P(x, "n", contractNo ?? ""); if (k.IsAmc) x.Parameters.Add(new NpgsqlParameter("c", NpgsqlDbType.Numeric) { Value = cost.HasValue ? cost.Value : DBNull.Value }); P(x, "i", nid); await x.ExecuteNonQueryAsync(ct); }
                     await audit.WriteAsync("assets." + what + "_created", nid.ToString(), title!, ct: ct);
                     return Results.Ok(new { id = nid });
                 }
@@ -378,8 +378,8 @@ public static class AssetsDevice
                 PJ(u, "a", JsonSerializer.Serialize(ids));
                 if (k.IsAmc) { P(u, "cv", coverage); P(u, "hv", body.TryGetProperty("visits", out _)); P(u, "v", visits); P(u, "hsl", body.TryGetProperty("slaPct", out _)); P(u, "sl", sla); }
                 if (await u.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound();
-                if (k.IsAmc) await using (var x = new NpgsqlCommand("update assets.amc set vendor_id = case when @hv then @v else vendor_id end, contract_no = coalesce(@n, contract_no), cost = case when @hc then @c else cost end where id = @i", db))
-                { P(x, "hv", hasVendor); P(x, "v", vendorId); P(x, "n", contractNo); P(x, "hc", hasCost); x.Parameters.Add(new NpgsqlParameter("c", NpgsqlDbType.Numeric) { Value = cost.HasValue ? cost.Value : DBNull.Value }); P(x, "i", id); await x.ExecuteNonQueryAsync(ct); }
+                await using (var x = new NpgsqlCommand($"update assets.{k.Table} set vendor_id = case when @hv then @v else vendor_id end, contract_no = coalesce(@n, contract_no){(k.IsAmc ? ", cost = case when @hc then @c else cost end" : "")} where id = @i", db))
+                { P(x, "hv", hasVendor); P(x, "v", vendorId); P(x, "n", contractNo); if (k.IsAmc) { P(x, "hc", hasCost); x.Parameters.Add(new NpgsqlParameter("c", NpgsqlDbType.Numeric) { Value = cost.HasValue ? cost.Value : DBNull.Value }); } P(x, "i", id); await x.ExecuteNonQueryAsync(ct); }
                 await audit.WriteAsync("assets." + what + "_changed", id.ToString(), ct: ct);
                 return Results.Ok(new { id });
             }

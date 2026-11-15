@@ -333,6 +333,10 @@ public sealed class AssetsSchema : ITenantSchema
             alter table assets.assets add column if not exists m_svc_inv_at timestamptz;
             create table if not exists assets.service_watch (
               asset_id bigint not null references assets.assets(id) on delete cascade, name text not null, mode text not null check (mode in ('watch','ignore')), primary key (asset_id, name))"),
+        new(25, "choose which assets are monitored, and the vendor of a rental", @"
+            alter table assets.assets add column if not exists monitored boolean not null default true;
+            alter table assets.rentals add column if not exists vendor_id int references assets.vendors(id) on delete set null;
+            alter table assets.rentals add column if not exists contract_no text not null default ''"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -495,6 +499,15 @@ public sealed class AssetsModule : IPlatformModule
             foreach (var (json, col) in new[] { ("manufacturer", "manufacturer"), ("model", "model"), ("serial", "serial"), ("location", "location"), ("assignedTo", "assigned_to") })
             { var v = Str(b, json, 200, out var has); if (has) r.Set[col] = v; }
             var notes = Str(b, "notes", 4000, out var hasNotes); if (hasNotes) r.Set["notes"] = notes;
+            var host = Str(b, "hostname", 255, out var hasHost); if (hasHost) r.Set["hostname"] = host;
+            var macIn = Str(b, "macAddress", 400, out var hasMac);
+            if (hasMac)
+            {
+                var macs = DuplicateCheck.ParseMacs(macIn ?? "", out var macErr);
+                if (macs == null) throw new FormatException(macErr!);
+                r.Set["mac_addresses"] = JsonSerializer.Serialize(macs);
+            }
+            if (b.TryGetProperty("monitored", out var mo) && mo.ValueKind is JsonValueKind.True or JsonValueKind.False) r.Set["monitored"] = mo.GetBoolean();
             // the address the monitoring and the remote tools use to reach the device; an agent only fills it when empty, so a typed one stays
             var ip = Str(b, "ipAddress", 64, out var hasIp);
             if (hasIp)
@@ -643,6 +656,8 @@ public sealed class AssetsModule : IPlatformModule
         CollectorsApi.Map(r, Key);
         ExtrasApi.Map(r, Key);
         AssetExport.Map(r, Key);
+        DuplicatesApi.Map(r, Key);
+        CoverageApi.Map(r, Key);
         AgentUpdateApi.Map(r, Key);
         ConfigsApi.Map(r, Key);
         AssetDash.Map(r, Key);
@@ -830,6 +845,13 @@ public sealed class AssetsModule : IPlatformModule
                 var refErr = await LocationsApi.CheckRefs(db, newCompany, v.Set.GetValueOrDefault("site_id") as int?, v.Set.GetValueOrDefault("vendor_id") as int?, await AssetsAccess.ScopeAsync(http, Acts.Read), ct);
                 if (refErr != null) return Bad("bad_input", refErr);
             }
+            {
+                var dup = await DuplicateCheck.Find(db, newCompany, v.Set.GetValueOrDefault("name") as string, v.Set.GetValueOrDefault("hostname") as string, v.Set.GetValueOrDefault("ip_address") as string,
+                    v.Set.TryGetValue("mac_addresses", out var mj) && mj is string mjs ? JsonSerializer.Deserialize<List<string>>(mjs) : null, v.Set.GetValueOrDefault("serial") as string, 0, ct);
+                if (dup.Any(x => x.Hard)) return Results.Conflict(new { error = "duplicate", detail = "This looks like an asset you already have: " + DuplicateCheck.Describe(dup.Where(x => x.Hard)), matches = dup });
+                var confirmed = body.TryGetProperty("confirmDuplicate", out var cd) && cd.ValueKind == JsonValueKind.True;
+                if (dup.Count > 0 && !confirmed) return Results.Conflict(new { error = "possible_duplicate", detail = "Possible duplicate: " + DuplicateCheck.Describe(dup), matches = dup });
+            }
             var (_, active) = await Counts(db, ct);
             if (!await ent.WithinLimitAsync(Key, "max_assets", active, ct)) return Results.Json(new { error = "limit_reached", limit = "max_assets" }, statusCode: 402);
             var created = await Insert(db, v, Actor(u), "manual", ct);
@@ -842,20 +864,20 @@ public sealed class AssetsModule : IPlatformModule
             return Results.Ok(new { id = created.Id, tag = created.Tag });
         }));
 
-        delegated(Acts.Modify, r.MapPut("/api/assets/{id:long}", async (HttpContext http, long id, JsonElement body, ClaimsPrincipal u, ITenantContext t, IEntitlements ent, IAuditLog audit, CancellationToken ct) =>
+        delegated(Acts.Modify, r.MapPut("/api/assets/{id:long}", async (HttpContext http, long id, JsonElement body, ClaimsPrincipal u, ITenantContext t, IEntitlements ent, IAuditLog audit, AgentHub hub, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
             if (!await AssetsAccess.InScope(db, id, await AssetsAccess.ScopeAsync(http, Acts.Modify), ct)) return Results.NotFound();
             await using var tx = await db.BeginTransactionAsync(ct);
             Dictionary<string, string> before = new(); int? typeId = null;
             int? assetCompany = null;
-            await using (var c = new NpgsqlCommand("select name, type_id, status, manufacturer, model, serial, location, assigned_to, purchase_date, purchase_cost, warranty_end, notes, custom, site_id, vendor_id, po_number, invoice_number, warranty_months, ip_address, company_id from assets.assets where id = @i for update", db, tx))
+            await using (var c = new NpgsqlCommand("select name, type_id, status, manufacturer, model, serial, location, assigned_to, purchase_date, purchase_cost, warranty_end, notes, custom, site_id, vendor_id, po_number, invoice_number, warranty_months, ip_address, hostname, (select coalesce(string_agg(x, ',' order by x), '') from jsonb_array_elements_text(mac_addresses) x), monitored, company_id from assets.assets where id = @i for update", db, tx))
             {
                 P(c, "i", id);
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 if (!await rd.ReadAsync(ct)) return Results.NotFound();
                 typeId = rd.IsDBNull(1) ? null : rd.GetInt32(1);
-                string[] names = { "name", "type_id", "status", "manufacturer", "model", "serial", "location", "assigned_to", "purchase_date", "purchase_cost", "warranty_end", "notes", "custom", "site_id", "vendor_id", "po_number", "invoice_number", "warranty_months", "ip_address" };
+                string[] names = { "name", "type_id", "status", "manufacturer", "model", "serial", "location", "assigned_to", "purchase_date", "purchase_cost", "warranty_end", "notes", "custom", "site_id", "vendor_id", "po_number", "invoice_number", "warranty_months", "ip_address", "hostname", "mac_addresses", "monitored" };
                 assetCompany = rd.IsDBNull(names.Length) ? null : rd.GetInt32(names.Length);
                 for (var i = 0; i < names.Length; i++) before[names[i]] = rd.IsDBNull(i) ? "" : rd.GetValue(i) is DateTime dt ? dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : rd.GetValue(i) is decimal dm ? Money(dm) : Convert.ToString(rd.GetValue(i), CultureInfo.InvariantCulture) ?? "";
             }
@@ -869,11 +891,20 @@ public sealed class AssetsModule : IPlatformModule
             var changes = new Dictionary<string, object>();
             foreach (var (col, val) in v.Set)
             {
-                var now = val switch { null => "", DateOnly d => D(d), decimal m => Money(m), _ => Convert.ToString(val, CultureInfo.InvariantCulture) ?? "" };
+                var now = val switch { null => "", string mjs when col == "mac_addresses" => string.Join(",", (JsonSerializer.Deserialize<List<string>>(mjs) ?? new()).OrderBy(x => x, StringComparer.Ordinal)), bool bl => bl ? "True" : "False", DateOnly d => D(d), decimal m => Money(m), _ => Convert.ToString(val, CultureInfo.InvariantCulture) ?? "" };
                 var was = before[col];
                 if (now != was) changes[col] = new { from = was, to = now };
             }
             if (changes.Count == 0) return Results.Ok(new { ok = true, changed = 0 });
+            if (changes.ContainsKey("name") || changes.ContainsKey("hostname") || changes.ContainsKey("ip_address") || changes.ContainsKey("serial") || changes.ContainsKey("mac_addresses"))
+            {   // only what this edit changes is checked, so an asset that already has a twin can still be edited
+                var dup = await DuplicateCheck.Find(db, assetCompany, changes.ContainsKey("name") ? v.Set["name"] as string : null, changes.ContainsKey("hostname") ? v.Set["hostname"] as string : null,
+                    changes.ContainsKey("ip_address") ? v.Set["ip_address"] as string : null, changes.ContainsKey("mac_addresses") ? JsonSerializer.Deserialize<List<string>>((string)v.Set["mac_addresses"]!) : null,
+                    changes.ContainsKey("serial") ? v.Set["serial"] as string : null, id, ct);
+                if (dup.Any(x => x.Hard)) return Results.Conflict(new { error = "duplicate", detail = "This looks like another asset you already have: " + DuplicateCheck.Describe(dup.Where(x => x.Hard)), matches = dup });
+                var confirmed = body.TryGetProperty("confirmDuplicate", out var cd) && cd.ValueKind == JsonValueKind.True;
+                if (dup.Count > 0 && !confirmed) return Results.Conflict(new { error = "possible_duplicate", detail = "Possible duplicate: " + DuplicateCheck.Describe(dup), matches = dup });
+            }
             if (v.Set.TryGetValue("status", out var ns) && (ns as string) is not ("retired" or "lost") && (before["status"] is "retired" or "lost"))
             {   // bringing an asset back counts against the licensed number again
                 var (_, active) = await Counts(db, ct);
@@ -886,6 +917,7 @@ public sealed class AssetsModule : IPlatformModule
                 foreach (var (k, val) in v.Set)
                 {
                     var prm = new NpgsqlParameter("p" + i++, val ?? DBNull.Value);
+                    if (k == "mac_addresses") prm.NpgsqlDbType = NpgsqlDbType.Jsonb;
                     if (val is null) prm.NpgsqlDbType = k is "purchase_date" or "warranty_end" ? NpgsqlDbType.Date : k == "purchase_cost" ? NpgsqlDbType.Numeric : NpgsqlDbType.Integer;
                     up.Parameters.Add(prm);
                 }
@@ -896,7 +928,14 @@ public sealed class AssetsModule : IPlatformModule
             await AddHistory(db, tx, id, Actor(u), changes.ContainsKey("status") && changes.Count == 1 ? "status" : "updated", JsonSerializer.Serialize(changes), ct);
             await tx.CommitAsync(ct);
             await audit.WriteAsync("assets.updated", id.ToString(), string.Join(",", changes.Keys), ct: ct);
-            return Results.Ok(new { ok = true, changed = changes.Count });
+            var woke = false;
+            if (changes.ContainsKey("ip_address") || changes.ContainsKey("hostname"))
+            {   // the agent is told to report again, so what it sees replaces what was typed
+                string agentId;
+                await using (var ag = new NpgsqlCommand("select agent_id from assets.assets where id = @i", db)) { P(ag, "i", id); agentId = (string?)await ag.ExecuteScalarAsync(ct) ?? ""; }
+                if (agentId != "") { await AgentsApi.Enqueue(db, hub, t, agentId, "collect", new { }, ct); woke = true; }
+            }
+            return Results.Ok(new { ok = true, changed = changes.Count, agentWoken = woke });
         }));
 
         delegated(Acts.Delete, r.MapDelete("/api/assets/{id:long}", async (HttpContext http, long id, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
@@ -1062,6 +1101,8 @@ public sealed class AssetsModule : IPlatformModule
                 if (cost != "") { if (decimal.TryParse(cost, NumberStyles.Number, CultureInfo.InvariantCulture, out var m)) obj["purchaseCost"] = m; else { errors.Add(new { line, error = "bad_input", detail = "purchase_cost" }); continue; } }
                 var v = await Read(JsonSerializer.SerializeToElement(obj), true, db, null, ct);
                 if (v.Error != null) { errors.Add(new { line, error = "bad_input", detail = v.Error }); continue; }
+                var twins = await DuplicateCheck.Find(db, rowCompany, v.Set.GetValueOrDefault("name") as string, null, v.Set.GetValueOrDefault("ip_address") as string, null, v.Set.GetValueOrDefault("serial") as string, 0, ct);
+                if (twins.Count > 0) { skipped++; errors.Add(new { line, error = "duplicate", detail = "already in the list: " + DuplicateCheck.Describe(twins) }); continue; }
                 var res = await Insert(db, v, Actor(u), "import", ct);
                 if (res.Error == null && rowCompany != null) { await using var oc = new NpgsqlCommand("update assets.assets set company_id = @c where id = @i", db); P(oc, "c", rowCompany); P(oc, "i", res.Id); await oc.ExecuteNonQueryAsync(ct); }
                 if (res.Error == "duplicate") { skipped++; errors.Add(new { line, error = "duplicate", detail = res.Detail }); }
@@ -1085,6 +1126,7 @@ public sealed class AssetsModule : IPlatformModule
         {
             cols.Add(k); vals.Add("@p" + i);
             var prm = new NpgsqlParameter("p" + i++, val ?? DBNull.Value);
+            if (k == "mac_addresses") prm.NpgsqlDbType = NpgsqlDbType.Jsonb;
             if (val is null) prm.NpgsqlDbType = k is "purchase_date" or "warranty_end" ? NpgsqlDbType.Date : k == "purchase_cost" ? NpgsqlDbType.Numeric : NpgsqlDbType.Integer;
             cmd.Parameters.Add(prm);
         }
