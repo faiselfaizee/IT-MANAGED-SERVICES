@@ -167,10 +167,10 @@ public class LocationsVendorsTests : IClassFixture<WebApplicationFactory<Program
         // the 15-day window for the NAS and the AMC, the 30-day window for the laptop; nothing twice
         Assert.Equal(1L, Convert.ToInt64(await Scalar($"select count(*) from assets.renewal_notices where kind = 'warranty' and ref_id = {lap} and days = 30")));
         Assert.Equal(1L, Convert.ToInt64(await Scalar($"select count(*) from assets.renewal_notices where kind = 'warranty' and ref_id = {srv} and days = 15")));
-        var count = smtp.Snapshot().Count;
+        var count = smtp.Snapshot().Length;
         Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/assets/renewals/run", null)).StatusCode);
         await Task.Delay(4000);
-        Assert.Equal(count, smtp.Snapshot().Count);
+        Assert.Equal(count, smtp.Snapshot().Length);
         Assert.Contains((await J(await admin.GetAsync("/api/assets/renewals/upcoming?days=30"))).GetProperty("items").EnumerateArray(), x => x.GetProperty("id").GetInt64() == lap && x.GetProperty("remindersSent")[0].GetInt32() == 30);
         _ = quiet;
     }
