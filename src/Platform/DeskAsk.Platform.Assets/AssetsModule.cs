@@ -293,6 +293,41 @@ public sealed class AssetsSchema : ITenantSchema
               id text primary key, asset_id bigint not null references assets.assets(id) on delete cascade, agent_id text not null,
               account text not null, target text not null, secret_sealed text, state text not null default 'queued' check (state in ('queued','fetched','done','failed','cancelled')),
               error text not null default '', by_name text not null default '', created_at timestamptz not null default now(), fetched_at timestamptz, done_at timestamptz)"),
+        new(23, "customer locations (country, state, site), vendors, purchase details, AMC vendors and renewals", @"
+            create table if not exists assets.places (
+              id serial primary key, company_id int not null references assets.companies(id) on delete cascade,
+              parent_id int references assets.places(id) on delete restrict,
+              level text not null check (level in ('country','state','site')), name text not null, code text not null default '',
+              address text not null default '', city text not null default '', postal_code text not null default '',
+              contact_name text not null default '', contact_email text not null default '', contact_phone text not null default '',
+              notes text not null default '', active boolean not null default true, created_at timestamptz not null default now());
+            create unique index if not exists places_name on assets.places (company_id, coalesce(parent_id, 0), level, lower(name));
+            create unique index if not exists places_code on assets.places (company_id, lower(code)) where code <> '';
+            create index if not exists places_parent on assets.places (parent_id);
+            create table if not exists assets.vendors (
+              id serial primary key, company_id int references assets.companies(id) on delete cascade,
+              name text not null, code text not null default '',
+              address text not null default '', city text not null default '', state text not null default '', country text not null default '', postal_code text not null default '',
+              contact_name text not null default '', contact_email text not null default '', contact_phone text not null default '',
+              renewal_email text not null default '', website text not null default '',
+              gst text not null default '', pan text not null default '', tan text not null default '', vat text not null default '', cin text not null default '',
+              other_ids jsonb not null default '[]', payment_terms text not null default '', notes text not null default '',
+              remind boolean not null default true, active boolean not null default true, created_at timestamptz not null default now());
+            create unique index if not exists vendors_name on assets.vendors (coalesce(company_id, 0), lower(name));
+            alter table assets.assets
+              add column if not exists site_id int references assets.places(id) on delete set null,
+              add column if not exists vendor_id int references assets.vendors(id) on delete set null,
+              add column if not exists po_number text not null default '',
+              add column if not exists invoice_number text not null default '',
+              add column if not exists warranty_months int;
+            create index if not exists assets_site on assets.assets (site_id) where site_id is not null;
+            create index if not exists assets_vendor on assets.assets (vendor_id) where vendor_id is not null;
+            alter table assets.amc
+              add column if not exists vendor_id int references assets.vendors(id) on delete set null,
+              add column if not exists contract_no text not null default '',
+              add column if not exists cost numeric(12,2),
+              add column if not exists previous_id int references assets.amc(id) on delete set null;
+            alter table assets.companies add column if not exists renewal_to text not null default ''"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -333,8 +368,13 @@ public sealed class AssetsModule : IPlatformModule
         }
     }
 
-    const string Cols = "a.id, a.tag, a.name, a.type_id, t.name, a.status, a.manufacturer, a.model, a.serial, a.location, a.assigned_to, a.purchase_date, a.purchase_cost, a.warranty_end, a.notes, a.custom, a.source, a.created_at, a.updated_at";
-    const string From = "assets.assets a left join assets.types t on t.id = a.type_id";
+    const string Cols = "a.id, a.tag, a.name, a.type_id, t.name, a.status, a.manufacturer, a.model, a.serial, a.location, a.assigned_to, a.purchase_date, a.purchase_cost, a.warranty_end, a.notes, a.custom, a.source, a.created_at, a.updated_at, "
+        + "a.site_id, coalesce(s.name, ''), coalesce(s.code, ''), coalesce(case when ps.level = 'state' then ps.name end, ''), coalesce(case when ps.level = 'country' then ps.name else pps.name end, ''), "
+        + "a.vendor_id, coalesce(v.name, ''), a.po_number, a.invoice_number, a.warranty_months, a.company_id";
+    /// <summary>How many columns Cols has: what a query selects after it starts at this index.</summary>
+    const int N = 30;
+    const string From = "assets.assets a left join assets.types t on t.id = a.type_id left join assets.places s on s.id = a.site_id left join assets.places ps on ps.id = s.parent_id "
+        + "left join assets.places pps on pps.id = ps.parent_id left join assets.vendors v on v.id = a.vendor_id";
 
     public void AddServices(IServiceCollection s, IConfiguration cfg)
     {
@@ -453,6 +493,25 @@ public sealed class AssetsModule : IPlatformModule
 
             var pd = Date(b, "purchaseDate", out var hasPd); if (hasPd) r.Set["purchase_date"] = pd;
             var we = Date(b, "warrantyEnd", out var hasWe); if (hasWe) r.Set["warranty_end"] = we;
+            foreach (var (json, col) in new[] { ("poNumber", "po_number"), ("invoiceNumber", "invoice_number") }) { var v = Str(b, json, 60, out var has); if (has) r.Set[col] = v; }
+            foreach (var (json, col) in new[] { ("siteId", "site_id"), ("vendorId", "vendor_id") })
+                if (b.TryGetProperty(json, out var rv))
+                {
+                    if (rv.ValueKind == JsonValueKind.Null) r.Set[col] = null;
+                    else if (rv.ValueKind == JsonValueKind.Number && rv.TryGetInt32(out var rid)) r.Set[col] = rid;
+                    else throw new FormatException(json + " must be a number");
+                }
+            if (b.TryGetProperty("warrantyMonths", out var wm))
+            {
+                if (wm.ValueKind == JsonValueKind.Null) r.Set["warranty_months"] = null;
+                else if (wm.ValueKind == JsonValueKind.Number && wm.TryGetInt32(out var months) && months is >= 0 and <= 240)
+                {
+                    r.Set["warranty_months"] = months;
+                    // the end follows from the purchase date and the period, unless an end date is given
+                    if (!hasWe && pd != null) r.Set["warranty_end"] = pd.Value.AddMonths(months).AddDays(-1);
+                }
+                else throw new FormatException("warrantyMonths must be 0 to 240");
+            }
             if (b.TryGetProperty("purchaseCost", out var pc))
             {
                 if (pc.ValueKind == JsonValueKind.Null) r.Set["purchase_cost"] = null;
@@ -504,6 +563,9 @@ public sealed class AssetsModule : IPlatformModule
         purchaseDate = r.IsDBNull(11) ? null : D(r.GetFieldValue<DateOnly>(11)), purchaseCost = r.IsDBNull(12) ? (decimal?)null : r.GetDecimal(12),
         warrantyEnd = r.IsDBNull(13) ? null : D(r.GetFieldValue<DateOnly>(13)), notes = r.GetString(14),
         custom = JsonDocument.Parse(r.GetString(15)).RootElement.Clone(), source = r.GetString(16), createdAt = r.GetDateTime(17), updatedAt = r.GetDateTime(18),
+        siteId = r.IsDBNull(19) ? (int?)null : r.GetInt32(19), site = r.GetString(20), siteCode = r.GetString(21), state = r.GetString(22), country = r.GetString(23),
+        vendorId = r.IsDBNull(24) ? (int?)null : r.GetInt32(24), vendor = r.GetString(25), poNumber = r.GetString(26), invoiceNumber = r.GetString(27),
+        warrantyMonths = r.IsDBNull(28) ? (int?)null : r.GetInt32(28), companyId = r.IsDBNull(29) ? (int?)null : r.GetInt32(29),
     };
 
     static string Like(string q) => "%" + q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
@@ -528,13 +590,19 @@ public sealed class AssetsModule : IPlatformModule
         var agentF = q["agent"].ToString(); if (agentF is not ("" or "online" or "offline" or "none" or "update")) return ("agent must be online, offline, none or update", "", _ => { });
         var coF = q["company"].ToString(); int coId = 0;
         if (coF != "" && coF != "none" && !int.TryParse(coF, out coId)) return ("company must be a customer id or none", "", _ => { });
+        var placeF = q["place"].ToString(); int placeId = 0; if (placeF != "" && !int.TryParse(placeF, out placeId)) return ("place must be a location id", "", _ => { });
+        var vendorF = q["vendor"].ToString(); int vendorId = 0; if (vendorF != "" && vendorF != "none" && !int.TryParse(vendorF, out vendorId)) return ("vendor must be a vendor id or none", "", _ => { });
         var w = new List<string>
         {
-            "(@q = '' or a.name ilike @l or a.tag ilike @l or a.serial ilike @l or a.model ilike @l or a.assigned_to ilike @l or a.location ilike @l)",
+            "(@q = '' or a.name ilike @l or a.tag ilike @l or a.serial ilike @l or a.model ilike @l or a.assigned_to ilike @l or a.location ilike @l or a.po_number ilike @l or a.invoice_number ilike @l
+              or exists (select 1 from assets.places sx where sx.id = a.site_id and (sx.name ilike @l or sx.code ilike @l)))",
             "(@st = '' or a.status = @st) and (@ty = 0 or a.type_id = @ty) and (@as = '' or lower(a.assigned_to) = lower(@as))",
         };
         if (agentF != "") w.Add("a.status not in ('retired','lost') and " + AssetDash.Where("agent", agentF));
         if (coF == "none") w.Add("a.company_id is null"); else if (coF != "") w.Add("a.company_id = @coF");
+        // a country or state takes in every site below it
+        if (placeF != "") w.Add("a.site_id in (with recursive pl as (select id from assets.places where id = @plF union select p.id from assets.places p join pl on p.parent_id = pl.id) select id from pl)");
+        if (vendorF == "none") w.Add("a.vendor_id is null"); else if (vendorF != "") w.Add("a.vendor_id = @veF");
         foreach (var ring in new[] { "compliance", "warranty", "kind", "health" })
         {
             var part = q[ring].ToString(); if (part == "") continue;
@@ -546,6 +614,7 @@ public sealed class AssetsModule : IPlatformModule
         {
             P(c, "q", search); P(c, "l", Like(search)); P(c, "st", status); P(c, "ty", typeId); P(c, "as", assigned);
             P(c, "off", (double)off); P(c, "lv", latest); if (coF != "" && coF != "none") P(c, "coF", coId);
+            if (placeF != "") P(c, "plF", placeId); if (vendorF != "" && vendorF != "none") P(c, "veF", vendorId);
         });
     }
 
@@ -568,6 +637,7 @@ public sealed class AssetsModule : IPlatformModule
         DeviceHealth.Map(r, Key);
         SecretHandoff.Map(r, Key);
         RenewalsApi.Map(r, Key);
+        LocationsApi.Map(r, Key);
 
         // ---- types
         anyone(r.MapGet("/api/assets/types", async (ITenantContext t, CancellationToken ct) =>
@@ -646,11 +716,11 @@ public sealed class AssetsModule : IPlatformModule
             await using (var rd = await c.ExecuteReaderAsync(ct))
                 while (await rd.ReadAsync(ct))
                 {
-                    var row = System.Text.Json.JsonSerializer.SerializeToNode(Row(rd))!.AsObject(); total = rd.GetInt64(19);
-                    if (rd.IsDBNull(20)) row["agent"] = System.Text.Json.JsonSerializer.SerializeToNode(new { state = "none" });
+                    var row = System.Text.Json.JsonSerializer.SerializeToNode(Row(rd))!.AsObject(); total = rd.GetInt64(N);
+                    if (rd.IsDBNull(N + 1)) row["agent"] = System.Text.Json.JsonSerializer.SerializeToNode(new { state = "none" });
                     else
                     {
-                        var seen = rd.IsDBNull(22) ? (DateTime?)null : rd.GetDateTime(22); var ver = rd.GetString(21);
+                        var seen = rd.IsDBNull(N + 3) ? (DateTime?)null : rd.GetDateTime(N + 3); var ver = rd.GetString(N + 2);
                         var online = seen != null && seen.Value > DateTime.UtcNow.AddSeconds(-offSec);
                         row["agent"] = System.Text.Json.JsonSerializer.SerializeToNode(new { state = online ? "online" : "offline", version = ver, lastSeen = seen, updateDue = latest != "" && ver != "" && ver != latest, latest });
                     }
@@ -740,13 +810,21 @@ public sealed class AssetsModule : IPlatformModule
             await using var db = await Open(t, ct);
             var v = await Read(body, true, db, null, ct);
             if (v.Error != null) return Bad("bad_input", v.Error);
+            int? newCompany = scope != null ? scope[0] : body.TryGetProperty("companyId", out var nc) && nc.ValueKind == JsonValueKind.Number && nc.TryGetInt32(out var nci) ? nci : null;
+            if (newCompany != null)
+                await using (var q = new NpgsqlCommand("select 1 from assets.companies where id = @i", db)) { P(q, "i", newCompany); if (await q.ExecuteScalarAsync(ct) == null) return Bad("bad_input", "companyId does not exist"); }
+            if (v.Set.ContainsKey("site_id") || v.Set.ContainsKey("vendor_id"))
+            {
+                var refErr = await LocationsApi.CheckRefs(db, newCompany, v.Set.GetValueOrDefault("site_id") as int?, v.Set.GetValueOrDefault("vendor_id") as int?, await AssetsAccess.ScopeAsync(http, Acts.Read), ct);
+                if (refErr != null) return Bad("bad_input", refErr);
+            }
             var (_, active) = await Counts(db, ct);
             if (!await ent.WithinLimitAsync(Key, "max_assets", active, ct)) return Results.Json(new { error = "limit_reached", limit = "max_assets" }, statusCode: 402);
             var created = await Insert(db, v, Actor(u), "manual", ct);
             if (created.Error != null) return created.Error == "duplicate" ? Results.Conflict(new { error = "duplicate", detail = created.Detail }) : Bad(created.Error, created.Detail);
-            if (scope != null)
-            {   // someone limited to one company adds assets to that company
-                await using var own = new NpgsqlCommand("update assets.assets set company_id = @c where id = @i", db); P(own, "c", scope[0]); P(own, "i", created.Id); await own.ExecuteNonQueryAsync(ct);
+            if (newCompany != null)
+            {   // someone limited to one company adds assets to that company; others may name the customer
+                await using var own = new NpgsqlCommand("update assets.assets set company_id = @c where id = @i", db); P(own, "c", newCompany); P(own, "i", created.Id); await own.ExecuteNonQueryAsync(ct);
             }
             await audit.WriteAsync("assets.created", created.Id.ToString(), created.Tag, ct: ct);
             return Results.Ok(new { id = created.Id, tag = created.Tag });
@@ -758,17 +836,24 @@ public sealed class AssetsModule : IPlatformModule
             if (!await AssetsAccess.InScope(db, id, await AssetsAccess.ScopeAsync(http, Acts.Modify), ct)) return Results.NotFound();
             await using var tx = await db.BeginTransactionAsync(ct);
             Dictionary<string, string> before = new(); int? typeId = null;
-            await using (var c = new NpgsqlCommand("select name, type_id, status, manufacturer, model, serial, location, assigned_to, purchase_date, purchase_cost, warranty_end, notes, custom from assets.assets where id = @i for update", db, tx))
+            int? assetCompany = null;
+            await using (var c = new NpgsqlCommand("select name, type_id, status, manufacturer, model, serial, location, assigned_to, purchase_date, purchase_cost, warranty_end, notes, custom, site_id, vendor_id, po_number, invoice_number, warranty_months, company_id from assets.assets where id = @i for update", db, tx))
             {
                 P(c, "i", id);
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 if (!await rd.ReadAsync(ct)) return Results.NotFound();
                 typeId = rd.IsDBNull(1) ? null : rd.GetInt32(1);
-                string[] names = { "name", "type_id", "status", "manufacturer", "model", "serial", "location", "assigned_to", "purchase_date", "purchase_cost", "warranty_end", "notes", "custom" };
+                string[] names = { "name", "type_id", "status", "manufacturer", "model", "serial", "location", "assigned_to", "purchase_date", "purchase_cost", "warranty_end", "notes", "custom", "site_id", "vendor_id", "po_number", "invoice_number", "warranty_months" };
+                assetCompany = rd.IsDBNull(names.Length) ? null : rd.GetInt32(names.Length);
                 for (var i = 0; i < names.Length; i++) before[names[i]] = rd.IsDBNull(i) ? "" : rd.GetValue(i) is DateTime dt ? dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : rd.GetValue(i) is decimal dm ? Money(dm) : Convert.ToString(rd.GetValue(i), CultureInfo.InvariantCulture) ?? "";
             }
             var v = await Read(body, false, db, typeId, ct);
             if (v.Error != null) return Bad("bad_input", v.Error);
+            if (v.Set.ContainsKey("site_id") || v.Set.ContainsKey("vendor_id"))
+            {
+                var refErr = await LocationsApi.CheckRefs(db, assetCompany, v.Set.GetValueOrDefault("site_id") as int?, v.Set.GetValueOrDefault("vendor_id") as int?, await AssetsAccess.ScopeAsync(http, Acts.Read), ct);
+                if (refErr != null) return Bad("bad_input", refErr);
+            }
             var changes = new Dictionary<string, object>();
             foreach (var (col, val) in v.Set)
             {
@@ -885,12 +970,13 @@ public sealed class AssetsModule : IPlatformModule
             var f = ListFilter(http.Request.Query, cfg); if (f.Error != null) return Bad("bad_input", f.Error);
             await using var db = await Open(t, ct);
             await using var c = new NpgsqlCommand($"select {Cols} from {From} left join assets.agents g on g.id = a.agent_id and g.deleted_at is null where (not @sc or a.company_id = any(@scope)) and {f.Sql} order by a.id", db); AssetsAccess.Bind(c, scope); f.Bind(c);
-            var sb = new StringBuilder("tag,name,type,status,manufacturer,model,serial,location,assigned_to,purchase_date,purchase_cost,warranty_end,notes\r\n");
+            var sb = new StringBuilder("tag,name,type,status,manufacturer,model,serial,location,assigned_to,purchase_date,purchase_cost,warranty_end,notes,country,state,site,site_code,vendor,po_number,invoice_number,warranty_months\r\n");
             await using var rd = await c.ExecuteReaderAsync(ct);
             while (await rd.ReadAsync(ct))
             {
                 var cells = new[] { rd.GetString(1), rd.GetString(2), rd.IsDBNull(4) ? "" : rd.GetString(4), rd.GetString(5), rd.GetString(6), rd.GetString(7), rd.GetString(8), rd.GetString(9), rd.GetString(10),
-                    rd.IsDBNull(11) ? "" : D(rd.GetFieldValue<DateOnly>(11)), rd.IsDBNull(12) ? "" : rd.GetDecimal(12).ToString(CultureInfo.InvariantCulture), rd.IsDBNull(13) ? "" : D(rd.GetFieldValue<DateOnly>(13)), rd.GetString(14) };
+                    rd.IsDBNull(11) ? "" : D(rd.GetFieldValue<DateOnly>(11)), rd.IsDBNull(12) ? "" : rd.GetDecimal(12).ToString(CultureInfo.InvariantCulture), rd.IsDBNull(13) ? "" : D(rd.GetFieldValue<DateOnly>(13)), rd.GetString(14),
+                    rd.GetString(23), rd.GetString(22), rd.GetString(20), rd.GetString(21), rd.GetString(25), rd.GetString(26), rd.GetString(27), rd.IsDBNull(28) ? "" : rd.GetInt32(28).ToString(CultureInfo.InvariantCulture) };
                 sb.Append(string.Join(",", cells.Select(Csv.Cell))).Append("\r\n");
             }
             return Results.File(Encoding.UTF8.GetBytes(sb.ToString()), "text/csv; charset=utf-8", "assets.csv");
@@ -914,6 +1000,14 @@ public sealed class AssetsModule : IPlatformModule
             await using (var c = new NpgsqlCommand("select id, name from assets.types", db))
             await using (var rd = await c.ExecuteReaderAsync(ct)) while (await rd.ReadAsync(ct)) typeIds[rd.GetString(1)] = rd.GetInt32(0);
             var (_, active) = await Counts(db, ct);
+            var companies = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            await using (var c = new NpgsqlCommand("select id, name, code from assets.companies", db))
+            await using (var rd = await c.ExecuteReaderAsync(ct)) while (await rd.ReadAsync(ct)) { companies[rd.GetString(1)] = rd.GetInt32(0); if (rd.GetString(2) != "") companies.TryAdd(rd.GetString(2), rd.GetInt32(0)); }
+            var sites = new Dictionary<(int, string), int>(); var vendors = new List<(int Id, int? Company, string Name)>();
+            await using (var c = new NpgsqlCommand("select id, company_id, code from assets.places where level = 'site' and code <> ''", db))
+            await using (var rd = await c.ExecuteReaderAsync(ct)) while (await rd.ReadAsync(ct)) sites[(rd.GetInt32(1), rd.GetString(2).ToLowerInvariant())] = rd.GetInt32(0);
+            await using (var c = new NpgsqlCommand("select id, company_id, name from assets.vendors", db))
+            await using (var rd = await c.ExecuteReaderAsync(ct)) while (await rd.ReadAsync(ct)) vendors.Add((rd.GetInt32(0), rd.IsDBNull(1) ? null : rd.GetInt32(1), rd.GetString(2)));
             int created = 0, skipped = 0; var errors = new List<object>();
             for (var n = 1; n < rows.Count; n++)
             {
@@ -934,11 +1028,30 @@ public sealed class AssetsModule : IPlatformModule
                 var obj = new Dictionary<string, object?> { ["name"] = Cell(row, "name"), ["typeId"] = tid };
                 foreach (var (col, json) in new[] { ("tag", "tag"), ("status", "status"), ("manufacturer", "manufacturer"), ("model", "model"), ("serial", "serial"), ("location", "location"), ("assigned_to", "assignedTo"), ("purchase_date", "purchaseDate"), ("warranty_end", "warrantyEnd"), ("notes", "notes") })
                 { var c = Cell(row, col); if (c != "") obj[json] = c; }
+                int? rowCompany = null; var coName = Cell(row, "company") is { Length: > 0 } cn ? cn : Cell(row, "customer");
+                if (coName != "") { if (companies.TryGetValue(coName, out var cid)) rowCompany = cid; else { errors.Add(new { line, error = "unknown_company", detail = coName }); continue; } }
+                foreach (var (col, json) in new[] { ("po_number", "poNumber"), ("invoice_number", "invoiceNumber") }) { var c = Cell(row, col); if (c != "") obj[json] = c; }
+                var wmo = Cell(row, "warranty_months");
+                if (wmo != "") { if (int.TryParse(wmo, out var wmi)) obj["warrantyMonths"] = wmi; else { errors.Add(new { line, error = "bad_input", detail = "warranty_months" }); continue; } }
+                var sc = Cell(row, "site_code");
+                if (sc != "")
+                {
+                    if (rowCompany == null || !sites.TryGetValue((rowCompany.Value, sc.ToLowerInvariant()), out var sid)) { errors.Add(new { line, error = "unknown_site", detail = rowCompany == null ? "site_code needs a company column" : sc }); continue; }
+                    obj["siteId"] = sid;
+                }
+                var vn = Cell(row, "vendor");
+                if (vn != "")
+                {
+                    var vm = vendors.Where(x => string.Equals(x.Name, vn, StringComparison.OrdinalIgnoreCase) && (x.Company == null || x.Company == rowCompany)).OrderBy(x => x.Company == null).ToList();
+                    if (vm.Count == 0) { errors.Add(new { line, error = "unknown_vendor", detail = vn }); continue; }
+                    obj["vendorId"] = vm[0].Id;
+                }
                 var cost = Cell(row, "purchase_cost");
                 if (cost != "") { if (decimal.TryParse(cost, NumberStyles.Number, CultureInfo.InvariantCulture, out var m)) obj["purchaseCost"] = m; else { errors.Add(new { line, error = "bad_input", detail = "purchase_cost" }); continue; } }
                 var v = await Read(JsonSerializer.SerializeToElement(obj), true, db, null, ct);
                 if (v.Error != null) { errors.Add(new { line, error = "bad_input", detail = v.Error }); continue; }
                 var res = await Insert(db, v, Actor(u), "import", ct);
+                if (res.Error == null && rowCompany != null) { await using var oc = new NpgsqlCommand("update assets.assets set company_id = @c where id = @i", db); P(oc, "c", rowCompany); P(oc, "i", res.Id); await oc.ExecuteNonQueryAsync(ct); }
                 if (res.Error == "duplicate") { skipped++; errors.Add(new { line, error = "duplicate", detail = res.Detail }); }
                 else if (res.Error != null) errors.Add(new { line, error = res.Error, detail = res.Detail });
                 else created++;

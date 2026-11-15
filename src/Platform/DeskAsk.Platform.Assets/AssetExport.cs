@@ -23,7 +23,7 @@ public static class AssetExport
     static readonly Dictionary<string, string> Words = new(StringComparer.OrdinalIgnoreCase)
     {
         ["ip"] = "IP", ["ips"] = "IPs", ["cpu"] = "CPU", ["cpus"] = "CPUs", ["ram"] = "RAM", ["dns"] = "DNS", ["os"] = "OS", ["mac"] = "MAC", ["id"] = "ID", ["bios"] = "BIOS",
-        ["amc"] = "AMC", ["url"] = "URL", ["gb"] = "GB", ["ssl"] = "SSL", ["tcp"] = "TCP", ["http"] = "HTTP", ["fs"] = "FS", ["dhcp"] = "DHCP", ["gpu"] = "GPU", ["psu"] = "PSU", ["ms"] = "ms",
+        ["amc"] = "AMC", ["po"] = "PO", ["url"] = "URL", ["gb"] = "GB", ["ssl"] = "SSL", ["tcp"] = "TCP", ["http"] = "HTTP", ["fs"] = "FS", ["dhcp"] = "DHCP", ["gpu"] = "GPU", ["psu"] = "PSU", ["ms"] = "ms",
     };
 
     /// <summary>"cpuMake" or "cpu_make" becomes "CPU make".</summary>

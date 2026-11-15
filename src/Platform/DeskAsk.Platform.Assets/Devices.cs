@@ -141,7 +141,9 @@ public static class AssetsDevice
         exists (select 1 from assets.amc m where m.asset_ids @> to_jsonb(a.id) and (m.end_date is null or m.end_date >= current_date)),
         (select m.title from assets.amc m where m.asset_ids @> to_jsonb(a.id) and (m.end_date is null or m.end_date >= current_date) order by m.end_date desc nulls first limit 1),
         exists (select 1 from assets.rentals m where m.asset_ids @> to_jsonb(a.id) and (m.end_date is null or m.end_date >= current_date)),
-        a.hw_extra::text, a.monitor, a.collector_id, coalesce(col.name, ''), a.read_req, a.check_up, a.checked_at, a.bmc_extra::text, a.bmc_address, a.bmc_at
+        a.hw_extra::text, a.monitor, a.collector_id, coalesce(col.name, ''), a.read_req, a.check_up, a.checked_at, a.bmc_extra::text, a.bmc_address, a.bmc_at,
+        (select concat_ws(', ', s.name, ps.name, pps.name) from assets.places s left join assets.places ps on ps.id = s.parent_id left join assets.places pps on pps.id = ps.parent_id where s.id = a.site_id),
+        (select s.code from assets.places s where s.id = a.site_id), (select v.name from assets.vendors v where v.id = a.vendor_id), a.po_number, a.invoice_number, a.warranty_months
         from assets.assets a left join assets.companies c on c.id = a.company_id left join assets.collectors col on col.id = a.collector_id where a.id = @i";
 
     static async Task<object?> Device(NpgsqlConnection db, long id, int offlineSec, CancellationToken ct)
@@ -160,7 +162,8 @@ public static class AssetsDevice
             identity = new { make = S(7), model = S(8), serial = S(9), bios = S(10), cpuMake = S(11), cpuModel = S(12), cpuSocket = S(13), cpus = L(14), cores = L(15), coresPerCpu = L(16), logical = L(17), ramBytes = L(18), storageBytes = L(19) },
             system = new { hostname = S(20), dnsName = S(21), ip = S(22), domainType = S(23), domain = S(24), osFamily = S(25), os = S(26), osVersion = S(27), antivirus = S(28), antivirusProducts = Clone(r.GetString(29)), lastPatch = Dt(30), uptimeSeconds = L(36) },
             agent = new { id = S(31), online, lastSeen = seen, source = S(34), inventoryAt = T(35) },
-            ownership = new { location = S(37), assignedTo = S(38), purchaseDate = Dt(39), warrantyEnd = Dt(40), underAmc = r.GetBoolean(46), amc = S(47), rented = r.GetBoolean(48), notes = S(41) },
+            ownership = new { site = S(59), siteCode = S(60), location = S(37), assignedTo = S(38), vendor = S(61), poNumber = S(62), invoiceNumber = S(63), purchaseDate = Dt(39),
+                warrantyMonths = r.IsDBNull(64) ? "" : r.GetInt32(64).ToString(System.Globalization.CultureInfo.InvariantCulture), warrantyEnd = Dt(40), underAmc = r.GetBoolean(46), amc = S(47), rented = r.GetBoolean(48), notes = S(41) },
             remote = new { assetAllows = r.GetBoolean(32), companyAllows = r.GetBoolean(45) },
             storage = Clone(r.GetString(42)), network = Clone(r.GetString(43)), connectedIps = Clone(r.GetString(44)),
             hardware = MergeHardware(r.GetString(49), r.GetString(56)),
@@ -178,14 +181,17 @@ public static class AssetsDevice
     sealed record Contract(string Table, bool IsAmc);
     static async Task<List<object>> ListContracts(NpgsqlConnection db, Contract k, CancellationToken ct)
     {
-        var extra = k.IsAmc ? ", m.coverage, m.visits, m.sla_pct" : "";
-        await using var c = new NpgsqlCommand($"select m.id, m.company_id, c.name, m.title, m.start_date, m.end_date, m.notes, m.asset_ids{extra} from assets.{k.Table} m left join assets.companies c on c.id = m.company_id order by m.end_date desc nulls first, m.id desc", db);
+        var extra = k.IsAmc ? ", m.coverage, m.visits, m.sla_pct, m.vendor_id, coalesce(v.name, ''), m.contract_no, m.cost, m.previous_id, (select n.id from assets.amc n where n.previous_id = m.id limit 1)" : "";
+        var join = k.IsAmc ? " left join assets.vendors v on v.id = m.vendor_id" : "";
+        await using var c = new NpgsqlCommand($"select m.id, m.company_id, c.name, m.title, m.start_date, m.end_date, m.notes, m.asset_ids{extra} from assets.{k.Table} m left join assets.companies c on c.id = m.company_id{join} order by m.end_date desc nulls first, m.id desc", db);
         var rows = new List<object>(); await using var r = await c.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct))
         {
             var ids = Clone(r.GetString(7));
             var active = r.IsDBNull(5) || r.GetFieldValue<DateOnly>(5) >= DateOnly.FromDateTime(DateTime.UtcNow);
-            if (k.IsAmc) rows.Add(new { id = r.GetInt32(0), companyId = r.IsDBNull(1) ? (int?)null : r.GetInt32(1), company = r.IsDBNull(2) ? "" : r.GetString(2), title = r.GetString(3), start = r.IsDBNull(4) ? "" : D(r.GetFieldValue<DateOnly>(4)), end = r.IsDBNull(5) ? "" : D(r.GetFieldValue<DateOnly>(5)), notes = r.GetString(6), assetIds = ids, active, coverage = r.GetString(8), visits = r.GetInt32(9), slaPct = r.GetInt32(10) });
+            if (k.IsAmc) rows.Add(new { id = r.GetInt32(0), companyId = r.IsDBNull(1) ? (int?)null : r.GetInt32(1), company = r.IsDBNull(2) ? "" : r.GetString(2), title = r.GetString(3), start = r.IsDBNull(4) ? "" : D(r.GetFieldValue<DateOnly>(4)), end = r.IsDBNull(5) ? "" : D(r.GetFieldValue<DateOnly>(5)), notes = r.GetString(6), assetIds = ids, active, coverage = r.GetString(8), visits = r.GetInt32(9), slaPct = r.GetInt32(10),
+                vendorId = r.IsDBNull(11) ? (int?)null : r.GetInt32(11), vendor = r.GetString(12), contractNo = r.GetString(13), cost = r.IsDBNull(14) ? (decimal?)null : r.GetDecimal(14),
+                previousId = r.IsDBNull(15) ? (int?)null : r.GetInt32(15), renewedById = r.IsDBNull(16) ? (int?)null : r.GetInt32(16) });
             else rows.Add(new { id = r.GetInt32(0), companyId = r.IsDBNull(1) ? (int?)null : r.GetInt32(1), company = r.IsDBNull(2) ? "" : r.GetString(2), title = r.GetString(3), start = r.IsDBNull(4) ? "" : D(r.GetFieldValue<DateOnly>(4)), end = r.IsDBNull(5) ? "" : D(r.GetFieldValue<DateOnly>(5)), notes = r.GetString(6), assetIds = ids, active });
         }
         return rows;
@@ -228,17 +234,17 @@ public static class AssetsDevice
             var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             await using var db = await Open(t, ct);
             await using var c = new NpgsqlCommand(@"select c.id, c.name, c.code, c.contact_name, c.contact_email, c.phone, c.address, c.notes, c.status, c.remote_allowed,
-                (select count(*) from assets.assets a where a.company_id = c.id) from assets.companies c where (not @sc or c.id = any(@scope)) order by lower(c.name)", db).Scoped(scope);
+                (select count(*) from assets.assets a where a.company_id = c.id), c.renewal_to from assets.companies c where (not @sc or c.id = any(@scope)) order by lower(c.name)", db).Scoped(scope);
             var rows = new List<object>(); await using var rd = await c.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) rows.Add(new { id = rd.GetInt32(0), name = rd.GetString(1), code = rd.GetString(2), contactName = rd.GetString(3), contactEmail = rd.GetString(4), phone = rd.GetString(5), address = rd.GetString(6), notes = rd.GetString(7), status = rd.GetString(8), remoteAllowed = rd.GetBoolean(9), assets = rd.GetInt64(10) });
+            while (await rd.ReadAsync(ct)) rows.Add(new { id = rd.GetInt32(0), name = rd.GetString(1), code = rd.GetString(2), contactName = rd.GetString(3), contactEmail = rd.GetString(4), phone = rd.GetString(5), address = rd.GetString(6), notes = rd.GetString(7), status = rd.GetString(8), remoteAllowed = rd.GetBoolean(9), assets = rd.GetInt64(10), renewalTo = rd.GetString(11) });
             return Results.Ok(rows);
         }));
 
         async Task<IResult> SaveCompany(int? id, JsonElement body, ITenantContext t, IAuditLog audit, CancellationToken ct)
         {
-            string?[] vals = new string?[7]; var names = new[] { "name", "code", "contactName", "contactEmail", "phone", "address", "notes" }; var max = new[] { 120, 30, 120, 200, 40, 400, 2000 };
-            var present = new bool[7];
-            for (int i = 0; i < 7; i++) { vals[i] = Txt(body, names[i], max[i], out present[i], out var err); if (err != null) return Bad("bad_input", err); }
+            string?[] vals = new string?[8]; var names = new[] { "name", "code", "contactName", "contactEmail", "phone", "address", "notes", "renewalTo" }; var max = new[] { 120, 30, 120, 200, 40, 400, 2000, 500 };
+            var present = new bool[8];
+            for (int i = 0; i < 8; i++) { vals[i] = Txt(body, names[i], max[i], out present[i], out var err); if (err != null) return Bad("bad_input", err); }
             if (id == null && (vals[0] ?? "") == "") return Bad("bad_input", "name is required");
             if (present[0] && (vals[0] ?? "") == "") return Bad("bad_input", "name cannot be empty");
             var status = body.TryGetProperty("status", out var st) && st.ValueKind == JsonValueKind.String ? st.GetString() : null;
@@ -249,15 +255,15 @@ public static class AssetsDevice
             {
                 if (id == null)
                 {
-                    await using var c = new NpgsqlCommand("insert into assets.companies (name, code, contact_name, contact_email, phone, address, notes, status, remote_allowed) values (@n,@c,@cn,@ce,@p,@a,@no,@s,@r) returning id", db);
-                    P(c, "n", vals[0]); P(c, "c", vals[1] ?? ""); P(c, "cn", vals[2] ?? ""); P(c, "ce", vals[3] ?? ""); P(c, "p", vals[4] ?? ""); P(c, "a", vals[5] ?? ""); P(c, "no", vals[6] ?? ""); P(c, "s", status ?? "active"); P(c, "r", remote ?? false);
+                    await using var c = new NpgsqlCommand("insert into assets.companies (name, code, contact_name, contact_email, phone, address, notes, status, remote_allowed, renewal_to) values (@n,@c,@cn,@ce,@p,@a,@no,@s,@r,@rt) returning id", db);
+                    P(c, "n", vals[0]); P(c, "c", vals[1] ?? ""); P(c, "cn", vals[2] ?? ""); P(c, "ce", vals[3] ?? ""); P(c, "p", vals[4] ?? ""); P(c, "a", vals[5] ?? ""); P(c, "no", vals[6] ?? ""); P(c, "s", status ?? "active"); P(c, "r", remote ?? false); P(c, "rt", vals[7] ?? "");
                     var nid = (int)(await c.ExecuteScalarAsync(ct))!;
                     await audit.WriteAsync("assets.company_created", nid.ToString(), vals[0]!, ct: ct);
                     return Results.Ok(new { id = nid });
                 }
                 await using var u = new NpgsqlCommand(@"update assets.companies set name = coalesce(@n, name), code = coalesce(@c, code), contact_name = coalesce(@cn, contact_name), contact_email = coalesce(@ce, contact_email),
-                    phone = coalesce(@p, phone), address = coalesce(@a, address), notes = coalesce(@no, notes), status = coalesce(@s, status), remote_allowed = coalesce(@r, remote_allowed) where id = @i", db);
-                P(u, "n", present[0] ? vals[0] : null); P(u, "c", vals[1]); P(u, "cn", vals[2]); P(u, "ce", vals[3]); P(u, "p", vals[4]); P(u, "a", vals[5]); P(u, "no", vals[6]); P(u, "s", status); P(u, "r", remote); P(u, "i", id);
+                    phone = coalesce(@p, phone), address = coalesce(@a, address), notes = coalesce(@no, notes), status = coalesce(@s, status), remote_allowed = coalesce(@r, remote_allowed), renewal_to = coalesce(@rt, renewal_to) where id = @i", db);
+                P(u, "n", present[0] ? vals[0] : null); P(u, "c", vals[1]); P(u, "cn", vals[2]); P(u, "ce", vals[3]); P(u, "p", vals[4]); P(u, "a", vals[5]); P(u, "no", vals[6]); P(u, "s", status); P(u, "r", remote); P(u, "rt", vals[7]); P(u, "i", id);
                 if (await u.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound();
                 await audit.WriteAsync("assets.company_changed", id.ToString(), remote != null ? "remote_allowed=" + remote : "", ct: ct);
                 return Results.Ok(new { id });
@@ -292,9 +298,13 @@ public static class AssetsDevice
                 var err = e1 ?? e2 ?? e3 ?? e4 ?? e5; if (err != null) return Bad("bad_input", err);
                 if (id == null && (title ?? "") == "") return Bad("bad_input", "title is required");
                 if (start != null && end != null && end < start) return Bad("bad_input", "end is before start");
-                int visits = 0, sla = 0;
+                int visits = 0, sla = 0; int? vendorId = null; decimal? cost = null; var contractNo = Txt(body, "contractNo", 60, out _, out var e6);
+                var hasVendor = body.TryGetProperty("vendorId", out var vEl); var hasCost = body.TryGetProperty("cost", out var cEl);
                 if (k.IsAmc)
                 {
+                    if (e6 != null) return Bad("bad_input", e6);
+                    if (hasVendor && vEl.ValueKind != JsonValueKind.Null) { if (!vEl.TryGetInt32(out var vi)) return Bad("bad_input", "vendorId must be a number"); vendorId = vi; }
+                    if (hasCost && cEl.ValueKind != JsonValueKind.Null) { if (!cEl.TryGetDecimal(out var cd) || cd < 0 || cd >= 1_000_000_000m) return Bad("bad_input", "cost must be a number of 0 or more"); cost = Math.Round(cd, 2); }
                     if (body.TryGetProperty("visits", out var v) && (!v.TryGetInt32(out visits) || visits < 0 || visits > 10000)) return Bad("bad_input", "visits must be 0 to 10000");
                     if (body.TryGetProperty("slaPct", out var s) && (!s.TryGetInt32(out sla) || sla < 0 || sla > 100)) return Bad("bad_input", "slaPct must be 0 to 100");
                 }
@@ -303,6 +313,13 @@ public static class AssetsDevice
                 var hasCompany = body.TryGetProperty("companyId", out _);
                 var hasAssets = body.TryGetProperty("assetIds", out _);
                 var (ae, ids) = await AssetIds(db, body, ct); if (ae != null) return ae;
+                if (vendorId != null)
+                {
+                    await using var vq = new NpgsqlCommand("select company_id from assets.vendors where id = @v", db); P(vq, "v", vendorId);
+                    var vo = await vq.ExecuteScalarAsync(ct);
+                    if (vo == null) return Bad("bad_input", "vendor not found");
+                    if (vo is int vco && company != null && vco != company) return Bad("bad_input", "That vendor belongs to another customer.");
+                }
                 if (id == null)
                 {
                     await using var c = new NpgsqlCommand($"insert into assets.{k.Table} (company_id, title, start_date, end_date, notes, asset_ids{(k.IsAmc ? ", coverage, visits, sla_pct" : "")}) values (@co,@t,@s,@e,@n,@a{(k.IsAmc ? ",@cv,@v,@sl" : "")}) returning id", db);
@@ -310,6 +327,8 @@ public static class AssetsDevice
                     P(c, "n", notes ?? ""); PJ(c, "a", JsonSerializer.Serialize(ids));
                     if (k.IsAmc) { P(c, "cv", coverage ?? ""); P(c, "v", visits); P(c, "sl", sla); }
                     var nid = (int)(await c.ExecuteScalarAsync(ct))!;
+                    if (k.IsAmc) await using (var x = new NpgsqlCommand("update assets.amc set vendor_id = @v, contract_no = @n, cost = @c where id = @i", db))
+                    { P(x, "v", vendorId); P(x, "n", contractNo ?? ""); x.Parameters.Add(new NpgsqlParameter("c", NpgsqlDbType.Numeric) { Value = cost.HasValue ? cost.Value : DBNull.Value }); P(x, "i", nid); await x.ExecuteNonQueryAsync(ct); }
                     await audit.WriteAsync("assets." + what + "_created", nid.ToString(), title!, ct: ct);
                     return Results.Ok(new { id = nid });
                 }
@@ -321,6 +340,8 @@ public static class AssetsDevice
                 PJ(u, "a", JsonSerializer.Serialize(ids));
                 if (k.IsAmc) { P(u, "cv", coverage); P(u, "hv", body.TryGetProperty("visits", out _)); P(u, "v", visits); P(u, "hsl", body.TryGetProperty("slaPct", out _)); P(u, "sl", sla); }
                 if (await u.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound();
+                if (k.IsAmc) await using (var x = new NpgsqlCommand("update assets.amc set vendor_id = case when @hv then @v else vendor_id end, contract_no = coalesce(@n, contract_no), cost = case when @hc then @c else cost end where id = @i", db))
+                { P(x, "hv", hasVendor); P(x, "v", vendorId); P(x, "n", contractNo); P(x, "hc", hasCost); x.Parameters.Add(new NpgsqlParameter("c", NpgsqlDbType.Numeric) { Value = cost.HasValue ? cost.Value : DBNull.Value }); P(x, "i", id); await x.ExecuteNonQueryAsync(ct); }
                 await audit.WriteAsync("assets." + what + "_changed", id.ToString(), ct: ct);
                 return Results.Ok(new { id });
             }
@@ -335,6 +356,34 @@ public static class AssetsDevice
                 return Results.Ok(new { ok = true });
             }));
         }
+
+        // renewing an AMC: a new contract that follows the old one (same customer, vendor, cover and assets), linked to it
+        admin(r.MapPost("/api/assets/amc/{id:int}/renew", async (int id, JsonElement body, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        {
+            var start = Day(body, "start", out _, out var e1); var end = Day(body, "end", out _, out var e2); var no = Txt(body, "contractNo", 60, out _, out var e3);
+            if ((e1 ?? e2 ?? e3) is { } err) return Bad("bad_input", err);
+            decimal? cost = null;
+            if (body.TryGetProperty("cost", out var cEl) && cEl.ValueKind != JsonValueKind.Null) { if (!cEl.TryGetDecimal(out var cd) || cd < 0 || cd >= 1_000_000_000m) return Bad("bad_input", "cost must be a number of 0 or more"); cost = Math.Round(cd, 2); }
+            await using var db = await Open(t, ct);
+            DateOnly? oldEnd;
+            await using (var q = new NpgsqlCommand("select end_date, (select 1 from assets.amc n where n.previous_id = m.id limit 1) from assets.amc m where id = @i", db))
+            {
+                P(q, "i", id); await using var rd = await q.ExecuteReaderAsync(ct);
+                if (!await rd.ReadAsync(ct)) return Results.NotFound();
+                if (!rd.IsDBNull(1)) return Results.Conflict(new { error = "renewed", detail = "This contract has been renewed already." });
+                oldEnd = rd.IsDBNull(0) ? null : rd.GetFieldValue<DateOnly>(0);
+            }
+            start ??= oldEnd?.AddDays(1) ?? DateOnly.FromDateTime(DateTime.UtcNow);
+            end ??= start.Value.AddYears(1).AddDays(-1);
+            if (end < start) return Bad("bad_input", "end is before start");
+            await using var c = new NpgsqlCommand(@"insert into assets.amc (company_id, title, start_date, end_date, coverage, visits, sla_pct, notes, asset_ids, vendor_id, contract_no, cost, previous_id)
+                select company_id, title, @s, @e, coverage, visits, sla_pct, notes, asset_ids, vendor_id, coalesce(@n, contract_no), coalesce(@c, cost), id from assets.amc where id = @i returning id", db);
+            c.Parameters.Add(new NpgsqlParameter("s", NpgsqlDbType.Date) { Value = start.Value }); c.Parameters.Add(new NpgsqlParameter("e", NpgsqlDbType.Date) { Value = end.Value });
+            P(c, "n", string.IsNullOrEmpty(no) ? null : no); c.Parameters.Add(new NpgsqlParameter("c", NpgsqlDbType.Numeric) { Value = cost.HasValue ? cost.Value : DBNull.Value }); P(c, "i", id);
+            var nid = (int)(await c.ExecuteScalarAsync(ct))!;
+            await audit.WriteAsync("assets.amc_renewed", nid.ToString(), $"renews contract {id}, {start:yyyy-MM-dd} to {end:yyyy-MM-dd}", ct: ct);
+            return Results.Ok(new { id = nid, start = start.Value.ToString("yyyy-MM-dd"), end = end.Value.ToString("yyyy-MM-dd") });
+        }));
 
         // ---------------------------------------------------------------- the device side of one asset
         scoped(r.MapGet("/api/assets/{id:long}/device", async (HttpContext http, long id, ITenantContext t, Microsoft.Extensions.Configuration.IConfiguration cfg, CancellationToken ct) =>
@@ -368,6 +417,10 @@ public static class AssetsDevice
             await using var c = new NpgsqlCommand("update assets.assets set company_id = case when @hc then @co else company_id end, category = coalesce(@cat, category), updated_at = now(), updated_by = @a where id = @i", db);
             P(c, "hc", hasCompany); P(c, "co", company); P(c, "cat", category); P(c, "a", Actor(u)); P(c, "i", id);
             if (await c.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound();
+            // a site or customer-specific vendor of the old customer no longer fits
+            if (hasCompany)
+                await using (var x = new NpgsqlCommand(@"update assets.assets a set site_id = case when exists (select 1 from assets.places p where p.id = a.site_id and p.company_id is not distinct from a.company_id) then site_id end,
+                    vendor_id = case when exists (select 1 from assets.vendors v where v.id = a.vendor_id and (v.company_id is null or v.company_id is not distinct from a.company_id)) then vendor_id end where id = @i", db)) { P(x, "i", id); await x.ExecuteNonQueryAsync(ct); }
             await History(db, id, Actor(u), "ownership", JsonSerializer.Serialize(new { companyId = hasCompany ? company : (int?)null, category }), ct);
             await audit.WriteAsync("assets.ownership_changed", id.ToString(), ct: ct);
             return Results.Ok(new { ok = true });

@@ -16,6 +16,8 @@ public static class MailTemplates
     public const string SettingKey = "mail.templates";
     static readonly string[] Ticket = { "number", "subject", "status", "priority", "message", "requester", "company", "assignee", "by", "link", "site" };
     static readonly string[] Alert = { "severity", "device", "tag", "company", "rule", "message", "opened", "duration", "ticket", "link", "site" };
+    static readonly string[] Renew = { "name", "items", "count", "first", "days", "link", "site" };
+    static readonly string[] RenewVendor = { "vendor", "items", "count", "first", "days", "reply_to", "site" };
     static readonly string[] VaultReq = { "requester", "vault", "reason", "ticket", "minutes", "decision", "by", "note", "link", "site" };
     static readonly string[] VaultRot = { "account", "device", "vault", "error", "link", "site" };
     static readonly string[] Report = { "company", "month", "availability", "devices", "outages", "alerts", "link", "site" };
@@ -49,6 +51,12 @@ public static class MailTemplates
         new("monitoring_resolved", "Monitoring alert cleared", "Sent to the alert recipients when an alert clears, if that is switched on in Monitoring settings.", Alert,
             "[Cleared] {{company}}: {{device}} - {{rule}}",
             "The alert for {{device}} ({{tag}}, {{company}}) has cleared after {{duration}}.\n\n{{message}}\n\nOpen the device:\n{{link}}\n\n{{site}}"),
+        new("asset_renewal", "Warranty or AMC ending", "Sent to your team, the customer's contact and the asset's user one month and 15 days (Assets › Renewals settings) before a warranty or AMC contract ends.", Renew,
+            "{{count}} renewal(s) due: {{first}}",
+            "Hello {{name}},\n\nThese warranties and AMC contracts end soon:\n\n{{items}}\n\nPlease arrange the renewal in good time.\n\nOpen the renewals:\n{{link}}\n\n{{site}}"),
+        new("asset_renewal_vendor", "Warranty or AMC ending (to the vendor)", "Sent to a vendor about the warranties and AMC contracts of assets bought from them, at the same times.", RenewVendor,
+            "Renewal quotation requested: {{first}}",
+            "Dear {{vendor}},\n\nThe following warranties and AMC contracts for equipment bought from you end soon:\n\n{{items}}\n\nPlease send us a renewal quotation. You can reply to {{reply_to}}.\n\nThank you,\n{{site}}"),
         new("vault_request", "Vault access requested", "Sent to the people who can approve when someone asks for access to an item in a vault. The item's name is encrypted, so the message names the vault.", VaultReq,
             "Access request: {{requester}} in {{vault}}",
             "{{requester}} asks for access to an item in the vault {{vault}} for {{minutes}} minutes.\n\nReason: {{reason}}\nTicket: {{ticket}}\n\nApprove or deny it in the Vault:\n{{link}}\n\n{{site}}"),
@@ -127,6 +135,8 @@ public static class MailTemplates
         ["number"] = "TKT-000123", ["subject"] = "Printer on the third floor is down", ["status"] = "Open", ["priority"] = "High",
         ["message"] = "The printer stopped working this morning. Paper is loaded and the display shows an error.", ["requester"] = "Pat Morgan", ["company"] = "Acme Ltd",
         ["assignee"] = "Sam Rivers", ["by"] = "Sam Rivers", ["path"] = "#/servicedesk/123",
+        ["name"] = "Pat Morgan", ["vendor"] = "Acme Systems Pvt Ltd", ["count"] = "2", ["first"] = "Warranty of LAP-0042 (Dell Latitude 5440)", ["days"] = "30", ["reply_to"] = "renewals@yourcompany.example",
+        ["items"] = "- Warranty: LAP-0042 Dell Latitude 5440, serial 8HX2LQ3 (Acme Ltd, Bengaluru HQ) ends 14 December 2026, bought 15 December 2023, PO 4500012\n- AMC contract: Server room AMC, contract AMC-2025-118 (Acme Ltd) ends 20 December 2026",
     };
 }
 
