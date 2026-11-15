@@ -286,3 +286,82 @@ Assets › Patch report lists every computer with an agent, oldest patch first. 
 
 ### Deletion approvals by mail
 When someone asks to delete an asset, an email goes to everyone who may approve the deletion for that customer (not the person asking and not customer users). The email gives the reason and a link to Assets › Delete requests. This needs mail to be set up under Settings › Mail.
+
+## Locations, vendors and renewal reminders (v3.3.0)
+
+### Locations
+**Assets › Locations** holds each customer's locations in three levels:
+- **Country**
+- **State or region**, inside a country
+- **Site**, with a site code, address, city, postal code and site contact
+
+A site sits in a state or directly in a country. That suits countries without states, such as the UAE. Names are unique inside their parent, and site codes are unique per customer.
+
+Each row shows its number of sites and assets, counting everything below it. Clicking the count opens the asset list filtered to that place, and a country or state includes every site under it.
+
+A place cannot be deleted while it holds other places or assets. For a site with assets, **Delete** offers to move the assets to another site first. You can also mark a site inactive: it keeps its assets but is no longer offered for new ones.
+
+**Who may change locations:**
+- administrators, for every customer
+- a customer administrator, for their own company
+- anyone granted *modify* on Assets, for the customers in that grant (engineers by default)
+
+Viewers only read.
+
+On an asset, **Site** (country › state › site, only that customer's) replaces the free-text location. The old **Location** field stays as **Room or area** (for example "2nd floor, server room"). If an asset moves to another customer, a site or customer-specific vendor of the old customer is removed from it.
+
+### Vendors
+**Assets › Vendors** lists the suppliers that assets and AMC contracts are bought from.
+
+| Field | Notes |
+|---|---|
+| Name, code, address (street, city, state, postal code, country) | |
+| Government registrations | GSTIN (15 characters, checked; it must contain the PAN), PAN, TAN, VAT/TRN, CIN, and any number of other registrations (MSME/Udyam, IEC, EIN…) |
+| Contact | Person, email, phone, website, payment terms |
+| Renewal reminders | Whether the vendor is mailed, and to which address (empty: the contact email) |
+
+A vendor is either **shared** (your own supplier, for every customer; only administrators change these) or **for one customer** (managed like that customer's locations).
+
+The vendor page shows:
+- the details and registrations
+- every asset bought from the vendor, with customer, site, purchase date, PO, invoice, cost and warranty
+- the vendor's AMC contracts, renewals included
+
+### Purchase details on an asset
+The add and edit forms now have:
+- the vendor
+- the purchase order number and invoice number
+- the purchase date and **warranty period** (1 to 5 years, or any number of months)
+
+The warranty end date is worked out from the purchase date and the period (36 months from 15 Jan 2024 ends on 14 Jan 2027), and can still be typed by hand.
+
+The list can be filtered by place (`?place=`) and vendor (`?vendor=`). Search also finds site names, site codes, PO numbers and invoice numbers.
+
+The CSV export adds `country, state, site, site_code, vendor, po_number, invoice_number, warranty_months`. The CSV import accepts these columns:
+- `company` (or `customer`), by name or code
+- `site_code`, which needs `company`
+- `vendor`, by name; the customer's own vendor is used before a shared one of the same name
+- `po_number`, `invoice_number`, `warranty_months`
+
+### AMC contracts
+An AMC now has a vendor, a contract number and a cost. **Renew** creates the next contract with the same customer, vendor, cover and assets. It starts the day after the old one ends and runs a year unless you change the dates; a new contract number and cost can be given. The two are linked. The old contract shows "renewed" and no longer sends reminders.
+
+### Reminders: one month and 15 days before
+**Assets › Renewals** (settings for administrators). New installations remind **30 and 15 days** before a warranty, AMC contract or rental ends. If you saved other days before, change them here.
+
+| Who | Gets |
+|---|---|
+| Your team (addresses in the settings) | Every reminder |
+| The customer's own team (Companies › Edit › "Your team for this customer") | That customer's reminders |
+| The customer's contact (optional) | Their own renewals |
+| The person the asset is assigned to (optional) | Their asset's warranty, when "Assigned to" holds an email address or the name of a DeskAsk user |
+| The vendor (optional; per vendor it can be switched off) | Warranties and AMC contracts bought from them, asking for a renewal quotation; replies go to your team's addresses |
+
+Each reminder goes out once per end date and per day setting. A mail lists each item with:
+- customer and site
+- serial number
+- purchase date
+- PO and invoice
+- vendor (not shown in the vendor's own letter)
+
+The wording is in **Mail › Templates**, under `asset_renewal` and `asset_renewal_vendor`. Customer administrators can now see their own company's renewals.

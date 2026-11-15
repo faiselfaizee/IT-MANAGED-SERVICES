@@ -62,9 +62,9 @@ function VendorPage({ id }: { id: string }) {
     <Card title={`Assets bought from ${v.name} (${assets.length})`}>
       {assets.length === 0 ? <Empty>No assets yet. Choose this vendor on an asset's Edit form.</Empty> : <div className="table-wrap"><table>
         <thead><tr><th>Asset</th><th>Customer</th><th>Site</th><th>Bought</th><th>PO / invoice</th><th className="num">Cost</th><th>Warranty</th></tr></thead>
-        <tbody>{assets.map((a) => <tr key={a.id}><td><a href={`#/assets/${a.id}`}>{a.name}</a> <span className="mono muted">{a.tag}</span></td><td>{a.company}</td><td>{a.site}</td><td>{fmtDay(a.purchaseDate)}</td>
+        <tbody>{assets.map((a) => <tr key={a.id}><td><a href={`#/assets/${a.id}`}>{a.name}</a> <span className="mono muted">{a.tag}</span></td><td>{a.company}</td><td>{a.site}</td><td className="nowrap">{fmtDay(a.purchaseDate)}</td>
           <td>{[a.poNumber, a.invoiceNumber].filter(Boolean).join(' / ')}</td><td className="num">{a.purchaseCost != null ? Number(a.purchaseCost).toLocaleString() : ''}</td>
-          <td><Ends d={a.warrantyEnd} />{a.warrantyMonths ? <div className="muted small">{a.warrantyMonths} months</div> : null}</td></tr>)}</tbody></table></div>}
+          <td className="nowrap"><Ends d={a.warrantyEnd} />{a.warrantyMonths ? <div className="muted small">{a.warrantyMonths} months</div> : null}</td></tr>)}</tbody></table></div>}
     </Card>
     <Card title={`AMC contracts (${amc.length})`}>
       {amc.length === 0 ? <Empty>No AMC contracts with this vendor. Add one under AMC.</Empty> : <table>

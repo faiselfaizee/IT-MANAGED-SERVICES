@@ -12,7 +12,7 @@ export default function Contracts({ kind }: { kind: 'amc' | 'rentals' }) {
     <div className="tools"><button className="primary" onClick={() => setEdit({ title: '', companyId: '', start: '', end: '', notes: '', coverage: '', visits: 0, slaPct: 0, assetIds: [], vendorId: null, contractNo: '', cost: '' })}>{amc ? 'Add AMC' : 'Add rental'}</button></div>
     <Loading loading={loading && !data} error={error} />
     {data && (list.length === 0 ? <Empty>Nothing here yet.</Empty> : <table><thead><tr><th>Title</th><th>Customer</th>{amc && <th>Vendor</th>}<th>Period</th>{amc && <><th className="num">Visits</th><th className="num">SLA</th><th className="num">Cost</th></>}<th className="num">Assets</th><th /></tr></thead><tbody>
-      {list.map((c) => <tr key={c.id}><td>{c.title}{c.contractNo && <span className="mono muted"> {c.contractNo}</span>}<div className="muted">{c.coverage}</div></td><td>{c.company}</td>
+      {list.map((c) => <tr key={c.id}><td>{c.title}{c.contractNo && <div className="mono muted small">{c.contractNo}</div>}<div className="muted">{c.coverage}</div></td><td>{c.company}</td>
         {amc && <td>{c.vendorId ? <a href={`#/assets/vendors/${c.vendorId}`}>{c.vendor}</a> : <span className="muted">–</span>}</td>}
         <td>{fmtDay(c.start)} → {fmtDay(c.end)} {c.renewedById ? <Badge tone="ok">renewed</Badge> : c.active === false ? <Badge tone="bad">ended</Badge> : null}{c.previousId && <div className="muted small">renewal of an earlier contract</div>}</td>
         {amc && <><td className="num">{c.visits}</td><td className="num">{c.slaPct ? c.slaPct + '%' : ''}</td><td className="num">{c.cost != null ? Number(c.cost).toLocaleString() : ''}</td></>}<td className="num">{(c.assetIds ?? []).length}</td>

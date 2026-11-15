@@ -411,3 +411,21 @@ ul.plain { list-style: none; padding: 0; margin: 0; }
 @media print { .side, .sub, .tools, .vault-gate label.check { display: none !important; } }
 .secret .multi { white-space: pre-wrap; } .rotate-note { display: grid; gap: 8px; justify-items: start; margin: 0; }
 .sub .lock-btn { padding: 6px 12px; margin-left: 12px; }
+
+/* ---- Assets: locations tree, vendor form */
+.loc-tree, .loc-tree ul { list-style: none; margin: 0; padding: 0; }
+.loc-tree { background: var(--glass); border: 1px solid var(--edge); border-radius: var(--r-md); padding: 6px 10px; max-width: 980px; }
+.loc-tree ul { margin-left: 22px; border-left: 1px solid var(--line); padding-left: 12px; }
+.loc-row { display: grid; grid-template-columns: minmax(200px, 1.3fr) minmax(120px, 1fr) 90px auto; gap: 12px; align-items: center; padding: 7px 4px; border-bottom: 1px solid var(--row); }
+.loc-tree li:last-child > .loc-row { border-bottom: 0; }
+.loc.country > .loc-row .loc-name { font-weight: 600; } .loc.site > .loc-row .loc-name::before { content: '◆'; color: var(--accent); font-size: 9px; margin-right: 7px; vertical-align: 2px; }
+.loc.off > .loc-row { opacity: .6; }
+.loc-acts { display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap; }
+@media (max-width: 760px) { .loc-row { grid-template-columns: 1fr auto; } .loc-row .muted.small { display: none; } .loc-acts { grid-column: 1 / -1; justify-content: flex-start; } }
+.vendor-form fieldset > button { justify-self: start; }
+.vendor-form fieldset { border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 14px 12px; display: grid; gap: 10px; min-width: 0; }
+.vendor-form fieldset legend { color: var(--muted); font-size: 13px; padding: 0 4px; }
+.vendor-form .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; align-items: end; }
+.vendor-form .row > * { min-width: 0; } .vendor-form input, .vendor-form textarea, .vendor-form select { width: 100%; box-sizing: border-box; }
+td.nowrap, th.nowrap { white-space: nowrap; }
+.modal .row > label { min-width: 0; } .modal .row > label > select, .modal .row > label > input { width: 100%; min-width: 0; box-sizing: border-box; }
