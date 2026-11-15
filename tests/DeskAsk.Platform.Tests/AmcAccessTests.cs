@@ -29,11 +29,11 @@ public class AmcAccessTests : IClassFixture<WebApplicationFactory<Program>>
 
         // ---- the IP address of an asset can be changed after it was added
         var a = (await J(await admin.PostAsync("/api/assets", Json(new { name = "SW-01", companyId = acme, ipAddress = "10.0.0.5" })))).GetProperty("id").GetInt64();
-        Assert.Equal("10.0.0.5", (await J(await admin.GetAsync("/api/assets/" + a))).GetProperty("system").GetProperty("ip").GetString());
+        Assert.Equal("10.0.0.5", (await J(await admin.GetAsync("/api/assets/" + a + "/device"))).GetProperty("system").GetProperty("ip").GetString());
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/assets/" + a, Json(new { ipAddress = " 10.0.0.77 " }))).StatusCode);
-        Assert.Equal("10.0.0.77", (await J(await admin.GetAsync("/api/assets/" + a))).GetProperty("system").GetProperty("ip").GetString());
+        Assert.Equal("10.0.0.77", (await J(await admin.GetAsync("/api/assets/" + a + "/device"))).GetProperty("system").GetProperty("ip").GetString());
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/assets/" + a, Json(new { ipAddress = "ten.zero" }))).StatusCode);
-        Assert.Equal("10.0.0.77", (await J(await admin.GetAsync("/api/assets/" + a))).GetProperty("system").GetProperty("ip").GetString());
+        Assert.Equal("10.0.0.77", (await J(await admin.GetAsync("/api/assets/" + a + "/device"))).GetProperty("system").GetProperty("ip").GetString());
 
         // ---- a customer administrator and AMC contracts
         Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "cadm@amc.test", name = "Acme admin", role = "cadmin", password = Pw }))).StatusCode);
