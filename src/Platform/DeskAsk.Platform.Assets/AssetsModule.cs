@@ -266,6 +266,28 @@ public sealed class AssetsSchema : ITenantSchema
             alter table assets.assets add column if not exists m_uptime bigint not null default 0;
             alter table assets.assets add column if not exists check_down_at timestamptz;
             alter table assets.service_checks add column if not exists fails int not null default 0"),
+        new(21, "port traffic, watched services and device events for Monitoring", @"
+            create table if not exists assets.ifstats (
+              asset_id bigint not null references assets.assets(id) on delete cascade, if_index text not null, at timestamptz not null default now(),
+              in_pct real not null default 0, out_pct real not null default 0, in_bps double precision not null default 0, out_bps double precision not null default 0,
+              errors real not null default 0, discards real not null default 0, primary key (asset_id, if_index, at));
+            create index if not exists ifstats_at on assets.ifstats (at);
+            create table if not exists assets.ifstats_hour (
+              asset_id bigint not null references assets.assets(id) on delete cascade, if_index text not null, hour timestamptz not null,
+              in_avg real, in_max real, out_avg real, out_max real, in_bps double precision, out_bps double precision, errors real, n int not null default 0,
+              primary key (asset_id, if_index, hour));
+            create table if not exists assets.port_watch (
+              asset_id bigint not null references assets.assets(id) on delete cascade, if_index text not null, watched boolean not null, primary key (asset_id, if_index));
+            alter table assets.assets add column if not exists m_ports jsonb not null default '[]';
+            alter table assets.assets add column if not exists m_ports_at timestamptz;
+            alter table assets.assets add column if not exists m_services jsonb not null default '[]';
+            alter table assets.assets add column if not exists m_services_at timestamptz;
+            create table if not exists assets.events (
+              id bigserial primary key, asset_id bigint not null references assets.assets(id) on delete cascade, at timestamptz not null default now(),
+              kind text not null check (kind in ('syslog','trap','eventlog')), severity int not null default 5, source text not null default '',
+              event_id int not null default 0, text text not null default '');
+            create index if not exists events_asset on assets.events (asset_id, id desc);
+            create index if not exists events_at on assets.events (at)"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -317,6 +339,7 @@ public sealed class AssetsModule : IPlatformModule
         s.AddScoped<ICompanyDirectory>(sp => sp.GetRequiredService<AssetsDirectory>());
         s.AddScoped<IAssetDirectory>(sp => sp.GetRequiredService<AssetsDirectory>());
         s.AddScoped<IDeviceHealth, DeviceHealth>();
+        s.AddScoped<IDeviceActions, DeviceActions>();
         s.AddSingleton<IJobHandler, AssetsJanitorJob>();
         s.AddSingleton(new RecurringJob("assets.janitor", AssetsJanitorJob.JobType, TimeSpan.FromMinutes(1)));
         s.AddSingleton<IJobHandler, RenewalsJob>();

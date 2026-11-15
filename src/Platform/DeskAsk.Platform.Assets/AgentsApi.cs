@@ -62,6 +62,14 @@ public sealed class AssetsJanitorJob : IJobHandler
                   mem_max = excluded.mem_max, disk_free_min = excluded.disk_free_min, n = excluded.n");
             await Sql("delete from assets.metrics where at < now() - interval '2 days'");
             await Sql("delete from assets.metrics_hour where hour < now() - interval '90 days'");
+            await Sql(@"insert into assets.ifstats_hour (asset_id, if_index, hour, in_avg, in_max, out_avg, out_max, in_bps, out_bps, errors, n)
+                select asset_id, if_index, date_trunc('hour', at), avg(in_pct), max(in_pct), avg(out_pct), max(out_pct), avg(in_bps), avg(out_bps), avg(errors), count(*)
+                from assets.ifstats where at >= date_trunc('hour', now()) - interval '2 hours' and at < date_trunc('hour', now()) group by 1, 2, 3
+                on conflict (asset_id, if_index, hour) do update set in_avg = excluded.in_avg, in_max = excluded.in_max, out_avg = excluded.out_avg, out_max = excluded.out_max,
+                  in_bps = excluded.in_bps, out_bps = excluded.out_bps, errors = excluded.errors, n = excluded.n");
+            await Sql("delete from assets.ifstats where at < now() - interval '2 days'");
+            await Sql("delete from assets.ifstats_hour where hour < now() - interval '30 days'");
+            await Sql("delete from assets.events where at < now() - interval '14 days'");
         }
     }
 }

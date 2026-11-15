@@ -16,6 +16,7 @@ public static class MailTemplates
     public const string SettingKey = "mail.templates";
     static readonly string[] Ticket = { "number", "subject", "status", "priority", "message", "requester", "company", "assignee", "by", "link", "site" };
     static readonly string[] Alert = { "severity", "device", "tag", "company", "rule", "message", "opened", "duration", "ticket", "link", "site" };
+    static readonly string[] Report = { "company", "month", "availability", "devices", "outages", "alerts", "link", "site" };
 
     public static readonly TemplateDef[] All =
     {
@@ -37,6 +38,12 @@ public static class MailTemplates
         new("monitoring_alert", "Monitoring alert", "Sent to the alert recipients when Monitoring opens an alert or raises it to critical.", Alert,
             "[{{severity}}] {{company}}: {{device}} - {{rule}}",
             "{{severity}} alert for {{device}} ({{tag}}, {{company}})\n\n{{message}}\n\nRule: {{rule}}\nSince: {{opened}}\n{{ticket}}\nOpen the device:\n{{link}}\n\n{{site}}"),
+        new("monitoring_escalated", "Monitoring alert not acknowledged", "Sent to the escalation list when a critical alert has not been acknowledged in time.", Alert,
+            "[Not acknowledged] {{company}}: {{device}} - {{rule}}",
+            "Nobody has acknowledged this critical alert for {{duration}}.\n\n{{device}} ({{tag}}, {{company}})\n{{message}}\n\nRule: {{rule}}\nSince: {{opened}}\n\nOpen the device and acknowledge the alert:\n{{link}}\n\n{{site}}"),
+        new("monitoring_report", "Monthly uptime report", "Sent on the 1st of the month with the uptime report attached as a PDF, if switched on in Monitoring settings.", Report,
+            "Uptime report {{month}}: {{company}}",
+            "Hello,\n\nThe uptime report for {{company}} for {{month}} is attached.\n\nDevices watched: {{devices}}\nAverage availability: {{availability}}\nOutages: {{outages}}\nAlerts: {{alerts}}\n\nMore detail in Monitoring:\n{{link}}\n\n{{site}}"),
         new("monitoring_resolved", "Monitoring alert cleared", "Sent to the alert recipients when an alert clears, if that is switched on in Monitoring settings.", Alert,
             "[Cleared] {{company}}: {{device}} - {{rule}}",
             "The alert for {{device}} ({{tag}}, {{company}}) has cleared after {{duration}}.\n\n{{message}}\n\nOpen the device:\n{{link}}\n\n{{site}}"),

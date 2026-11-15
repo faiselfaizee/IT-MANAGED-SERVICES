@@ -23,12 +23,16 @@ public sealed class MonitoringModule : IPlatformModule
         s.AddSingleton<ITenantSchema, MonitoringSchema>();
         s.AddSingleton<IJobHandler, EvaluateJob>();
         s.AddSingleton(new RecurringJob("monitoring.evaluate", EvaluateJob.JobType, TimeSpan.FromMinutes(1)));
+        s.AddScoped<IAgentWatch, AgentWatchList>();
+        s.AddSingleton<IJobHandler, ReportJob>();
+        s.AddSingleton(new RecurringJob("monitoring.report", ReportJob.JobType, TimeSpan.FromHours(1)));
     }
 
     public void MapEndpoints(IEndpointRouteBuilder r)
     {
         MonitoringApi.Map(r, Key);
         RulesApi.Map(r, Key);
+        ReportsApi.Map(r, Key);
     }
 
     internal static IResult Bad(string error, string? detail = null) => Results.BadRequest(new { error, detail });
@@ -93,6 +97,27 @@ public sealed class MonitoringSchema : ITenantSchema
               ('Service check failing', true, 'check', 2, 0, 'critical', '{}', true, true, 'high', true),
               ('Certificate expires within 14 days', true, 'cert', 14, 0, 'warning', '{}', true, false, 'medium', true),
               ('Hardware fault', true, 'hardware', 0, 0, 'critical', '{}', true, true, 'high', true)"),
+        new(2, "traffic, ports, services, programs and logs; Teams, escalation and monthly reports", @"
+            alter table monitoring.rules drop constraint if exists rules_metric_check;
+            alter table monitoring.rules add constraint rules_metric_check check (metric in ('offline','cpu','memory','disk','check','cert','hardware','traffic','port','service','process','log'));
+            alter table monitoring.rules add column if not exists target text not null default '';
+            alter table monitoring.rules add column if not exists event_kind text not null default '';
+            alter table monitoring.rules add column if not exists min_severity int not null default 3;
+            alter table monitoring.rules add column if not exists teams boolean not null default true;
+            alter table monitoring.rules add column if not exists restart boolean not null default false;
+            alter table monitoring.alerts add column if not exists escalated_at timestamptz;
+            alter table monitoring.alerts add column if not exists action_note text not null default '';
+            create table if not exists monitoring.outbox (
+              id bigserial primary key, alert_id bigint, url text not null, body text not null, attempts int not null default 0,
+              next_at timestamptz not null default now(), sent_at timestamptz, error text not null default '', created_at timestamptz not null default now());
+            create index if not exists outbox_due on monitoring.outbox (sent_at, next_at);
+            create table if not exists monitoring.report_sent (
+              month text not null, scope text not null, recipient text not null, at timestamptz not null default now(), primary key (month, scope, recipient));
+            insert into monitoring.rules (name, enabled, metric, threshold, minutes, severity, kinds, mail, ticket, ticket_priority, builtin) values
+              ('Port busy above 80% for 15 minutes', true, 'traffic', 80, 15, 'warning', '{network}', true, false, 'high', true),
+              ('Watched port down for 5 minutes', true, 'port', 0, 5, 'critical', '{network}', true, true, 'high', true);
+            insert into monitoring.rules (name, enabled, metric, threshold, minutes, severity, kinds, mail, ticket, ticket_priority, builtin, event_kind, min_severity) values
+              ('Critical message from a device', true, 'log', 1, 15, 'critical', '{}', true, false, 'high', true, '', 2)"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) => SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
 }
@@ -104,6 +129,17 @@ public sealed class MonitorSettings
     public string Recipients { get; set; } = "";
     public bool MailResolved { get; set; } = true;
     public Dictionary<string, string> Companies { get; set; } = new();
+    /// <summary>Microsoft Teams webhook (sealed): the default, and a customer's own (sealed), by customer id.</summary>
+    public string Teams { get; set; } = "";
+    public Dictionary<string, string> CompanyTeams { get; set; } = new();
+    /// <summary>A critical alert nobody acknowledged within this many minutes goes to the escalation list and channel (0 = off).</summary>
+    public int EscalateMinutes { get; set; }
+    public string EscalateRecipients { get; set; } = "";
+    public string EscalateTeams { get; set; } = "";
+    /// <summary>Monthly uptime report: on the 1st, mailed as a PDF. ReportTo gets every customer's; each customer's own recipients get theirs.</summary>
+    public bool ReportEnabled { get; set; }
+    public string ReportTo { get; set; } = "";
+    public bool ReportCustomers { get; set; } = true;
 
     public static async Task<MonitorSettings> LoadAsync(ISettings s, CancellationToken ct)
     {
@@ -114,5 +150,9 @@ public sealed class MonitorSettings
     public Task SaveAsync(ISettings s, CancellationToken ct) => s.SetAsync(Key, JsonSerializer.Serialize(this, new JsonSerializerOptions(JsonSerializerDefaults.Web)), ct);
 
     public static List<string> Split(string list) => list.Split(new[] { ',', ';', '\n', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    /// <summary>The Teams webhook for a customer's alerts (its own, else the default), opened; "" when none.</summary>
+    public string TeamsFor(int? companyId, Func<string, string> open) =>
+        companyId is int c && CompanyTeams.TryGetValue(c.ToString(), out var own) && own != "" ? open(own) : Teams != "" ? open(Teams) : "";
+
     public List<string> For(int? companyId) => Split(companyId is int c && Companies.TryGetValue(c.ToString(), out var own) && own.Trim() != "" ? own : Recipients);
 }

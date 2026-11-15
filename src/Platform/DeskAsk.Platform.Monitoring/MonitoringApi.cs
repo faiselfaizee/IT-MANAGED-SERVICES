@@ -72,6 +72,11 @@ public static class MonitoringApi
             ["diskOk"] = rows.Count(r => DiskBand(r.D) == "ok"), ["diskLow"] = rows.Count(r => DiskBand(r.D) == "low"), ["diskCritical"] = rows.Count(r => DiskBand(r.D) == "critical"),
             ["diskNoData"] = rows.Count(r => DiskBand(r.D) == "nodata"),
             ["withMetrics"] = rows.Count(r => r.D.MetricsAt != null && r.D.MetricsAt > DateTime.UtcNow.AddMinutes(-10)),
+            ["portsWatched"] = rows.Sum(r => r.D.PortList.Count(p => p.Watched)),
+            ["portsDown"] = rows.Sum(r => r.D.PortList.Count(p => p.Watched && p.AdminUp && !p.Up)),
+            ["portsBusy"] = rows.Sum(r => r.D.PortList.Count(p => p.Up && p.Rates && Math.Max(p.InPct, p.OutPct) >= 80)),
+            ["servicesWatched"] = rows.Sum(r => r.D.WatchedList.Count),
+            ["servicesDown"] = rows.Sum(r => r.D.WatchedList.Count(w => !w.Running && w.State != "unknown")),
         };
     }
 
@@ -83,19 +88,21 @@ public static class MonitoringApi
         disks = r.D.Disks.Select(k => new { name = k.Name, freePct = k.FreePct, free = k.FreeBytes, total = k.TotalBytes }),
         checks = r.D.Checks.Select(c => new { c.Id, c.Name, c.Type, c.Ok, c.Fails, certDays = c.CertDays, c.Detail, c.At }),
         faults = r.D.Faults.Select(f => new { f.Part, f.Name, f.State }),
+        portsAt = r.D.PortsAt, ports = r.D.PortList.Select(p => new { p.Index, p.Name, p.Alias, p.Kind, p.Up, p.AdminUp, p.Mbps, p.Rates, p.InPct, p.OutPct, p.InBps, p.OutBps, p.Errors, p.Discards, p.Watched, p.DownSince }),
+        watchedAt = r.D.WatchedAt, watched = r.D.WatchedList.Select(w => new { w.Name, w.Kind, w.Running, w.State, w.Count }),
         alerts = r.Alerts.Count, alertsCritical = r.Alerts.Count(a => a.Severity == "critical"),
         muted = mute == null ? null : new { until = mute.Value.Until, reason = mute.Value.Reason, by = mute.Value.By },
     };
 
     static readonly string[] AlertCols = { "id", "rule_id", "rule_name", "metric", "severity", "asset_id", "asset_name", "asset_tag", "company_id", "company_name", "subject", "text", "value",
-        "opened_at", "last_at", "closed_at", "close_reason", "ack_by", "ack_at", "ticket_id", "ticket_number" };
+        "opened_at", "last_at", "closed_at", "close_reason", "ack_by", "ack_at", "ticket_id", "ticket_number", "action_note", "escalated_at" };
     static object AlertView(NpgsqlDataReader rd) => new
     {
         id = rd.GetInt64(0), ruleId = rd.IsDBNull(1) ? (int?)null : rd.GetInt32(1), rule = rd.GetString(2), metric = rd.GetString(3), severity = rd.GetString(4),
         assetId = rd.GetInt64(5), asset = rd.GetString(6), tag = rd.GetString(7), companyId = rd.IsDBNull(8) ? (int?)null : rd.GetInt32(8), company = rd.GetString(9), subject = rd.GetString(10),
         text = rd.GetString(11), value = rd.IsDBNull(12) ? (double?)null : rd.GetFloat(12), openedAt = rd.GetDateTime(13), lastAt = rd.GetDateTime(14),
         closedAt = rd.IsDBNull(15) ? (DateTime?)null : rd.GetDateTime(15), closeReason = rd.GetString(16), ackBy = rd.GetString(17), ackAt = rd.IsDBNull(18) ? (DateTime?)null : rd.GetDateTime(18),
-        ticketId = rd.IsDBNull(19) ? (long?)null : rd.GetInt64(19), ticket = rd.GetString(20),
+        ticketId = rd.IsDBNull(19) ? (long?)null : rd.GetInt64(19), ticket = rd.GetString(20), actionNote = rd.GetString(21), escalatedAt = rd.IsDBNull(22) ? (DateTime?)null : rd.GetDateTime(22),
     };
 
     /// <summary>An alert, if the person may see its customer's data.</summary>
@@ -140,6 +147,9 @@ public static class MonitoringApi
             var q = http.Request.Query;
             string Q(string n) => q[n].ToString().Trim();
             var company = Q("company"); var status = Q("status"); var kind = Q("kind"); var disk = Q("disk"); var cert = Q("cert"); var check = Q("check"); var metric = Q("metric"); var search = Q("search").ToLowerInvariant();
+            var port = Q("port"); var service = Q("service");
+            if (port is not ("" or "down" or "busy")) return MonitoringModule.Bad("bad_input", "port must be down or busy");
+            if (service is not ("" or "down")) return MonitoringModule.Bad("bad_input", "service must be down");
             if (company != "" && company != "none" && !int.TryParse(company, out _)) return MonitoringModule.Bad("bad_input", "company must be a customer id or none");
             if (status != "" && status != "down" && !Statuses.Contains(status)) return MonitoringModule.Bad("bad_input", "status must be ok, warning, critical, muted, unwatched or down");
             if (kind != "" && !RulesApi.Kinds.Contains(kind)) return MonitoringModule.Bad("bad_input", "kind");
@@ -159,6 +169,8 @@ public static class MonitoringApi
             if (cert != "") f = f.Where(x => x.D.Checks.Any(c => c.Type == "ssl" && CertBand(c) == cert));
             if (check == "failing") f = f.Where(x => x.D.Checks.Any(c => c.Ok == false)); else if (check == "ok") f = f.Where(x => x.D.Checks.Count > 0 && x.D.Checks.All(c => c.Ok == true)); else if (check == "notrun") f = f.Where(x => x.D.Checks.Any(c => c.Ok == null));
             if (metric != "") f = f.Where(x => x.Alerts.Any(a => a.Metric == metric));
+            if (port == "down") f = f.Where(x => x.D.PortList.Any(p => p.Watched && p.AdminUp && !p.Up)); else if (port == "busy") f = f.Where(x => x.D.PortList.Any(p => p.Up && p.Rates && Math.Max(p.InPct, p.OutPct) >= 80));
+            if (service == "down") f = f.Where(x => x.D.WatchedList.Any(w => !w.Running && w.State != "unknown"));
             if (search != "") f = f.Where(x => (x.D.Name + " " + x.D.Tag + " " + x.D.Ip + " " + x.D.Company).ToLowerInvariant().Contains(search));
             var order = new Dictionary<string, int> { ["critical"] = 0, ["warning"] = 1, ["muted"] = 2, ["ok"] = 3, ["unwatched"] = 4 };
             var list = f.OrderBy(x => order[x.Status]).ThenBy(x => x.D.Name, StringComparer.OrdinalIgnoreCase).ToList();
@@ -285,44 +297,133 @@ public static class MonitoringApi
             return Results.Ok(new { ticket = number });
         }));
 
+        // syslog messages, traps and Windows events from devices
+        Read(r.MapGet("/api/monitoring/events", async (HttpContext http, CancellationToken ct) =>
+        {
+            var q = http.Request.Query; string Q(string n) => q[n].ToString().Trim();
+            var kind = Q("kind"); if (!RulesApi.EventKinds.Contains(kind)) return MonitoringModule.Bad("bad_input", "kind must be syslog, trap or eventlog");
+            var sev = int.TryParse(Q("severity"), out var sv) ? sv : 7; if (sev is < 0 or > 7) return MonitoringModule.Bad("bad_input", "severity must be 0 to 7");
+            long? asset = long.TryParse(Q("asset"), out var a) ? a : null;
+            var company = Q("company"); if (company != "" && company != "none" && !int.TryParse(company, out _)) return MonitoringModule.Bad("bad_input", "company must be a customer id or none");
+            int.TryParse(q["skip"], out var skip); int.TryParse(q["take"], out var take); take = take <= 0 ? 50 : Math.Min(take, 200);
+            var scope = await http.RequestServices.GetRequiredService<IAccess>().ScopeAsync(http.User, Modules.Monitoring, Acts.Read, ct);
+            IReadOnlyList<int>? limit = scope;
+            if (int.TryParse(company, out var co)) { if (scope != null && !scope.Contains(co)) return Results.Ok(new { total = 0, items = Array.Empty<object>() }); limit = new[] { co }; }
+            var health = http.RequestServices.GetRequiredService<IDeviceHealth>();
+            var (total, items) = await health.ListEventsAsync(limit, asset, kind, sev, Q("search"), skip, take, ct);
+            var names = items.Count == 0 ? new Dictionary<long, DeviceState>() : (await health.SnapshotAsync(limit, null, ct)).ToDictionary(d => d.Id);
+            return Results.Ok(new { total, items = items.Select(e => new { e.Id, e.AssetId, asset = names.TryGetValue(e.AssetId, out var d) ? d.Name : "#" + e.AssetId, company = d?.Company ?? "", e.At, e.Kind, e.Severity, e.Source, e.EventId, e.Text }) });
+        }));
+
+        Read(r.MapGet("/api/monitoring/devices/{id:long}/ports/{port}/series", async (long id, string port, string? range, HttpContext http, CancellationToken ct) =>
+        {
+            var span = (range ?? "24h") switch { "6h" => TimeSpan.FromHours(6), "24h" => TimeSpan.FromHours(24), "7d" => TimeSpan.FromDays(7), "30d" => TimeSpan.FromDays(30), _ => TimeSpan.Zero };
+            if (span == TimeSpan.Zero) return MonitoringModule.Bad("bad_input", "range must be 6h, 24h, 7d or 30d");
+            var health = http.RequestServices.GetRequiredService<IDeviceHealth>();
+            var scope = await http.RequestServices.GetRequiredService<IAccess>().ScopeAsync(http.User, Modules.Monitoring, Acts.Read, ct);
+            if ((await health.SnapshotAsync(scope, id, ct)).Count == 0) return Results.NotFound();
+            var now = DateTime.UtcNow; var hourly = span > TimeSpan.FromHours(48);
+            var pts = await health.PortSeriesAsync(id, port, now - span, now, hourly, ct);
+            return Results.Ok(new { hourly, from = now - span, to = now, points = pts.Select(p => new { at = p.At, inPct = p.InPct, outPct = p.OutPct, inMax = p.InMaxPct, outMax = p.OutMaxPct, inBps = p.InBps, outBps = p.OutBps, errors = p.Errors }) });
+        }));
+
+        Modify(r.MapPut("/api/monitoring/devices/{id:long}/ports/{port}/watch", async (long id, string port, JsonElement b, HttpContext http, ClaimsPrincipal u, IAuditLog audit, CancellationToken ct) =>
+        {
+            var health = http.RequestServices.GetRequiredService<IDeviceHealth>();
+            var scope = await http.RequestServices.GetRequiredService<IAccess>().ScopeAsync(u, Modules.Monitoring, Acts.Modify, ct);
+            var dev = (await health.SnapshotAsync(scope, id, ct)).FirstOrDefault(); if (dev == null) return Results.NotFound();
+            if (dev.PortList.All(p => p.Index != port)) return Results.NotFound(new { error = "no_port" });
+            bool? w = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("watched", out var wv) && wv.ValueKind is JsonValueKind.True or JsonValueKind.False ? wv.GetBoolean() : null;
+            await health.SetPortWatchAsync(id, port, w, ct);
+            await audit.WriteAsync("monitoring.port_watch", dev.Tag, $"port {port}: " + (w == null ? "default" : w.Value ? "watched" : "not watched"), ct: ct);
+            return Results.Ok(new { ok = true });
+        }));
+
+        Admin(r.MapPost("/api/monitoring/settings/teams-test", async (JsonElement b, ISettings s, ITenantContext t, Microsoft.AspNetCore.DataProtection.IDataProtectionProvider dp, CancellationToken ct) =>
+        {
+            var p = dp.CreateProtector(Teams.Purpose);
+            var url = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("url", out var uv) && uv.ValueKind == JsonValueKind.String ? uv.GetString()!.Trim() : "";
+            if (url == "")
+            {
+                var m = await MonitorSettings.LoadAsync(s, ct);
+                int? co = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("companyId", out var cv) && cv.ValueKind == JsonValueKind.Number ? cv.GetInt32() : null;
+                var which = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("which", out var wv2) && wv2.GetString() == "escalation" ? m.EscalateTeams : null;
+                try { url = which != null ? (which == "" ? "" : p.Unprotect(which)) : m.TeamsFor(co, p.Unprotect); } catch (Exception) { url = ""; }
+                if (url == "") return MonitoringModule.Bad("no_webhook", "No Teams webhook is saved for this yet.");
+            }
+            if (Teams.Check(url) is string bad) return MonitoringModule.Bad("bad_input", bad);
+            var err = await Teams.PostAsync(url, Teams.Card("Test from DeskAsk Monitoring", "Good", "Alerts will arrive in this channel like this message.", new[] { ("Sent", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm 'UTC'")) },
+                await Teams.BaseAsync(s, t.Require(), ct) + "/#/monitoring", "Open Monitoring"), ct);
+            return err == null ? Results.Ok(new { ok = true }) : MonitoringModule.Bad("teams_failed", err);
+        }));
+
         Admin(r.MapPost("/api/monitoring/evaluate", async (HttpContext http, CancellationToken ct) =>
         {
             var res = await Evaluator.RunAsync(http.RequestServices, ct, wait: true);
             return Results.Ok(new { opened = res.Opened, closed = res.Closed, open = res.Open, raised = res.Raised });
         }));
 
-        Admin(r.MapGet("/api/monitoring/settings", async (ISettings s, ICompanyDirectory dir, CancellationToken ct) =>
+        Admin(r.MapGet("/api/monitoring/settings", async (ISettings s, ICompanyDirectory dir, Microsoft.AspNetCore.DataProtection.IDataProtectionProvider dp, CancellationToken ct) =>
         {
             var m = await MonitorSettings.LoadAsync(s, ct);
+            var p = dp.CreateProtector(Teams.Purpose);
             var names = (await dir.ListAsync(ct)).ToDictionary(c => c.Id.ToString(), c => c.Name);
-            return Results.Ok(new { recipients = m.Recipients, mailResolved = m.MailResolved, companies = m.Companies.Select(x => new { companyId = int.Parse(x.Key), company = names.GetValueOrDefault(x.Key, "Customer " + x.Key), recipients = x.Value }) });
+            string Hint(string sealedUrl) { if (sealedUrl == "") return ""; try { var u = new Uri(p.Unprotect(sealedUrl)); return u.Host + "/…"; } catch (Exception) { return "saved (cannot be opened: save it again)"; } }
+            var keys = m.Companies.Keys.Union(m.CompanyTeams.Keys).Distinct();
+            return Results.Ok(new
+            {
+                recipients = m.Recipients, mailResolved = m.MailResolved, teams = Hint(m.Teams),
+                companies = keys.Select(k => new { companyId = int.Parse(k), company = names.GetValueOrDefault(k, "Customer " + k), recipients = m.Companies.GetValueOrDefault(k, ""), teams = Hint(m.CompanyTeams.GetValueOrDefault(k, "")) }),
+                escalateMinutes = m.EscalateMinutes, escalateRecipients = m.EscalateRecipients, escalateTeams = Hint(m.EscalateTeams),
+                reportEnabled = m.ReportEnabled, reportTo = m.ReportTo, reportCustomers = m.ReportCustomers,
+            });
         }));
 
-        Admin(r.MapPut("/api/monitoring/settings", async (JsonElement b, ISettings s, ICompanyDirectory dir, IAuditLog audit, CancellationToken ct) =>
+        // A webhook field left out (or null) keeps what is saved, "" removes it, an address replaces it.
+        Admin(r.MapPut("/api/monitoring/settings", async (JsonElement b, ISettings s, ICompanyDirectory dir, IAuditLog audit, Microsoft.AspNetCore.DataProtection.IDataProtectionProvider dp, CancellationToken ct) =>
         {
             static string? CheckList(string list)
             {
                 var bad = MonitorSettings.Split(list).FirstOrDefault(x => !System.Text.RegularExpressions.Regex.IsMatch(x, @"^[^@\s]+@[^@\s]+\.[^@\s]+$"));
                 return bad == null ? null : $"\"{bad}\" is not an email address.";
             }
+            string Str(JsonElement e, string n) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()!.Trim() : "";
+            var p = dp.CreateProtector(Teams.Purpose);
+            var old = await MonitorSettings.LoadAsync(s, ct);
+            string? Hook(JsonElement e, string n, string current, out string? error)
+            {
+                error = null;
+                if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty(n, out var v) || v.ValueKind != JsonValueKind.String) return current;
+                var url = v.GetString()!.Trim(); if (url == "") return "";
+                if (url.EndsWith("/…") || url.StartsWith("saved")) return current; // the hint sent back unchanged
+                error = Teams.Check(url); return error == null ? p.Protect(url) : null;
+            }
             var m = new MonitorSettings
             {
-                Recipients = b.TryGetProperty("recipients", out var rv) && rv.ValueKind == JsonValueKind.String ? rv.GetString()!.Trim() : "",
-                MailResolved = !b.TryGetProperty("mailResolved", out var mr) || mr.ValueKind != JsonValueKind.False,
+                Recipients = Str(b, "recipients"), MailResolved = !b.TryGetProperty("mailResolved", out var mr) || mr.ValueKind != JsonValueKind.False,
+                EscalateMinutes = b.TryGetProperty("escalateMinutes", out var em) && em.ValueKind == JsonValueKind.Number ? em.GetInt32() : 0,
+                EscalateRecipients = Str(b, "escalateRecipients"), ReportEnabled = b.TryGetProperty("reportEnabled", out var re) && re.ValueKind == JsonValueKind.True,
+                ReportTo = Str(b, "reportTo"), ReportCustomers = !b.TryGetProperty("reportCustomers", out var rc) || rc.ValueKind != JsonValueKind.False,
             };
-            if (CheckList(m.Recipients) is string e1) return MonitoringModule.Bad("bad_input", e1);
+            if (m.EscalateMinutes is < 0 or > 1440) return MonitoringModule.Bad("bad_input", "Escalate after 1 to 1440 minutes, or 0 for never.");
+            foreach (var list in new[] { m.Recipients, m.EscalateRecipients, m.ReportTo }) if (CheckList(list) is string e1) return MonitoringModule.Bad("bad_input", e1);
+            m.Teams = Hook(b, "teams", old.Teams, out var he1) ?? ""; if (he1 != null) return MonitoringModule.Bad("bad_input", he1);
+            m.EscalateTeams = Hook(b, "escalateTeams", old.EscalateTeams, out var he2) ?? ""; if (he2 != null) return MonitoringModule.Bad("bad_input", "Escalation: " + he2);
             if (b.TryGetProperty("companies", out var cs) && cs.ValueKind == JsonValueKind.Array)
                 foreach (var c in cs.EnumerateArray())
                 {
                     if (!c.TryGetProperty("companyId", out var ci) || ci.ValueKind != JsonValueKind.Number) return MonitoringModule.Bad("bad_input", "companyId");
-                    var list = c.TryGetProperty("recipients", out var lv) && lv.ValueKind == JsonValueKind.String ? lv.GetString()!.Trim() : "";
-                    if (list == "") continue;
+                    var key = ci.GetInt32().ToString();
+                    var list = Str(c, "recipients");
                     if (CheckList(list) is string e2) return MonitoringModule.Bad("bad_input", e2);
+                    var hook = Hook(c, "teams", old.CompanyTeams.GetValueOrDefault(key, ""), out var he3); if (he3 != null) return MonitoringModule.Bad("bad_input", he3);
+                    if (list == "" && (hook ?? "") == "") continue;
                     if (await dir.GetAsync(ci.GetInt32(), ct) == null) return MonitoringModule.Bad("bad_input", "That customer does not exist.");
-                    m.Companies[ci.GetInt32().ToString()] = list;
+                    if (list != "") m.Companies[key] = list;
+                    if ((hook ?? "") != "") m.CompanyTeams[key] = hook!;
                 }
             await m.SaveAsync(s, ct);
-            await audit.WriteAsync("monitoring.settings_changed", "", $"{MonitorSettings.Split(m.Recipients).Count} default recipients, {m.Companies.Count} customers with their own", ct: ct);
+            await audit.WriteAsync("monitoring.settings_changed", "", $"{MonitorSettings.Split(m.Recipients).Count} default recipients, Teams {(m.Teams != "" ? "on" : "off")}, {m.Companies.Count + m.CompanyTeams.Count} customer overrides, escalation {(m.EscalateMinutes > 0 ? m.EscalateMinutes + " min" : "off")}, monthly report {(m.ReportEnabled ? "on" : "off")}", ct: ct);
             return Results.Ok(new { ok = true });
         }));
     }

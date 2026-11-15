@@ -350,6 +350,26 @@ chmod 755 /opt/deskask-collector/deskask-collector
                 await using (var rq = new NpgsqlCommand("update assets.assets set read_req = false where id = @i", db)) { AgentsApi.P(rq, "i", id); await rq.ExecuteNonQueryAsync(ct); }
                 await AssetsDevice.History(db, id, "collector " + col.Name, "inventory", JsonSerializer.Serialize(new { error = AgentsApi.Clip(AgentsApi.Str(er, "error"), 300) }), ct);
             }
+            // port states and traffic of network devices
+            foreach (var tr in Items(res, "traffic", 500))
+            {
+                var id = AssetOf(tr); if (id == 0 || !tr.TryGetProperty("ports", out var ports) || ports.ValueKind != JsonValueKind.Array) continue;
+                try { await DeviceHealth.AddTraffic(db, id, ports, ct); }
+                catch (Exception e) { await Log(db, col.Id, "warn", "Traffic for asset " + id + " rejected: " + e.Message, ct); }
+            }
+            // syslog messages and traps, matched to the devices this controller watches by address
+            var byIp = mine.Where(m => m.Value.Ip != "").GroupBy(m => m.Value.Ip).ToDictionary(g => g.Key, g => g.First().Key);
+            var events = new List<(long, string, int, string, int, string)>(); var unknown = new Dictionary<string, int>();
+            foreach (var ev in Items(res, "events", 5000))
+            {
+                var ip = AgentsApi.Str(ev, "ip") ?? "";
+                if (!byIp.TryGetValue(ip, out var aid)) { if (ip != "") unknown[ip] = unknown.GetValueOrDefault(ip) + 1; continue; }
+                var kind = AgentsApi.Str(ev, "kind") == "trap" ? "trap" : "syslog";
+                events.Add((aid, kind, Math.Clamp(Int(ev, "severity") ?? 5, 0, 7), AgentsApi.Clip(AgentsApi.Str(ev, "source"), 120), 0, AgentsApi.Clip(AgentsApi.Str(ev, "text"), 1000)));
+            }
+            await DeviceHealth.AddEvents(db, events, ct);
+            if (unknown.Count > 0)
+                await Log(db, col.Id, "info", $"Ignored {unknown.Values.Sum()} syslog messages or traps from addresses that are not devices of this site: " + string.Join(", ", unknown.Keys.Take(10)) + (unknown.Count > 10 ? " …" : "") + ". Add them as assets watched by this controller to keep their messages.", ct);
             // service checks: keep the newest result of each and a short history for Monitoring
             var known = new Dictionary<int, long>();
             await using (var c = new NpgsqlCommand("select s.id, s.asset_id, s.type from assets.service_checks s join assets.assets a on a.id = s.asset_id where a.collector_id = @i", db))

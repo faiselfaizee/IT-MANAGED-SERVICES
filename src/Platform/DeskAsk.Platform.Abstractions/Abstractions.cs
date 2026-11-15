@@ -227,7 +227,50 @@ public sealed record PartFault(string Part, string Name, string State);
 public sealed record DeviceState(long Id, string Tag, string Name, int? CompanyId, string Company, string Kind, string Ip, string Os,
     bool HasAgent, string AgentVersion, DateTime? AgentSeen, bool? PingUp, DateTime? DownSince, int RttMs, DateTime? CheckedAt,
     DateTime? MetricsAt, double? Cpu, double? Mem, long MemTotal, long UptimeS, IReadOnlyList<DiskUse> Disks,
-    IReadOnlyList<CheckState> Checks, IReadOnlyList<PartFault> Faults);
+    IReadOnlyList<CheckState> Checks, IReadOnlyList<PartFault> Faults,
+    IReadOnlyList<PortState>? Ports = null, DateTime? PortsAt = null, IReadOnlyList<WatchedItem>? Watched = null, DateTime? WatchedAt = null)
+{
+    /// <summary>Ports of a network device (empty for other devices or before the first traffic reading).</summary>
+    public IReadOnlyList<PortState> PortList => Ports ?? Array.Empty<PortState>();
+    /// <summary>Services and programs the agent was asked to watch.</summary>
+    public IReadOnlyList<WatchedItem> WatchedList => Watched ?? Array.Empty<WatchedItem>();
+}
+
+/// <summary>
+/// One port of a network device with its latest traffic (percent of the port speed, bits per second, errors and discards per minute).
+/// Watched ports are the ones whose going down matters (by default the ports with a description, such as uplinks).
+/// </summary>
+public sealed record PortState(string Index, string Name, string Alias, string Kind, bool Up, bool AdminUp, long Mbps, bool Rates,
+    double InPct, double OutPct, double InBps, double OutBps, double Errors, double Discards, bool Watched, DateTime? DownSince);
+
+/// <summary>A service (Kind "service") or a program (Kind "process") the agent reports on.</summary>
+public sealed record WatchedItem(string Name, string Kind, bool Running, string State, int Count);
+
+/// <summary>A syslog message, SNMP trap or Windows event log entry from a device. Severity on the syslog scale (0 emergency ... 7 debug).</summary>
+public sealed record DeviceEvent(long Id, long AssetId, DateTime At, string Kind, int Severity, string Source, int EventId, string Text);
+
+/// <summary>Port traffic over a window, for "busy for N minutes": the lowest of the larger of in and out.</summary>
+public sealed record PortSustained(double MinPct, int Samples, DateTime First);
+
+/// <summary>Monthly figures of a device for reports.</summary>
+public sealed record DeviceAverages(double? CpuAvg, double? CpuMax, double? MemAvg, double? MemMax, double? DiskFreeMin);
+
+/// <summary>A point of a port's traffic chart.</summary>
+public sealed record PortPoint(DateTime At, double InPct, double OutPct, double InMaxPct, double OutMaxPct, double InBps, double OutBps, double Errors);
+
+/// <summary>What Monitoring wants an agent to report: services, programs and Windows event log errors. Implemented by Monitoring.</summary>
+public sealed record AgentWatch(IReadOnlyList<string> Services, IReadOnlyList<string> Processes, bool Events);
+public interface IAgentWatch
+{
+    Task<AgentWatch> ForAsync(long assetId, string kind, int? companyId, CancellationToken ct = default);
+}
+
+/// <summary>Actions on devices that other modules can ask the Assets module for (it owns the agents).</summary>
+public interface IDeviceActions
+{
+    /// <summary>Asks the device's agent to restart a service. Returns the job id, or null when the device has no agent.</summary>
+    Task<string?> RestartServiceAsync(long assetId, string service, string by, CancellationToken ct = default);
+}
 /// <summary>The lowest processor and memory use over a time window (so "above 90% for 15 minutes" means the lowest was above 90).</summary>
 public sealed record Sustained(double? MinCpu, double? MinMem, int Samples, DateTime First);
 /// <summary>One point of a performance chart: minute values, or hourly average and peak.</summary>
@@ -242,6 +285,18 @@ public interface IDeviceHealth
     Task<IReadOnlyDictionary<long, Sustained>> SustainedAsync(int minutes, CancellationToken ct = default);
     /// <summary>Chart points: minute values (kept two days) or hourly figures (kept 90 days).</summary>
     Task<IReadOnlyList<MetricPoint>> SeriesAsync(long assetId, DateTime from, DateTime to, bool hourly, CancellationToken ct = default);
+    /// <summary>Per (device, port index), the lowest traffic over the last minutes.</summary>
+    Task<IReadOnlyDictionary<(long, string), PortSustained>> SustainedPortsAsync(int minutes, CancellationToken ct = default);
+    /// <summary>A port's traffic chart: 5-minute readings (kept two days) or hourly figures (kept 30 days).</summary>
+    Task<IReadOnlyList<PortPoint>> PortSeriesAsync(long assetId, string port, DateTime from, DateTime to, bool hourly, CancellationToken ct = default);
+    /// <summary>Marks a port as watched or not; null goes back to the default (watched when it has a description).</summary>
+    Task SetPortWatchAsync(long assetId, string port, bool? watched, CancellationToken ct = default);
+    /// <summary>Events of the last minutes at this severity or worse (lower number), newest first, at most max.</summary>
+    Task<IReadOnlyList<DeviceEvent>> RecentEventsAsync(int minutes, int maxSeverity, int max, CancellationToken ct = default);
+    /// <summary>Events for the events page: limited to companies (null = all), optionally one device, one kind, a severity and a text.</summary>
+    Task<(long Total, IReadOnlyList<DeviceEvent> Items)> ListEventsAsync(IReadOnlyList<int>? companies, long? assetId, string kind, int maxSeverity, string search, int skip, int take, CancellationToken ct = default);
+    /// <summary>Per device, processor, memory and disk figures over a period (from the hourly figures).</summary>
+    Task<IReadOnlyDictionary<long, DeviceAverages>> AveragesAsync(DateTime from, DateTime to, CancellationToken ct = default);
 }
 
 /// <summary>What another module asks the Service Desk to open.</summary>
