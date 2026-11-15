@@ -20,7 +20,7 @@ public class RenewalsTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task ARenewalIsMailedOnceToYouAndToTheCustomer()
     {
         var admin = await TestSupport.AdminClient(factory); using var smtp = new FakeSmtp();
-        await Sql("truncate mail.outbox restart identity; delete from assets.renewal_notices; delete from assets.amc; delete from core.settings where key = 'assets.renewals'");
+        await Sql("truncate mail.outbox, mail.outbox_files restart identity; delete from assets.renewal_notices; delete from assets.amc; delete from core.settings where key = 'assets.renewals'");
         await Sql("delete from assets.companies where lower(name) = 'renewal client'");
         await Sql("insert into assets.companies (name, contact_email) values ('Renewal client', 'it@client.test')");
         await Sql("insert into assets.amc (company_id, title, end_date) select id, 'Server AMC', current_date + 5 from assets.companies where lower(name) = 'renewal client'");

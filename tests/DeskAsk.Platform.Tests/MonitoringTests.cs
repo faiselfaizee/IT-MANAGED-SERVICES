@@ -102,7 +102,7 @@ public class MonitoringTests : IClassFixture<WebApplicationFactory<Program>>
         // workers of earlier test hosts keep running: hold off their minute-by-minute evaluation so only this test evaluates
         await Sql(@"insert into jobs.recurring (name, type, interval_seconds, next_run) values ('monitoring.evaluate', 'monitoring.evaluate', 60, now() + interval '1 day')
             on conflict (name) do update set next_run = now() + interval '1 day'; delete from jobs.queue where type = 'monitoring.evaluate' and status = 'queued'");
-        await Sql("truncate monitoring.alerts, monitoring.mutes restart identity; truncate mail.outbox restart identity; delete from identity.users where \"Email\" like '%@mon.test'");
+        await Sql("truncate monitoring.alerts, monitoring.mutes restart identity; truncate mail.outbox, mail.outbox_files restart identity; delete from identity.users where \"Email\" like '%@mon.test'");
 
         // the starting rules are there
         var rules = (await J(await api.GetAsync("/api/monitoring/rules"))).GetProperty("items").EnumerateArray().ToList();

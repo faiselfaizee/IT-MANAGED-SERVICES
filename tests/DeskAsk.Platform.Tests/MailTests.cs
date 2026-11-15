@@ -67,7 +67,7 @@ public class MailTests : IClassFixture<WebApplicationFactory<Program>>
     async Task<HttpClient> Start()
     {
         var admin = await TestSupport.AdminClient(factory);
-        await Sql("truncate mail.outbox restart identity");
+        await Sql("truncate mail.outbox, mail.outbox_files restart identity");
         await Sql("delete from core.settings where key = 'mail.config'");
         return admin;
     }

@@ -249,7 +249,7 @@ public class IntegrationTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task LastMonthsReportIsMailedToYouAndToTheCustomerAdminOnce()
     {
         var admin = await Admin(); using var smtp = new FakeSmtp();
-        await Sql("truncate mail.outbox restart identity; delete from servicedesk.report_sent; delete from core.settings where key = 'servicedesk.reportmail'");
+        await Sql("truncate mail.outbox, mail.outbox_files restart identity; delete from servicedesk.report_sent; delete from core.settings where key = 'servicedesk.reportmail'");
         await Sql("delete from assets.companies where lower(name) = 'report client'; insert into assets.companies (name) values ('Report client')");
         await Sql("delete from identity.users where \"Email\" like '%@int.test'");
         Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "boss2@int.test", name = "Boss", role = "cadmin", password = Pw }))).StatusCode);

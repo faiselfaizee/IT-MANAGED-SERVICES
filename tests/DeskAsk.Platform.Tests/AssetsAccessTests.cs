@@ -45,7 +45,7 @@ public class AssetsAccessTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var admin = await TestSupport.AdminClient(factory);
         await Sql("delete from identity.users where \"Email\" like '%@del.test'");
-        await Sql("delete from assets.delete_requests; truncate mail.outbox restart identity");
+        await Sql("delete from assets.delete_requests; truncate mail.outbox, mail.outbox_files restart identity");
         using var smtp = new FakeSmtp();
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/platform/mail/config", Json(new { provider = "smtp", from = "desk@example.test", fromName = "DeskAsk", host = "127.0.0.1", port = smtp.Port, security = "none", user = "", password = "" }))).StatusCode);
         Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "eng@del.test", name = "eng", role = "engineer", password = Pw }))).StatusCode);

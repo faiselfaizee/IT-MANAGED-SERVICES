@@ -180,7 +180,7 @@ public class MonitoringV31Tests : IClassFixture<WebApplicationFactory<Program>>
         // the port went down just now: the log rule fires at once, the port rule after 5 minutes
         var ev1 = await J(await api.PostAsync("/api/monitoring/evaluate", Json(new { })));
         Assert.Equal(1, ev1.GetProperty("opened").GetInt32());
-        await Sql($"update assets.assets set m_ports = (select jsonb_agg(case when p->>'index' in ('1','3') then jsonb_set(p, '{{downAt}}', to_jsonb((now() - interval '8 minutes')::text)) else p end) from jsonb_array_elements(m_ports) p) where id = {sw}");
+        await Sql($"update assets.assets set m_ports = (select jsonb_agg(case when p->>'index' in ('1','3') then jsonb_set(p, '{{downAt}}', to_jsonb(now() - interval '8 minutes')) else p end) from jsonb_array_elements(m_ports) p) where id = {sw}");
         Assert.Equal(2, (await J(await api.PostAsync("/api/monitoring/evaluate", Json(new { })))).GetProperty("opened").GetInt32()); // ports 1 and 3 (now watched)
         var open = (await J(await api.GetAsync("/api/monitoring/alerts"))).GetProperty("items").EnumerateArray().ToList();
         Assert.Contains(open, a => a.GetProperty("text").GetString() == "Port Gi1/0/1 (Uplink to FW) has been down for 8 minutes.");

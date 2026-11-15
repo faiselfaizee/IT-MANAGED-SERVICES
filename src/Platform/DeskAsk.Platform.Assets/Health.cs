@@ -88,6 +88,9 @@ public sealed class DeviceHealth : IDeviceHealth
     static IEnumerable<JsonElement> Items(JsonElement b, string name, int max) =>
         b.ValueKind == JsonValueKind.Object && b.TryGetProperty(name, out var a) && a.ValueKind == JsonValueKind.Array ? a.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object).Take(max) : Enumerable.Empty<JsonElement>();
     static bool Bool(JsonElement e, string n) => e.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.True;
+    /// <summary>A time stored in JSON, in ISO form or as Postgres writes it.</summary>
+    static DateTime? When(JsonElement e, string n) =>
+        e.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String && DateTime.TryParse(v.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var t) ? t : null;
     static double D(JsonElement e, string n) => e.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : 0;
 
     /// <summary>Stores syslog messages, traps and event log entries.</summary>
@@ -112,7 +115,7 @@ public sealed class DeviceHealth : IDeviceHealth
             AgentsApi.P(c, "a", assetId);
             if (await c.ExecuteScalarAsync(ct) is string pj)
                 foreach (var p in JsonDocument.Parse(pj).RootElement.EnumerateArray())
-                    if (p.TryGetProperty("downAt", out var da) && da.ValueKind == JsonValueKind.String && da.TryGetDateTime(out var dt)) prevDown[AgentsApi.Str(p, "index") ?? ""] = dt.ToUniversalTime();
+                    if (When(p, "downAt") is DateTime dt) prevDown[AgentsApi.Str(p, "index") ?? ""] = dt;
         }
         var now = DateTime.UtcNow; var latest = new List<object>();
         var idx = new List<string>(); var ip = new List<float>(); var op = new List<float>(); var ib = new List<double>(); var ob = new List<double>(); var er = new List<float>(); var di = new List<float>();
@@ -205,7 +208,7 @@ public sealed class DeviceHealth : IDeviceHealth
                 foreach (var p in JsonDocument.Parse(rd.GetString(22)).RootElement.EnumerateArray())
                 {
                     var index = AgentsApi.Str(p, "index") ?? ""; var alias = AgentsApi.Str(p, "alias") ?? "";
-                    DateTime? downAt = p.TryGetProperty("downAt", out var da) && da.ValueKind == JsonValueKind.String && da.TryGetDateTime(out var dt) ? dt.ToUniversalTime() : null;
+                    DateTime? downAt = When(p, "downAt");
                     ports.Add(new PortState(index, AgentsApi.Str(p, "name") ?? "", alias, AgentsApi.Str(p, "kind") ?? "", Bool(p, "up"), Bool(p, "adminUp"), (long)D(p, "mbps"), Bool(p, "rates"),
                         D(p, "inPct"), D(p, "outPct"), D(p, "inBps"), D(p, "outBps"), D(p, "errors"), D(p, "discards"), watchSet.TryGetValue((id, index), out var wv) ? wv : alias.Trim() != "", downAt));
                 }
