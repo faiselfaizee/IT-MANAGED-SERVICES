@@ -162,16 +162,21 @@ public sealed class MailQueue : IMailQueue
 
     async Task Insert(NpgsqlConnection db, string to, string subject, string body, string html, string? reference, CancellationToken ct, IReadOnlyList<MailFile>? files = null)
     {
-        await using var c = new NpgsqlCommand("insert into mail.outbox (to_addr, subject, body, body_html, reference) values (@t, @s, @b, @h, @r) returning id", db);
+        // the message and its attachments become visible together, so the sender never mails a report without its PDF
+        await using (var tx = await db.BeginTransactionAsync(ct))
+        {
+        await using var c = new NpgsqlCommand("insert into mail.outbox (to_addr, subject, body, body_html, reference) values (@t, @s, @b, @h, @r) returning id", db, tx);
         c.Parameters.AddWithValue("t", to); c.Parameters.AddWithValue("s", subject.Length > 300 ? subject[..300] : subject); c.Parameters.AddWithValue("b", body); c.Parameters.AddWithValue("h", html); c.Parameters.AddWithValue("r", reference ?? "");
         var id = (long)(await c.ExecuteScalarAsync(ct))!;
         foreach (var f in files ?? Array.Empty<MailFile>())
         {
-            await using var fc = new NpgsqlCommand("insert into mail.outbox_files (outbox_id, name, content_type, data) values (@o, @n, @c, @d)", db);
+            await using var fc = new NpgsqlCommand("insert into mail.outbox_files (outbox_id, name, content_type, data) values (@o, @n, @c, @d)", db, tx);
             fc.Parameters.AddWithValue("o", id); fc.Parameters.AddWithValue("n", f.Name); fc.Parameters.AddWithValue("c", f.ContentType); fc.Parameters.AddWithValue("d", f.Data);
             await fc.ExecuteNonQueryAsync(ct);
         }
-        await jobs.EnqueueAsync(MailJob.JobType, "{}", null, "mail.send", ct);
+        await tx.CommitAsync(ct);
+        }
+        await MailJob.WakeAsync(jobs, db, ct);
     }
 
     public Task<bool> EnqueueTemplateAsync(string template, string to, IReadOnlyDictionary<string, string> values, string? reference = null, CancellationToken ct = default) =>
@@ -206,9 +211,47 @@ public sealed class MailJob : IJobHandler
         var cfg = await MailSettings.LoadAsync(job.Services.GetRequiredService<ISettings>(), job.Services.GetRequiredService<IDataProtectionProvider>(), ct);
         if (!cfg.On) return;   // leave the messages waiting until mail is set up
         await using var db = new NpgsqlConnection(job.Tenant.ConnectionString); await db.OpenAsync(ct);
+        // keep going while messages are due, so one queued while this run was busy still goes out now
+        for (var round = 0; round < 25; round++)
+        {
+            var due = await ClaimAsync(db, ct);
+            if (due.Count == 0) return;
+            await SendAllAsync(db, cfg, due, ct);
+        }
+    }
+
+    /// <summary>
+    /// Takes up to 20 due messages and holds them for five minutes, so a second sender running at the same time skips them and nothing is
+    /// sent twice. A sender that dies leaves them to be tried again when the hold runs out.
+    /// </summary>
+    static async Task<List<(long id, string to, string subject, string body, string html, int attempts)>> ClaimAsync(NpgsqlConnection db, CancellationToken ct)
+    {
         var due = new List<(long id, string to, string subject, string body, string html, int attempts)>();
-        await using (var c = new NpgsqlCommand("select id, to_addr, subject, body, body_html, attempts from mail.outbox where status = 'queued' and next_try_at <= now() order by id limit 20", db))
+        await using (var c = new NpgsqlCommand(@"update mail.outbox o set next_try_at = now() + interval '5 minutes'
+            from (select id from mail.outbox where status = 'queued' and next_try_at <= now() order by id limit 20 for update skip locked) d
+            where o.id = d.id returning o.id, o.to_addr, o.subject, o.body, o.body_html, o.attempts", db))
         await using (var r = await c.ExecuteReaderAsync(ct)) while (await r.ReadAsync(ct)) due.Add((r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetInt32(5)));
+        due.Sort((a, b) => a.id.CompareTo(b.id));
+        return due;
+    }
+
+    /// <summary>
+    /// Makes sure a sender run starts after the message just queued. Only one sender job may wait under a key, and a running one has
+    /// already read what was due, so when the key is taken by a running job the next key is used.
+    /// </summary>
+    public static async Task WakeAsync(IJobQueue jobs, NpgsqlConnection db, CancellationToken ct)
+    {
+        foreach (var key in new[] { "mail.send", "mail.send:1", "mail.send:2" })
+        {
+            var id = await jobs.EnqueueAsync(JobType, "{}", null, key, ct);
+            await using var c = new NpgsqlCommand("select status from jobs.queue where id = @i", db); c.Parameters.AddWithValue("i", id);
+            if (await c.ExecuteScalarAsync(ct) as string == "queued") return;
+        }
+        // every key is busy sending: the minute flush picks the message up
+    }
+
+    static async Task SendAllAsync(NpgsqlConnection db, MailConfig cfg, List<(long id, string to, string subject, string body, string html, int attempts)> due, CancellationToken ct)
+    {
         foreach (var m in due)
         {
             try
@@ -317,7 +360,7 @@ public sealed class MailModule : IPlatformModule
             await using var c = new NpgsqlCommand("update mail.outbox set status = 'queued', attempts = 0, next_try_at = now() where id = @i and status = 'failed'", db);
             c.Parameters.AddWithValue("i", id);
             if (await c.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound(new { error = "not_found" });
-            await jobs.EnqueueAsync(MailJob.JobType, "{}", null, "mail.send", ct);
+            await MailJob.WakeAsync(jobs, db, ct);
             return Results.Ok(new { ok = true });
         });
     }

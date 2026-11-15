@@ -93,4 +93,51 @@ public class DuplicateTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/assets/" + a, Json(new { ipAddress = "10.9.9.9" }))).StatusCode);
         Assert.Equal("10.9.9.9", (await J(await admin.GetAsync("/api/assets/" + a + "/device"))).GetProperty("system").GetProperty("ip").GetString());
     }
+
+    [PgFact]
+    public async Task OnlyAdministratorsAndThePeopleTheyAllowAddAPossibleDuplicate()
+    {
+        const string Pw = "Correct-Horse-9";
+        var admin = await TestSupport.AdminClient(factory);
+        await admin.GetAsync("/api/assets/types");
+        await Sql("delete from assets.assets where company_id in (select id from assets.companies where name = 'Ovr Acme'); delete from assets.companies where name = 'Ovr Acme'");
+        await Sql("delete from identity.users where \"Email\" like '%@ovr.test'; delete from core.settings where key = 'assets.duplicate_override'");
+        var acme = (await J(await admin.PostAsync("/api/assets/companies", Json(new { name = "Ovr Acme" })))).GetProperty("id").GetInt32();
+        async Task<string> User(string email, string role) { var r = await admin.PostAsync("/api/platform/users", Json(new { email, name = email.Split('@')[0], role, password = Pw })); Assert.Equal(HttpStatusCode.Created, r.StatusCode); return (await J(r)).GetProperty("id").GetString()!; }
+        var engId = await User("eng@ovr.test", "engineer"); var eng2Id = await User("eng2@ovr.test", "engineer"); var custId = await User("cust@ovr.test", "customer");
+        var eng = await TestSupport.ClientFor(factory, "eng@ovr.test", Pw); var eng2 = await TestSupport.ClientFor(factory, "eng2@ovr.test", Pw);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/assets", Json(new { name = "NAS", companyId = acme, ipAddress = "10.7.7.7", hostname = "nas01" }))).StatusCode);
+        var twin = new { name = "Camera", companyId = acme, ipAddress = "10.7.7.7", confirmDuplicate = true };
+
+        // off for everyone but administrators
+        Assert.False((await J(await eng.GetAsync("/api/assets/duplicates/override"))).GetProperty("allowed").GetBoolean());
+        Assert.True((await J(await admin.GetAsync("/api/assets/duplicates/override"))).GetProperty("allowed").GetBoolean());
+        Assert.Equal(HttpStatusCode.Conflict, (await eng.PostAsync("/api/assets", Json(new { name = "Camera", companyId = acme, ipAddress = "10.7.7.7" }))).StatusCode);   // still warned first
+        var no = await eng.PostAsync("/api/assets", Json(twin));
+        Assert.Equal(HttpStatusCode.Forbidden, no.StatusCode); Assert.Equal("duplicate_override_forbidden", (await J(no)).GetProperty("error").GetString());
+
+        // only administrators set who may; customer users never can be chosen
+        Assert.Equal(HttpStatusCode.Forbidden, (await eng.PutAsync("/api/assets/settings/duplicate-override", Json(new { users = new[] { engId } }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/assets/settings/duplicate-override", Json(new { users = new[] { custId } }))).StatusCode);
+
+        // a named person may
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/assets/settings/duplicate-override", Json(new { users = new[] { engId } }))).StatusCode);
+        Assert.Equal(engId, (await J(await admin.GetAsync("/api/assets/settings/duplicate-override"))).GetProperty("users")[0].GetString());
+        Assert.True((await J(await eng.GetAsync("/api/assets/duplicates/override"))).GetProperty("allowed").GetBoolean());
+        Assert.Equal(HttpStatusCode.OK, (await eng.PostAsync("/api/assets", Json(twin))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await eng2.PostAsync("/api/assets", Json(new { name = "Camera 2", companyId = acme, ipAddress = "10.7.7.7", confirmDuplicate = true }))).StatusCode);
+
+        // and so may the members of a named group (through a group inside it too)
+        string Gid(JsonElement e) => e.GetProperty("id").GetString()!;
+        var outer = Gid(await J(await admin.PostAsync("/api/platform/access/groups", Json(new { name = "Ovr outer " + Guid.NewGuid().ToString("N")[..6] }))));
+        var inner = Gid(await J(await admin.PostAsync("/api/platform/access/groups", Json(new { name = "Ovr inner " + Guid.NewGuid().ToString("N")[..6] }))));
+        Assert.True((await admin.PostAsync($"/api/platform/access/groups/{outer}/members", Json(new { kind = "group", id = inner }))).IsSuccessStatusCode);
+        Assert.True((await admin.PostAsync($"/api/platform/access/groups/{inner}/members", Json(new { kind = "user", id = eng2Id }))).IsSuccessStatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/assets/settings/duplicate-override", Json(new { users = Array.Empty<string>(), groups = new[] { outer } }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await eng2.PostAsync("/api/assets", Json(new { name = "Camera 2", companyId = acme, ipAddress = "10.7.7.7", confirmDuplicate = true }))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await eng.PostAsync("/api/assets", Json(new { name = "Camera 3", companyId = acme, ipAddress = "10.7.7.7", confirmDuplicate = true }))).StatusCode);   // taken away again
+
+        // a sure duplicate is refused even for an administrator
+        Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync("/api/assets", Json(new { name = "NAS 2", companyId = acme, hostname = "NAS01", confirmDuplicate = true }))).StatusCode);
+    }
 }

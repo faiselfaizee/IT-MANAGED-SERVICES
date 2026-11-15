@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 
 namespace DeskAsk.Platform.Assets;
@@ -48,6 +49,19 @@ public static class DuplicateCheck
         return res;
     }
 
+    /// <summary>
+    /// The 12 hex digits of a MAC address, lower case, however it was written (agents send AA-BB-.., controllers AA:BB:.., people type
+    /// anything); null for something that is not one, and for all zeros or all ones, which many virtual adapters report.
+    /// </summary>
+    public static string? Hex12(string s)
+    {
+        var h = new string((s ?? "").Where(Uri.IsHexDigit).ToArray()).ToLowerInvariant();
+        return Hex.IsMatch(h) && h is not ("000000000000" or "ffffffffffff") ? h : null;
+    }
+
+    /// <summary>SQL: the asset has one of the MAC addresses in @macs (12 hex digits each), compared by digits only.</summary>
+    internal const string MacMatch = "(cardinality(@macs) > 0 and exists (select 1 from jsonb_array_elements_text(case when jsonb_typeof(mac_addresses) = 'array' then mac_addresses else '[]'::jsonb end) mm where lower(regexp_replace(mm, '[^0-9A-Fa-f]', '', 'g')) = any(@macs)))";
+
     /// <summary>The host name without its domain: sql01.acme.local and SQL01 are the same machine.</summary>
     public static string FirstLabel(string host) => host.Trim().ToLowerInvariant().Split('.')[0];
 
@@ -59,15 +73,15 @@ public static class DuplicateCheck
         await using var c = new NpgsqlCommand(@"select id, tag, name, hostname, ip_address, serial, status, mac_addresses::text,
                 (@h <> '' and (split_part(lower(hostname), '.', 1) = @h or split_part(lower(dns_name), '.', 1) = @h)),
                 (@ip <> '' and ip_address = @ip), (@n <> '' and lower(name) = lower(@n)),
-                (cardinality(@macs) > 0 and mac_addresses ?| @macs), (@s <> '' and lower(serial) = lower(@s))
+                " + MacMatch + @", (@s <> '' and lower(serial) = lower(@s))
             from assets.assets
             where status not in ('retired', 'lost') and id <> @x and company_id is not distinct from @c
               and ((@h <> '' and (split_part(lower(hostname), '.', 1) = @h or split_part(lower(dns_name), '.', 1) = @h)) or (@ip <> '' and ip_address = @ip) or (@n <> '' and lower(name) = lower(@n))
-                   or (cardinality(@macs) > 0 and mac_addresses ?| @macs) or (@s <> '' and lower(serial) = lower(@s)))
+                   or " + MacMatch + @" or (@s <> '' and lower(serial) = lower(@s)))
             order by id limit 20", db);
         c.Parameters.AddWithValue("c", (object?)company ?? DBNull.Value); c.Parameters.AddWithValue("x", excludeId);
         c.Parameters.AddWithValue("h", host); c.Parameters.AddWithValue("ip", (ip ?? "").Trim()); c.Parameters.AddWithValue("n", (name ?? "").Trim());
-        c.Parameters.AddWithValue("macs", (macs ?? Array.Empty<string>()).ToArray()); c.Parameters.AddWithValue("s", sn);
+        c.Parameters.AddWithValue("macs", (macs ?? Array.Empty<string>()).Select(Hex12).OfType<string>().Distinct().ToArray()); c.Parameters.AddWithValue("s", sn);
         await using var rd = await c.ExecuteReaderAsync(ct);
         while (await rd.ReadAsync(ct))
         {
@@ -80,6 +94,50 @@ public static class DuplicateCheck
             res.Add(new Match(rd.GetInt64(0), rd.GetString(1), rd.GetString(2), rd.GetString(3), rd.GetString(4), rd.GetString(5), rd.GetString(6), why.ToArray(), hard));
         }
         return res;
+    }
+
+    public sealed record Known(long Id, string Name, string Ip, bool HasAgent, string Why);
+
+    /// <summary>
+    /// The asset a device found on the network already is: same MAC address first, then the same host name, then the same IP address.
+    /// A device that moved to another address (DHCP) is still recognised. Only the collector's customer is searched, unless anyCompany.
+    /// Retired and lost assets do not count, so a machine brought back is offered again.
+    /// </summary>
+    public static async Task<Known?> KnownAsync(NpgsqlConnection db, bool anyCompany, int? company, string? ip, string? mac, string? host, CancellationToken ct, NpgsqlTransaction? tx = null)
+    {
+        var raw = (host ?? "").Trim();
+        var h = raw == "" || System.Net.IPAddress.TryParse(raw, out _) ? "" : FirstLabel(raw);
+        var m = Hex12(mac ?? ""); var addr = (ip ?? "").Trim();
+        if (h == "" && m == null && addr == "") return null;
+        await using var c = new NpgsqlCommand(@"select id, name, ip_address, agent_id <> '',
+                case when " + MacMatch + @" then 'MAC address'
+                     when @h <> '' and (split_part(lower(hostname), '.', 1) = @h or split_part(lower(dns_name), '.', 1) = @h) then 'host name' else 'IP address' end as why
+            from assets.assets
+            where status not in ('retired', 'lost') and (@any or company_id is not distinct from @c)
+              and (" + MacMatch + @" or (@h <> '' and (split_part(lower(hostname), '.', 1) = @h or split_part(lower(dns_name), '.', 1) = @h)) or (@ip <> '' and ip_address = @ip))
+            order by case when " + MacMatch + @" then 0 when @h <> '' and (split_part(lower(hostname), '.', 1) = @h or split_part(lower(dns_name), '.', 1) = @h) then 1 else 2 end, id
+            limit 1", db, tx);
+        c.Parameters.AddWithValue("any", anyCompany); c.Parameters.AddWithValue("c", (object?)company ?? DBNull.Value);
+        c.Parameters.AddWithValue("macs", m == null ? Array.Empty<string>() : new[] { m }); c.Parameters.AddWithValue("h", h); c.Parameters.AddWithValue("ip", addr);
+        await using var rd = await c.ExecuteReaderAsync(ct);
+        return await rd.ReadAsync(ct) ? new Known(rd.GetInt64(0), rd.GetString(1), rd.GetString(2), rd.GetBoolean(3), rd.GetString(4)) : null;
+    }
+
+    /// <summary>
+    /// A device without an agent that was recognised by its MAC address at a new IP address: the asset takes the new address, with a
+    /// history line, so monitoring and the remote tools follow it. An agent reports its own address, and a host-name match alone is not
+    /// trusted enough to move the address.
+    /// </summary>
+    public static async Task<bool> FollowAddressAsync(NpgsqlConnection db, Known k, string newIp, string via, CancellationToken ct)
+    {
+        if (k.HasAgent || k.Why != "MAC address" || string.IsNullOrWhiteSpace(newIp) || k.Ip == newIp) return false;
+        await using (var c = new NpgsqlCommand("update assets.assets set ip_address = @ip, updated_at = now() where id = @i and ip_address = @old and agent_id = ''", db))
+        {
+            c.Parameters.AddWithValue("ip", newIp); c.Parameters.AddWithValue("i", k.Id); c.Parameters.AddWithValue("old", k.Ip);
+            if (await c.ExecuteNonQueryAsync(ct) == 0) return false;
+        }
+        await AssetsDevice.History(db, k.Id, via, "updated", JsonSerializer.Serialize(new { ip_address = new { from = k.Ip, to = newIp } }), ct);
+        return true;
     }
 
     public static string Describe(IEnumerable<Match> m) => string.Join("; ", m.Take(3).Select(x => $"{x.Tag} {x.Name} (same {string.Join(" and ", x.Why)})"));
@@ -199,5 +257,78 @@ public static class DuplicatesApi
             await audit.WriteAsync("assets.merged", keep.ToString(), $"{string.Join(", ", tags)} into {k.Value.Tag}", ct: ct);
             return Results.Ok(new { ok = true, kept = k.Value.Tag, merged = tags });
         }).RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Modify);
+    }
+}
+
+/// <summary>
+/// Who may save an asset that only might be a duplicate (same IP address or same name) with "Add anyway". Nobody but an administrator,
+/// unless an administrator names people or groups here. A sure duplicate (serial, MAC, host name) is refused for everyone.
+/// </summary>
+public static class DuplicateOverride
+{
+    public const string Key = "assets.duplicate_override";
+    public sealed class Who { public List<Guid> Users { get; set; } = new(); public List<Guid> Groups { get; set; } = new(); }
+    static readonly JsonSerializerOptions Opt = new(JsonSerializerDefaults.Web);
+
+    public static async Task<Who> LoadAsync(ISettings s, CancellationToken ct)
+    {
+        var raw = await s.GetAsync(Key, ct);
+        if (string.IsNullOrWhiteSpace(raw)) return new Who();
+        try { return JsonSerializer.Deserialize<Who>(raw, Opt) ?? new Who(); } catch (JsonException) { return new Who(); }
+    }
+
+    public static async Task<bool> AllowedAsync(HttpContext h, CancellationToken ct)
+    {
+        var role = h.User.FindFirstValue("role") ?? "";
+        if (role == "admin") return true;
+        if (role == "customer" || !Guid.TryParse(h.User.FindFirstValue("sub"), out var me)) return false;
+        var who = await LoadAsync(h.RequestServices.GetRequiredService<ISettings>(), ct);
+        if (who.Users.Contains(me)) return true;
+        if (who.Groups.Count == 0) return false;
+        var access = h.RequestServices.GetService<IAccess>(); if (access == null) return false;
+        var mine = await access.GroupsOfAsync(me, ct);
+        return mine.Any(who.Groups.Contains);
+    }
+
+    /// <summary>The answer when someone without the right confirms a possible duplicate.</summary>
+    public static IResult Refused(IEnumerable<DuplicateCheck.Match> dup) => Results.Json(new
+    {
+        error = "duplicate_override_forbidden",
+        detail = "Possible duplicate: " + DuplicateCheck.Describe(dup) + ". Only an administrator, or someone an administrator allows, can add it anyway.",
+        matches = dup
+    }, statusCode: 403);
+
+    public static void Map(IEndpointRouteBuilder r, string key)
+    {
+        // the web asks whether to offer "Add anyway"
+        r.MapGet("/api/assets/duplicates/override", async (HttpContext http, CancellationToken ct) => Results.Ok(new { allowed = await AllowedAsync(http, ct) }))
+            .RequireAuthorization().RequireModule(key);
+
+        r.MapGet("/api/assets/settings/duplicate-override", async (ISettings s, IUserDirectory users, IAccess access, CancellationToken ct) =>
+        {
+            var who = await LoadAsync(s, ct);
+            var people = (await users.ListAsync(ct)).Where(u => u.Active && u.Role != "customer" && u.Role != "admin").OrderBy(u => u.Name).Select(u => new { id = u.Id, name = u.Name, email = u.Email, role = u.Role });
+            var groups = (await access.GroupsAsync(ct)).OrderBy(g => g.Name).Select(g => new { id = g.Id, name = g.Name });
+            return Results.Ok(new { users = who.Users, groups = who.Groups, choices = new { users = people, groups } });
+        }).RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
+
+        r.MapPut("/api/assets/settings/duplicate-override", async (JsonElement body, ISettings s, IUserDirectory users, IAccess access, IAuditLog audit, CancellationToken ct) =>
+        {
+            List<Guid> Ids(string n)
+            {
+                var l = new List<Guid>();
+                if (body.ValueKind == JsonValueKind.Object && body.TryGetProperty(n, out var a) && a.ValueKind == JsonValueKind.Array)
+                    foreach (var x in a.EnumerateArray()) if (x.ValueKind == JsonValueKind.String && Guid.TryParse(x.GetString(), out var g)) l.Add(g);
+                return l.Distinct().ToList();
+            }
+            var known = (await users.ListAsync(ct)).Where(u => u.Role != "customer").Select(u => u.Id).ToHashSet();
+            var knownGroups = (await access.GroupsAsync(ct)).Select(g => g.Id).ToHashSet();
+            var who = new Who { Users = Ids("users"), Groups = Ids("groups") };
+            if (who.Users.Any(u => !known.Contains(u))) return Results.BadRequest(new { error = "bad_input", detail = "Choose staff members only; customer users never get this right." });
+            if (who.Groups.Any(g => !knownGroups.Contains(g))) return Results.BadRequest(new { error = "bad_input", detail = "One of the groups no longer exists." });
+            await s.SetAsync(Key, JsonSerializer.Serialize(who, Opt), ct);
+            await audit.WriteAsync("assets.duplicate_override_set", "settings", $"{who.Users.Count} people, {who.Groups.Count} groups", ct: ct);
+            return Results.Ok(new { ok = true });
+        }).RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
     }
 }

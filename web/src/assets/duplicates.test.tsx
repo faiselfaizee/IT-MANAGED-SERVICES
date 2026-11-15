@@ -22,3 +22,16 @@ test('lists duplicates and merges them into the chosen asset', async () => {
   await waitFor(() => expect(calls.some((c) => c[1] === '/api/assets/merge')).toBe(true));
   expect(JSON.parse(calls.find((c) => c[1] === '/api/assets/merge')![2])).toEqual({ keepId: 1, mergeIds: [2] });
 });
+
+test('"Add anyway" is offered only to people who may use it', async () => {
+  const { DuplicateNotice } = await import('./Duplicates');
+  const info = { kind: 'possible_duplicate' as const, text: 'x', matches: [{ id: 1, tag: 'AST-1', name: 'NAS', why: ['IP address'] }] };
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ allowed: false }), { status: 200 })));
+  const a = render(<DuplicateNotice info={info} onAnyway={() => undefined} />);
+  expect(await screen.findByText(/Only an administrator/)).toBeTruthy();
+  expect(screen.queryByText('Add anyway')).toBeNull();
+  a.unmount();
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ allowed: true }), { status: 200 })));
+  render(<DuplicateNotice info={info} onAnyway={() => undefined} />);
+  expect(await screen.findByText('Add anyway')).toBeTruthy();
+});

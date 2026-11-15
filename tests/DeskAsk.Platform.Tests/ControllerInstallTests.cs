@@ -146,4 +146,41 @@ public class ControllerInstallTests : IClassFixture<WebApplicationFactory<Progra
         var again = await J(await col.PostAsync("/collector/v1/checkin", Json(new { found = scan(("192.168.7.40", "PC40", new[] { 135, 445, 5985 })) })));
         Assert.Equal(0, again.GetProperty("deploys").GetArrayLength());
     }
+
+    [PgFact]
+    public async Task AScanRecognisesAKnownDeviceByMacOrHostNameEvenAtANewAddress()
+    {
+        var (api, col, cid, co) = await Start();
+        // a computer added by hand with its MAC written one way, a printer known by its host name, both without an agent
+        var pc = (await J(await api.PostAsync("/api/assets", Json(new { name = "Reception PC", companyId = co, ipAddress = "192.168.7.50", macAddress = "aa:bb:cc:dd:ee:01" })))).GetProperty("id").GetInt64();
+        var prn = (await J(await api.PostAsync("/api/assets", Json(new { name = "Printer", companyId = co, ipAddress = "192.168.7.60", hostname = "prn-floor2.acme.local" })))).GetProperty("id").GetInt64();
+        await Sql($"update assets.assets set agent_id = 'agent-x' where id = {prn}");   // an agent reports its own address
+
+        // the scan sees the PC at a new address with its MAC written another way, the printer at a new address by name, and one new device
+        await Assert_OK(col.PostAsync("/collector/v1/checkin", Json(new { found = new object[] {
+            new { ip = "192.168.7.77", hostname = "", open = new[] { 135, 445 }, mac = "AA-BB-CC-DD-EE-01" },
+            new { ip = "192.168.7.78", hostname = "PRN-FLOOR2", open = new[] { 9100 }, mac = "" },
+            new { ip = "192.168.7.90", hostname = "new-thing", open = new[] { 80 }, mac = "00-00-00-00-00-00" } } })));
+        var found = (await J(await api.GetAsync($"/api/assets/collectors/{cid}/found"))).GetProperty("items").EnumerateArray().ToDictionary(x => x.GetProperty("ip").GetString()!);
+        Assert.True(found["192.168.7.77"].GetProperty("known").GetBoolean());
+        Assert.Equal(pc, found["192.168.7.77"].GetProperty("knownAs").GetProperty("id").GetInt64()); Assert.Equal("MAC address", found["192.168.7.77"].GetProperty("knownAs").GetProperty("why").GetString());
+        Assert.Equal("host name", found["192.168.7.78"].GetProperty("knownAs").GetProperty("why").GetString());
+        Assert.False(found["192.168.7.90"].GetProperty("known").GetBoolean());   // an all-zero MAC matches nothing
+
+        // the PC (MAC, no agent) follows its new address, with a history line and a note in the activity; the printer with an agent does not
+        Assert.Equal("192.168.7.77", (await J(await api.GetAsync($"/api/assets/{pc}/device"))).GetProperty("system").GetProperty("ip").GetString());
+        Assert.Equal("192.168.7.60", (await J(await api.GetAsync($"/api/assets/{prn}/device"))).GetProperty("system").GetProperty("ip").GetString());
+        Assert.Contains("answered at 192.168.7.77 instead of 192.168.7.50", await api.GetStringAsync($"/api/assets/collectors/{cid}/log"));
+
+        // adding the known ones is skipped; the new one is added
+        var ad = await J(await api.PostAsync($"/api/assets/collectors/{cid}/adopt", Json(new { ips = new[] { "192.168.7.77", "192.168.7.78", "192.168.7.90" } })));
+        Assert.Equal(1, ad.GetProperty("added").GetInt32()); Assert.Equal(2, ad.GetProperty("skipped").GetInt32());
+
+        // and the duplicate check now sees MACs however they were written: the agent's AA-BB-.. form against a typed one
+        await Sql($"update assets.assets set mac_addresses = '[\"AA-BB-CC-DD-EE-02\"]' where id = {prn}");
+        var dup = await api.PostAsync("/api/assets", Json(new { name = "Other", companyId = co, macAddress = "aabb.ccdd.ee02" }));
+        Assert.Equal(HttpStatusCode.Conflict, dup.StatusCode); Assert.Equal("duplicate", (await J(dup)).GetProperty("error").GetString());
+    }
+
+    static async Task Assert_OK(Task<HttpResponseMessage> r) => Assert.True((await r).IsSuccessStatusCode);
 }

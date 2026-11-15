@@ -21,7 +21,7 @@ function Probe({ initial = '' }: { initial?: string }) {
     <Err text={err} />
     {res && <Card title={res.hostname || res.target}>
       <Dl rows={[['Addresses', (res.ips as string[]).join(', ')], ['Reachable', <Badge tone={res.reachable ? 'ok' : 'bad'}>{res.reachable ? 'Yes' : 'No answer'}</Badge>], ['Open ports', (res.openNames as string[]).join(', ') || 'none found'], ['MAC address', res.mac], ['Looks like', [res.guess?.cat, res.guess?.sub].filter(Boolean).join(' / ')]]} />
-      {res.existing ? <p className="note">Already in the asset list: <a href={`#/assets/${res.existing.id}`}>{res.existing.name}</a></p> : null}
+      {res.existing ? <p className="note">Already in the asset list: <a href={`#/assets/${res.existing.id}`}>{res.existing.name}</a>{res.existing.why ? ` (same ${res.existing.why})` : null}</p> : null}
       <div className="tools"><Act label="Fetch details" run={async () => { setDetails(await api('/api/assets/discover/lookup', { body: { host: res.target } })); }} />
         <button className="primary" onClick={() => setAdopt(true)}>{res.existing ? 'Update asset' : 'Add as asset'}</button></div>
       <p className="muted">Fetching details uses the agent when one is installed, otherwise a saved credential (WinRM for Windows, SSH for Linux).</p>

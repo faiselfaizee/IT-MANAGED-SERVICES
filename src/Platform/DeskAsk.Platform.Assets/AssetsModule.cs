@@ -664,6 +664,7 @@ public sealed class AssetsModule : IPlatformModule
         ExtrasApi.Map(r, Key);
         AssetExport.Map(r, Key);
         DuplicatesApi.Map(r, Key);
+        DuplicateOverride.Map(r, Key);
         CoverageApi.Map(r, Key);
         AgentUpdateApi.Map(r, Key);
         ConfigsApi.Map(r, Key);
@@ -858,6 +859,7 @@ public sealed class AssetsModule : IPlatformModule
                 if (dup.Any(x => x.Hard)) return Results.Conflict(new { error = "duplicate", detail = "This looks like an asset you already have: " + DuplicateCheck.Describe(dup.Where(x => x.Hard)), matches = dup });
                 var confirmed = body.TryGetProperty("confirmDuplicate", out var cd) && cd.ValueKind == JsonValueKind.True;
                 if (dup.Count > 0 && !confirmed) return Results.Conflict(new { error = "possible_duplicate", detail = "Possible duplicate: " + DuplicateCheck.Describe(dup), matches = dup });
+                if (dup.Count > 0 && !await DuplicateOverride.AllowedAsync(http, ct)) return DuplicateOverride.Refused(dup);
             }
             var (_, active) = await Counts(db, ct);
             if (!await ent.WithinLimitAsync(Key, "max_assets", active, ct)) return Results.Json(new { error = "limit_reached", limit = "max_assets" }, statusCode: 402);
@@ -911,6 +913,7 @@ public sealed class AssetsModule : IPlatformModule
                 if (dup.Any(x => x.Hard)) return Results.Conflict(new { error = "duplicate", detail = "This looks like another asset you already have: " + DuplicateCheck.Describe(dup.Where(x => x.Hard)), matches = dup });
                 var confirmed = body.TryGetProperty("confirmDuplicate", out var cd) && cd.ValueKind == JsonValueKind.True;
                 if (dup.Count > 0 && !confirmed) return Results.Conflict(new { error = "possible_duplicate", detail = "Possible duplicate: " + DuplicateCheck.Describe(dup), matches = dup });
+                if (dup.Count > 0 && !await DuplicateOverride.AllowedAsync(http, ct)) return DuplicateOverride.Refused(dup);
             }
             if (v.Set.TryGetValue("status", out var ns) && (ns as string) is not ("retired" or "lost") && (before["status"] is "retired" or "lost"))
             {   // bringing an asset back counts against the licensed number again

@@ -97,7 +97,7 @@ public static class CollectorsApi
             var isWin = f.Open.Any(p => p is 5985 or 5986) || (f.Open.Contains(135) && f.Open.Contains(445));
             var isLinux = !isWin && f.Open.Contains(22) && !f.Open.Any(p => p is 9100 or 631 or 554);
             if (!isWin && !isLinux) continue;
-            await using (var q = new NpgsqlCommand("select 1 from assets.assets where ip_address = @ip", db)) { AgentsApi.P(q, "ip", f.Ip); if (await q.ExecuteScalarAsync(ct) != null) continue; }
+            if (await DuplicateCheck.KnownAsync(db, false, col.Company, f.Ip, f.Mac, f.Host, ct) != null) continue;   // already an asset: same MAC, host name or IP
             if (isWin && !win) { await Log(db, col.Id, "warn", "Found the Windows computer " + f.Ip + " but no Windows login is saved for this customer. Add one under Assets > Credentials; the next scan installs the agent.", ct); continue; }
             if (isLinux && !ssh) { await Log(db, col.Id, "warn", "Found the Linux computer " + f.Ip + " but no SSH login is saved for this customer. Add one under Assets > Credentials; the next scan installs the agent.", ct); continue; }
             if (!await ent.WithinLimitAsync(module, "max_assets", active + queued, ct)) { await Log(db, col.Id, "warn", "Not adding " + f.Ip + ": the licence limit for assets is reached.", ct); break; }
@@ -404,6 +404,10 @@ chmod 755 /opt/deskask-collector/deskask-collector
                     await using var c = new NpgsqlCommand("insert into assets.found (collector_id, ip, hostname, open, mac, cat, sub) values (@c,@ip,@h,@o,@m,@cat,@sub) on conflict (collector_id, ip) do update set hostname = excluded.hostname, open = excluded.open, mac = excluded.mac, cat = excluded.cat, sub = excluded.sub, seen_at = now()", db);
                     AgentsApi.P(c, "c", col.Id); AgentsApi.P(c, "ip", ip); AgentsApi.P(c, "h", AgentsApi.Clip(AgentsApi.Str(f, "hostname"), 120)); c.Parameters.Add(new NpgsqlParameter("o", NpgsqlDbType.Jsonb) { Value = JsonSerializer.Serialize(open) });
                     AgentsApi.P(c, "m", AgentsApi.Clip(AgentsApi.Str(f, "mac"), 40)); AgentsApi.P(c, "cat", g.Cat); AgentsApi.P(c, "sub", g.Sub); await c.ExecuteNonQueryAsync(ct);
+                    if (DuplicateCheck.Hex12(AgentsApi.Str(f, "mac") ?? "") != null
+                        && await DuplicateCheck.KnownAsync(db, false, col.Company, ip, AgentsApi.Str(f, "mac"), AgentsApi.Str(f, "hostname"), ct) is { } k
+                        && await DuplicateCheck.FollowAddressAsync(db, k, ip, "collector " + col.Id, ct))
+                        await Log(db, col.Id, "info", $"{k.Name} answered at {ip} instead of {k.Ip} (same MAC address); its IP address was updated.", ct);
                 }
                 await using (var cl = new NpgsqlCommand("update assets.collectors set scan_req = false where id = @i", db)) { AgentsApi.P(cl, "i", col.Id); await cl.ExecuteNonQueryAsync(ct); }
                 if (newFound.Count > 0) await AutoInstall(db, hub, t, ent, key, col, newFound, ct);
@@ -560,9 +564,22 @@ chmod 755 /opt/deskask-collector/deskask-collector
         Admin(r.MapGet("/api/assets/collectors/{id}/found", async (string id, ITenantContext t, CancellationToken ct) =>
         {
             await using var db = await AgentsApi.Open(t, ct); var rows = new List<(string Ip, object V)>();
-            await using var c = new NpgsqlCommand("select f.ip, f.hostname, f.open::text, f.mac, f.cat, f.sub, f.seen_at, exists (select 1 from assets.assets a where a.ip_address = f.ip) from assets.found f where f.collector_id = @i", db); AgentsApi.P(c, "i", id);
+            await using var c = new NpgsqlCommand(@"select f.ip, f.hostname, f.open::text, f.mac, f.cat, f.sub, f.seen_at, k.id is not null, coalesce(k.id, 0), coalesce(k.name, ''), coalesce(k.why, '')
+              from assets.found f join assets.collectors col on col.id = f.collector_id
+              cross join lateral (select case when x in ('000000000000', 'ffffffffffff') or length(x) <> 12 then '' else x end as mac12,
+                                         case when f.hostname = '' or f.hostname ~ '^[0-9.:]+$' then '' else split_part(lower(f.hostname), '.', 1) end as host
+                                  from (select lower(regexp_replace(f.mac, '[^0-9A-Fa-f]', '', 'g')) as x) z) n
+              left join lateral (
+                  select a.id, a.name, case when mm.hit then 'MAC address' when hh.hit then 'host name' else 'IP address' end as why
+                  from assets.assets a
+                  cross join lateral (select n.mac12 <> '' and exists (select 1 from jsonb_array_elements_text(case when jsonb_typeof(a.mac_addresses) = 'array' then a.mac_addresses else '[]'::jsonb end) e
+                                                                     where lower(regexp_replace(e, '[^0-9A-Fa-f]', '', 'g')) = n.mac12) as hit) mm
+                  cross join lateral (select n.host <> '' and (split_part(lower(a.hostname), '.', 1) = n.host or split_part(lower(a.dns_name), '.', 1) = n.host) as hit) hh
+                  where a.status not in ('retired', 'lost') and a.company_id is not distinct from col.company_id and (mm.hit or hh.hit or a.ip_address = f.ip)
+                  order by case when mm.hit then 0 when hh.hit then 1 else 2 end, a.id limit 1) k on true
+              where f.collector_id = @i", db); AgentsApi.P(c, "i", id);
             await using var rd = await c.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) rows.Add((rd.GetString(0), new { ip = rd.GetString(0), hostname = rd.GetString(1), open = JsonDocument.Parse(rd.GetString(2)).RootElement.Clone(), mac = rd.GetString(3), cat = rd.GetString(4), sub = rd.GetString(5), seenAt = rd.GetDateTime(6), known = rd.GetBoolean(7) }));
+            while (await rd.ReadAsync(ct)) rows.Add((rd.GetString(0), new { ip = rd.GetString(0), hostname = rd.GetString(1), open = JsonDocument.Parse(rd.GetString(2)).RootElement.Clone(), mac = rd.GetString(3), cat = rd.GetString(4), sub = rd.GetString(5), seenAt = rd.GetDateTime(6), known = rd.GetBoolean(7), knownAs = rd.GetBoolean(7) ? new { id = rd.GetInt64(8), name = rd.GetString(9), why = rd.GetString(10) } : null }));
             return Results.Ok(new { items = rows.OrderBy(x => System.Net.IPAddress.TryParse(x.Ip, out var a) && a.GetAddressBytes().Length == 4 ? DiscoveryApi.IpKey(x.Ip) : 0).Select(x => x.V).ToList() });
         }));
         Admin(r.MapPost("/api/assets/collectors/{id}/adopt", async (string id, JsonElement body, ClaimsPrincipal u, ITenantContext t, IEntitlements ent, IAuditLog audit, CancellationToken ct) =>
@@ -580,7 +597,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
                 (string Host, string Mac, string Cat, string Sub)? f = null;
                 await using (var c = new NpgsqlCommand("select hostname, mac, cat, sub from assets.found where collector_id = @i and ip = @ip", db)) { AgentsApi.P(c, "i", id); AgentsApi.P(c, "ip", ip); await using var rd = await c.ExecuteReaderAsync(ct); if (await rd.ReadAsync(ct)) f = (rd.GetString(0), rd.GetString(1), rd.GetString(2), rd.GetString(3)); }
                 if (f == null) { skipped++; continue; }
-                await using (var q = new NpgsqlCommand("select 1 from assets.assets where ip_address = @ip", db)) { AgentsApi.P(q, "ip", ip); if (await q.ExecuteScalarAsync(ct) != null) { skipped++; continue; } }
+                if (await DuplicateCheck.KnownAsync(db, false, company, ip, f.Value.Mac, f.Value.Host, ct) != null) { skipped++; continue; }
                 if (!await ent.WithinLimitAsync(key, "max_assets", active + added, ct)) { limited++; continue; }
                 await using var tx = await db.BeginTransactionAsync(ct);
                 await using var ins = new NpgsqlCommand("insert into assets.assets (name, status, company_id, category, hostname, ip_address, mac_addresses, source, collector_id, monitor, created_by, updated_by) values (@n,'in_use',@co,@cat,@h,@ip,@mac::jsonb,'collector',@col,@mon,@a,@a) returning id", db, tx);

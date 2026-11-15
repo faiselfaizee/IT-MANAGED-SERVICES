@@ -255,10 +255,8 @@ public static class DiscoveryApi
             object? existing = null;
             await using (var db = await AgentsApi.Open(t, ct))
             {
-                await using var c = new NpgsqlCommand("select id, name from assets.assets where ip_address = @ip or (hostname <> '' and lower(hostname) = lower(@h)) limit 1", db);
-                AgentsApi.P(c, "ip", ip); AgentsApi.P(c, "h", hostname == "" ? "#" : hostname);
-                await using var rd = await c.ExecuteReaderAsync(ct);
-                if (await rd.ReadAsync(ct)) existing = new { id = rd.GetInt64(0), name = rd.GetString(1) };
+                // the same device by MAC address, host name or IP address, whichever customer it belongs to
+                if (await DuplicateCheck.KnownAsync(db, true, null, ip, mac, hostname, ct) is { } k) existing = new { id = k.Id, name = k.Name, why = k.Why };
             }
             await audit.WriteAsync("assets.discover", target, "probe", ct: ct);
             return Results.Ok(new { target, hostname, fqdn, ips, reachable = up.Result || open.Count > 0, open = open.Select(p => p.Port).ToList(), openNames = open.Select(p => p.Port + " " + p.Name).ToList(), mac, guess = g, existing });
@@ -271,8 +269,10 @@ public static class DiscoveryApi
             HashSet<string> known;
             await using (var db = await AgentsApi.Open(t, ct))
             {
-                await using var c = new NpgsqlCommand("select ip_address from assets.assets where ip_address <> ''", db); known = new();
-                await using var rd = await c.ExecuteReaderAsync(ct); while (await rd.ReadAsync(ct)) known.Add(rd.GetString(0));
+                // known by IP address or by host name (without its domain): a computer that moved to another address is still known
+                await using var c = new NpgsqlCommand("select ip_address, split_part(lower(hostname), '.', 1), split_part(lower(dns_name), '.', 1) from assets.assets where status not in ('retired', 'lost')", db); known = new();
+                await using var rd = await c.ExecuteReaderAsync(ct);
+                while (await rd.ReadAsync(ct)) for (var i = 0; i < 3; i++) { var v = rd.GetString(i); if (v != "") known.Add(i == 0 ? v : "h:" + v); }
             }
             var probe = new[] { 22, 135, 445, 3389, 5985, 80, 443, 9100, 554 };
             var found = new List<object>(); var keyed = new List<(long K, object V)>();
@@ -282,7 +282,7 @@ public static class DiscoveryApi
                 var open = probe.Where((_, i) => res[i]).ToList(); if (open.Count == 0) return;
                 var name = ""; try { var h = await Dns.GetHostEntryAsync(ip, c2); if (h.HostName != ip) name = ShortName(h.HostName); } catch { }
                 var g = GuessFrom(open);
-                lock (keyed) keyed.Add((IpKey(ip), new { ip, hostname = name, open, cat = g.Cat, sub = g.Sub, known = known.Contains(ip) }));
+                lock (keyed) keyed.Add((IpKey(ip), new { ip, hostname = name, open, cat = g.Cat, sub = g.Sub, known = known.Contains(ip) || (name != "" && known.Contains("h:" + DuplicateCheck.FirstLabel(name))) }));
             });
             await audit.WriteAsync("assets.discover", cidr, "scan: " + keyed.Count + " hosts answered", ct: ct);
             return Results.Ok(new { scanned = ips.Count, found = keyed.OrderBy(x => x.K).Select(x => x.V).ToList() });
