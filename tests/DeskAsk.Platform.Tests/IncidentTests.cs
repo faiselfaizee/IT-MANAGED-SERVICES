@@ -39,7 +39,7 @@ public class IncidentTests : IClassFixture<WebApplicationFactory<Program>>
         await Sql("truncate servicedesk.tickets, servicedesk.people, servicedesk.events restart identity cascade");
         async Task<long> Raise(object body) { var r = await admin.PostAsync("/api/servicedesk/tickets", Json(body)); Assert.Equal(HttpStatusCode.Created, r.StatusCode); return (await J(r)).GetProperty("id").GetInt64(); }
         async Task<JsonElement> Get(long id) => await J(await admin.GetAsync("/api/servicedesk/tickets/" + id));
-        async Task<int> Count(string qs) => (await J(await admin.GetAsync("/api/servicedesk/tickets?status=all&" + qs))).GetProperty("total").GetInt32();
+        async Task<int> Count(string qs) => (await J(await admin.GetAsync("/api/servicedesk/tickets?" + qs))).GetProperty("total").GetInt32();
 
         // a ticket is an incident unless it is raised as a request; impact and urgency choose the priority when none is given
         var inc = await Raise(new { subject = "Mail is down", impact = "high", urgency = "high" });
