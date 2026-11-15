@@ -3,7 +3,7 @@ import { api, useLoad, type Rec } from '../http';
 import { Act, Empty, Field, Loading, Modal } from '../ui';
 
 const METRICS: [string, string][] = [['offline', 'Device down or not reporting'], ['cpu', 'Processor use'], ['memory', 'Memory use'], ['disk', 'Disk space'], ['check', 'Service check failing'], ['cert', 'Certificate expiring'], ['hardware', 'Hardware fault'],
-  ['traffic', 'Port traffic (network devices)'], ['port', 'Watched port down (network devices)'], ['service', 'Service not running (agent)'], ['process', 'Program not running (agent)'], ['log', 'Device messages (syslog, traps, Windows events)']];
+  ['traffic', 'Port traffic (network devices)'], ['port', 'Watched port down (network devices)'], ['service', 'Named service not running (agent)'], ['autoservice', 'Automatic or chosen service stopped (agent)'], ['process', 'Program not running (agent)'], ['log', 'Device messages (syslog, traps, Windows events)']];
 const LEVELS = ['Emergency', 'Alert', 'Critical', 'Error', 'Warning', 'Notice', 'Information', 'Debug'];
 const KINDS: [string, string][] = [['computer', 'Computers'], ['server', 'Servers'], ['network', 'Network devices'], ['printer', 'Printers'], ['other', 'Other']];
 
@@ -56,6 +56,7 @@ function RuleForm({ rule, onClose, onSaved }: { rule: Rec; onClose: () => void; 
       {m === 'traffic' && <Field label="Above (% of the port speed)"><input type="number" min={1} max={100} value={r.threshold} onChange={(e) => set('threshold', e.target.value)} /></Field>}
       {m === 'traffic' && <Field label="For at least (minutes; readings come every 5 minutes)"><input type="number" min={0} max={1440} value={r.minutes} onChange={(e) => set('minutes', e.target.value)} /></Field>}
       {m === 'port' && <Field label="Down for (minutes)"><input type="number" min={1} max={10080} value={r.minutes} onChange={(e) => set('minutes', e.target.value)} /></Field>}
+      {m === 'autoservice' && <p className="muted small">Servers: every service that starts automatically is watched, except update helpers and per-user services that stop by themselves. Any device: the services you tick on its Monitoring page. Untick or ignore a service there to leave it out.</p>}
       {(m === 'service' || m === 'process') && <Field label={m === 'service' ? 'Service names (as in Services, or systemd units), separated by commas' : 'Program names (for example sqlservr.exe, nginx), separated by commas'}>
         <textarea rows={2} value={r.target} onChange={(e) => set('target', e.target.value)} placeholder={m === 'service' ? 'Spooler, MSSQLSERVER, W3SVC' : 'sqlservr.exe, java'} /></Field>}
       {m === 'service' && <label className="check"><input type="checkbox" checked={r.restart} onChange={(e) => set('restart', e.target.checked)} /> Ask the agent to restart the service once when the alert opens</label>}

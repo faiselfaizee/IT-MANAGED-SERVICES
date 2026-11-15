@@ -67,3 +67,29 @@ func TestThisProgramIsSeenRunning(t *testing.T) {
 		t.Fatalf("%+v", s)
 	}
 }
+
+func TestParseCimServices(t *testing.T) {
+	got := parseCimServices(`[{"Name":"Spooler","DisplayName":"Print Spooler","State":"Running","StartMode":"Auto"},{"Name":"BITS","DisplayName":"BITS","State":"Stop Pending","StartMode":"Manual"},{"Name":"X","DisplayName":"","State":"Stopped","StartMode":"Disabled"}]`)
+	if len(got) != 3 || got[0].State != "running" || got[0].Start != "auto" || got[1].State != "stopping" || got[2].Start != "disabled" {
+		t.Fatalf("got %+v", got)
+	}
+	one := parseCimServices(`{"Name":"W32Time","DisplayName":"Windows Time","State":"Stopped","StartMode":"Auto"}`)
+	if len(one) != 1 || one[0].State != "stopped" || one[0].Start != "auto" {
+		t.Fatalf("single object: %+v", one)
+	}
+	if parseCimServices("") != nil || parseCimServices("not json") != nil {
+		t.Fatal("bad input must give nothing")
+	}
+}
+
+func TestParseSystemd(t *testing.T) {
+	units := "  ssh.service     loaded active   running OpenBSD Secure Shell server\n● nginx.service   loaded failed   failed  A high performance web server\n  cron.service    loaded inactive dead    Cron\n  getty@tty1.service loaded active running Getty\n  ghost.service   not-found inactive dead ghost.service\n"
+	files := "ssh.service enabled enabled\nnginx.service enabled enabled\ncron.service static -\nghost.service disabled enabled\n"
+	got := parseSystemd(units, files)
+	if len(got) != 3 {
+		t.Fatalf("got %+v", got)
+	}
+	if got[0].Name != "ssh" || got[0].State != "running" || got[0].Start != "auto" || got[1].State != "failed" || got[2].State != "inactive" || got[2].Start != "manual" {
+		t.Fatalf("got %+v", got)
+	}
+}

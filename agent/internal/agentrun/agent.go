@@ -274,6 +274,7 @@ func (r *Runner) metricsLoop(ctx context.Context) {
 	var services, processes []string
 	events := false
 	var elog watch.EventLog
+	tick := 0
 	for ctx.Err() == nil {
 		sleep(ctx, every)
 		smp, err := s.Take()
@@ -293,6 +294,11 @@ func (r *Runner) metricsLoop(ctx context.Context) {
 		if events {
 			body.Events = elog.Read(ctx)
 		}
+		// every service with its state and start type, on the first report and then every few minutes (Monitoring watches the automatic ones)
+		if tick%inventoryEvery == 0 {
+			body.Inventory = watch.Inventory(ctx)
+		}
+		tick++
 		var out struct {
 			Every int `json:"every"`
 			Watch struct {
@@ -328,7 +334,12 @@ type sample struct {
 	Services  []watch.Service `json:"services,omitempty"`
 	Processes []watch.Process `json:"processes,omitempty"`
 	Events    []watch.Event   `json:"events,omitempty"`
+	// Inventory lists every service of the computer; sent every inventoryEvery reports.
+	Inventory []watch.ServiceInfo `json:"inventory,omitempty"`
 }
+
+// inventoryEvery is how many reports (minutes, normally) pass between two service lists.
+const inventoryEvery = 5
 
 // limit keeps at most 50 names, so a mistake in a rule cannot make the agent run hundreds of queries a minute.
 func limit(names []string) []string {

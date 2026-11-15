@@ -366,7 +366,7 @@ Each reminder goes out once per end date and per day setting. A mail lists each 
 
 The wording is in **Mail › Templates**, under `asset_renewal` and `asset_renewal_vendor`. Customer administrators can now see their own company's renewals.
 
-## Changes in v3.3.1
+## Changes in v3.4.0 (assets)
 
 - **Changing an asset's IP address.** Open the asset, choose Edit and change "IP address". It is the address DeskAsk uses to reach the device (monitoring, remote tools, auto-install). A typed address is kept: an agent only fills the field when it is empty. An address that is not a valid IPv4 or IPv6 address is refused; clearing the field is allowed.
 - **Customer administrators and AMC contracts (optional).** Under Assets › Renewals an administrator can tick "Let a customer administrator add, change and renew the AMC contracts of their own company". It is off by default. When on, a customer administrator sees the AMC page with only their own company's contracts and can add, edit, renew and delete them, using only their own company's assets and vendors. Rentals stay with administrators. Turning the option off removes their access straight away.

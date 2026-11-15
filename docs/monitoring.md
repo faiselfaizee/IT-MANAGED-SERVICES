@@ -137,3 +137,14 @@ If nobody acknowledges a critical alert within the set minutes, it goes once to 
 - **Other ways to notify:** text messages, Slack and phone calls are not available. Mail, Teams and tickets are.
 - **macOS performance data:** the agent does not send it yet. Linux and Windows are supported.
 - **More metrics:** per-process processor and memory figures, NetFlow traffic analysis and topology maps are not available yet.
+
+## Services of computers and servers (v3.4.0)
+
+The agent (version 3.4 and later) lists **every service** of a Windows computer or Linux (systemd) server with its state and start type, a few minutes after it starts and then every five minutes. The list is on the device's Monitoring page, under **Services**.
+
+- **Servers watch their automatic services.** The starting rule "Automatic service stopped" opens a warning when a service that starts automatically is stopped or failed. Update helpers and per-user services that stop by themselves (Google Update, Edge Update, Software Protection, per-user services with a hexadecimal suffix and similar) are left out; tick one to watch it anyway. On Linux only services enabled at boot count, and only a failed unit alerts.
+- **Computers watch only what you choose.** Tick the services that matter on the device's Services list.
+- **Choose per device.** Tick or untick any service on the list. "Back to the default" removes your choice.
+- **Custom services.** Type a service name (or systemd unit) under the list and choose **Watch it**. This also works for a service that is not on the list (for example one installed later). The agent reports chosen services every minute, so these alerts open fastest. "Not installed" is reported when the name does not exist.
+- **Network devices, printers and other devices without an agent** have no service list. Watch what they offer (web page, port, certificate, DNS) with **service checks** on the asset's Service checks tab; failing checks open alerts with the "Service check failing" rule.
+- **Change who is told.** The rule is under Monitoring › Alert rules like any other (severity, mail, ticket, customer).

@@ -58,3 +58,19 @@ func Running() ([]string, error) {
 type EventLog struct{}
 
 func (l *EventLog) Read(ctx context.Context) []Event { return nil }
+
+// Inventory lists the systemd services with their state and whether they start at boot. Elsewhere it returns nothing.
+func Inventory(ctx context.Context) []ServiceInfo {
+	p, err := exec.LookPath("systemctl")
+	if err != nil {
+		return nil
+	}
+	c, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	units, err := exec.CommandContext(c, p, "list-units", "--type=service", "--all", "--plain", "--no-legend", "--no-pager").Output()
+	if err != nil {
+		return nil
+	}
+	files, _ := exec.CommandContext(c, p, "list-unit-files", "--type=service", "--no-legend", "--no-pager").Output()
+	return parseSystemd(string(units), string(files))
+}

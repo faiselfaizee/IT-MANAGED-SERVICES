@@ -234,8 +234,13 @@ public sealed record DeviceState(long Id, string Tag, string Name, int? CompanyI
     bool HasAgent, string AgentVersion, DateTime? AgentSeen, bool? PingUp, DateTime? DownSince, int RttMs, DateTime? CheckedAt,
     DateTime? MetricsAt, double? Cpu, double? Mem, long MemTotal, long UptimeS, IReadOnlyList<DiskUse> Disks,
     IReadOnlyList<CheckState> Checks, IReadOnlyList<PartFault> Faults,
-    IReadOnlyList<PortState>? Ports = null, DateTime? PortsAt = null, IReadOnlyList<WatchedItem>? Watched = null, DateTime? WatchedAt = null)
+    IReadOnlyList<PortState>? Ports = null, DateTime? PortsAt = null, IReadOnlyList<WatchedItem>? Watched = null, DateTime? WatchedAt = null,
+    IReadOnlyList<ServiceInfo>? Inventory = null, DateTime? InventoryAt = null, IReadOnlyDictionary<string, string>? ServiceModes = null)
 {
+    /// <summary>Every service the agent listed (empty before the first list).</summary>
+    public IReadOnlyList<ServiceInfo> InventoryList => Inventory ?? Array.Empty<ServiceInfo>();
+    /// <summary>What a person decided about a service: "watch" (also when it is not automatic) or "ignore". Keys are lower case.</summary>
+    public IReadOnlyDictionary<string, string> Modes => ServiceModes ?? new Dictionary<string, string>();
     /// <summary>Ports of a network device (empty for other devices or before the first traffic reading).</summary>
     public IReadOnlyList<PortState> PortList => Ports ?? Array.Empty<PortState>();
     /// <summary>Services and programs the agent was asked to watch.</summary>
@@ -248,6 +253,9 @@ public sealed record DeviceState(long Id, string Tag, string Name, int? CompanyI
 /// </summary>
 public sealed record PortState(string Index, string Name, string Alias, string Kind, bool Up, bool AdminUp, long Mbps, bool Rates,
     double InPct, double OutPct, double InBps, double OutBps, double Errors, double Discards, bool Watched, DateTime? DownSince);
+
+/// <summary>One service of a computer as its service manager lists it. Start is auto, manual, disabled or other; State is running, stopped, starting, stopping, paused, failed or inactive.</summary>
+public sealed record ServiceInfo(string Name, string Display, string State, string Start);
 
 /// <summary>A service (Kind "service") or a program (Kind "process") the agent reports on.</summary>
 public sealed record WatchedItem(string Name, string Kind, bool Running, string State, int Count);
@@ -307,6 +315,8 @@ public interface IDeviceHealth
     Task<IReadOnlyList<PortPoint>> PortSeriesAsync(long assetId, string port, DateTime from, DateTime to, bool hourly, CancellationToken ct = default);
     /// <summary>Marks a port as watched or not; null goes back to the default (watched when it has a description).</summary>
     Task SetPortWatchAsync(long assetId, string port, bool? watched, CancellationToken ct = default);
+    /// <summary>Decides what to do with a service of a device: "watch", "ignore", or null to go back to the default (automatic services are watched on servers).</summary>
+    Task SetServiceModeAsync(long assetId, string service, string? mode, CancellationToken ct = default);
     /// <summary>Events of the last minutes at this severity or worse (lower number), newest first, at most max.</summary>
     Task<IReadOnlyList<DeviceEvent>> RecentEventsAsync(int minutes, int maxSeverity, int max, CancellationToken ct = default);
     /// <summary>Events for the events page: limited to companies (null = all), optionally one device, one kind, a severity and a text.</summary>

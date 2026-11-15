@@ -4,6 +4,7 @@ package watch
 
 import (
 	"bufio"
+	"encoding/json"
 	"strconv"
 	"strings"
 )
@@ -108,4 +109,128 @@ func clip(s string, n int) string {
 		return s[:n]
 	}
 	return s
+}
+
+// ServiceInfo is one service of the computer as the service manager lists it. Start is auto, manual, disabled or other.
+// State is running, stopped, starting, stopping, paused, failed or inactive (Linux units that are not running and not failed).
+type ServiceInfo struct {
+	Name    string `json:"name"`
+	Display string `json:"display,omitempty"`
+	State   string `json:"state"`
+	Start   string `json:"start"`
+}
+
+// maxInventory keeps one report to a size the server accepts.
+const maxInventory = 1500
+
+// parseCimServices reads the JSON that "Get-CimInstance Win32_Service | Select Name,DisplayName,State,StartMode" prints: one object or a list.
+func parseCimServices(out string) []ServiceInfo {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return nil
+	}
+	type row struct {
+		Name        string `json:"Name"`
+		DisplayName string `json:"DisplayName"`
+		State       string `json:"State"`
+		StartMode   string `json:"StartMode"`
+	}
+	var rows []row
+	if strings.HasPrefix(out, "[") {
+		if json.Unmarshal([]byte(out), &rows) != nil {
+			return nil
+		}
+	} else {
+		var one row
+		if json.Unmarshal([]byte(out), &one) != nil {
+			return nil
+		}
+		rows = []row{one}
+	}
+	res := make([]ServiceInfo, 0, len(rows))
+	for _, r := range rows {
+		if r.Name == "" {
+			continue
+		}
+		st := "unknown"
+		switch strings.ToLower(strings.ReplaceAll(r.State, " ", "")) {
+		case "running":
+			st = "running"
+		case "stopped":
+			st = "stopped"
+		case "startpending", "continuepending":
+			st = "starting"
+		case "stoppending", "pausepending":
+			st = "stopping"
+		case "paused":
+			st = "paused"
+		}
+		start := "other"
+		switch strings.ToLower(r.StartMode) {
+		case "auto":
+			start = "auto"
+		case "manual":
+			start = "manual"
+		case "disabled":
+			start = "disabled"
+		}
+		res = append(res, ServiceInfo{Name: clip(r.Name, 120), Display: clip(r.DisplayName, 160), State: st, Start: start})
+		if len(res) >= maxInventory {
+			break
+		}
+	}
+	return res
+}
+
+// parseSystemd joins "systemctl list-units --type=service --all --plain --no-legend" (UNIT LOAD ACTIVE SUB DESCRIPTION) with
+// "systemctl list-unit-files --type=service --no-legend" (UNIT STATE). Only enabled units count as automatic.
+func parseSystemd(units, files string) []ServiceInfo {
+	enabled := map[string]string{}
+	sc := bufio.NewScanner(strings.NewReader(files))
+	for sc.Scan() {
+		f := strings.Fields(sc.Text())
+		if len(f) >= 2 && strings.HasSuffix(f[0], ".service") {
+			enabled[strings.TrimSuffix(f[0], ".service")] = f[1]
+		}
+	}
+	var res []ServiceInfo
+	sc = bufio.NewScanner(strings.NewReader(units))
+	for sc.Scan() {
+		line := strings.TrimLeft(sc.Text(), "●* \t")
+		f := strings.Fields(line)
+		if len(f) < 4 || !strings.HasSuffix(f[0], ".service") || strings.Contains(f[0], "@") {
+			continue
+		}
+		name := strings.TrimSuffix(f[0], ".service")
+		if f[1] == "not-found" {
+			continue
+		}
+		st := "inactive"
+		switch f[2] {
+		case "active":
+			st = "running"
+		case "failed":
+			st = "failed"
+		case "activating", "reloading":
+			st = "starting"
+		case "deactivating":
+			st = "stopping"
+		}
+		start := "manual"
+		switch enabled[name] {
+		case "enabled", "enabled-runtime":
+			start = "auto"
+		case "disabled", "masked", "masked-runtime":
+			start = "disabled"
+		}
+		d := ""
+		if len(f) > 4 {
+			d = strings.Join(f[4:], " ")
+		}
+		res = append(res, ServiceInfo{Name: clip(name, 120), Display: clip(d, 160), State: st, Start: start})
+		if len(res) >= maxInventory {
+			break
+		}
+	}
+	return res
 }

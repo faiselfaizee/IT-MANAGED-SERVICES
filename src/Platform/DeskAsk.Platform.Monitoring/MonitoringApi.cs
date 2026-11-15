@@ -90,6 +90,8 @@ public static class MonitoringApi
         checks = r.D.Checks.Select(c => new { c.Id, c.Name, c.Type, c.Ok, c.Fails, certDays = c.CertDays, c.Detail, c.At }),
         faults = r.D.Faults.Select(f => new { f.Part, f.Name, f.State }),
         portsAt = r.D.PortsAt, ports = r.D.PortList.Select(p => new { p.Index, p.Name, p.Alias, p.Kind, p.Up, p.AdminUp, p.Mbps, p.Rates, p.InPct, p.OutPct, p.InBps, p.OutBps, p.Errors, p.Discards, p.Watched, p.DownSince }),
+        servicesAt = r.D.InventoryAt, services = r.D.InventoryList.Select(sv => new { sv.Name, sv.Display, sv.State, sv.Start, watched = ServiceWatch.IsWatched(sv, r.D.Modes, r.D.Kind), mode = r.D.Modes.TryGetValue(sv.Name.ToLowerInvariant(), out var sm) ? sm : (string?)null, quiet = ServiceWatch.IsDefaultQuiet(sv.Name) }),
+        customServices = r.D.Modes.Where(kv => kv.Value == "watch" && r.D.InventoryList.All(x => !string.Equals(x.Name, kv.Key, StringComparison.OrdinalIgnoreCase))).Select(kv => kv.Key),
         watchedAt = r.D.WatchedAt, watched = r.D.WatchedList.Select(w => new { w.Name, w.Kind, w.Running, w.State, w.Count }),
         alerts = r.Alerts.Count, alertsCritical = r.Alerts.Count(a => a.Severity == "critical"),
         muted = mute == null ? null : new { until = mute.Value.Until, reason = mute.Value.Reason, by = mute.Value.By },
@@ -337,6 +339,24 @@ public static class MonitoringApi
             bool? w = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("watched", out var wv) && wv.ValueKind is JsonValueKind.True or JsonValueKind.False ? wv.GetBoolean() : null;
             await health.SetPortWatchAsync(id, port, w, ct);
             await audit.WriteAsync("monitoring.port_watch", dev.Tag, $"port {port}: " + (w == null ? "default" : w.Value ? "watched" : "not watched"), ct: ct);
+            return Results.Ok(new { ok = true });
+        }));
+
+        // what to do with one service of a device: watch it (also a custom name that is not on the list), ignore it, or go back to the default
+        Modify(r.MapPut("/api/monitoring/devices/{id:long}/services", async (long id, JsonElement b, HttpContext http, ClaimsPrincipal u, IAuditLog audit, CancellationToken ct) =>
+        {
+            var health = http.RequestServices.GetRequiredService<IDeviceHealth>();
+            var scope = await http.RequestServices.GetRequiredService<IAccess>().ScopeAsync(u, Modules.Monitoring, Acts.Modify, ct);
+            var dev = (await health.SnapshotAsync(scope, id, ct)).FirstOrDefault(); if (dev == null) return Results.NotFound();
+            var name = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("name", out var nv) && nv.ValueKind == JsonValueKind.String ? nv.GetString()!.Trim() : "";
+            if (name == "" || name.Length > 120 || name.IndexOfAny(new[] { '\'', '"', '`', '$', '&', '|', '<', '>', ',', ';', '\n', '\r' }) >= 0) return MonitoringModule.Bad("bad_input", "Give the name of one service, as it appears in Services (or the systemd unit), without quotes or special characters.");
+            string? mode = null;
+            if (b.TryGetProperty("mode", out var mv) && mv.ValueKind == JsonValueKind.String) { mode = mv.GetString(); if (mode is not ("watch" or "ignore")) return MonitoringModule.Bad("bad_input", "mode must be watch, ignore or empty (the default)."); }
+            if (mode == "watch" && !dev.HasAgent) return MonitoringModule.Bad("bad_input", "Only a device with the agent can report its services. Network devices are watched with service checks on the asset's Service checks tab.");
+            // a name that is on the list is stored as the list spells it
+            var known = dev.InventoryList.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase)); if (known != null) name = known.Name;
+            await health.SetServiceModeAsync(id, name, mode, ct);
+            await audit.WriteAsync("monitoring.service_watch", dev.Tag, $"service {name}: " + (mode ?? "default"), ct: ct);
             return Results.Ok(new { ok = true });
         }));
 

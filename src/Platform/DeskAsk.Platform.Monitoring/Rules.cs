@@ -23,7 +23,7 @@ public sealed record Rule(int Id, string Name, bool Enabled, string Metric, doub
 
 public static class RulesApi
 {
-    public static readonly string[] Metrics = { "offline", "cpu", "memory", "disk", "check", "cert", "hardware", "traffic", "port", "service", "process", "log" };
+    public static readonly string[] Metrics = { "offline", "cpu", "memory", "disk", "check", "cert", "hardware", "traffic", "port", "service", "process", "log", "autoservice" };
     public static readonly string[] EventKinds = { "", "syslog", "trap", "eventlog" };
     static readonly string[] SevWords = { "emergency", "alert", "critical", "error", "warning", "notice", "information", "debug" };
     public static readonly string[] Kinds = { "computer", "server", "network", "printer", "other" };
@@ -64,6 +64,7 @@ public static class RulesApi
             "port" => $"A watched port of {who} down for {MonitoringModule.Dur(TimeSpan.FromMinutes(Math.Max(1, r.Minutes)))}",
             "service" => $"Service {string.Join(", ", r.Names)} not running on {who}" + (r.Restart ? " (the agent restarts it)" : ""),
             "process" => $"Program {string.Join(", ", r.Names)} not running on {who}",
+            "autoservice" => $"An automatic service, or one you chose to watch, stopped on {who}",
             "log" => $"{(Math.Max(1, (int)r.Threshold) == 1 ? "A" : Math.Max(1, (int)r.Threshold).ToString())} {(r.EventKind switch { "syslog" => "syslog message", "trap" => "SNMP trap", "eventlog" => "Windows event", _ => "message" })}{(Math.Max(1, (int)r.Threshold) == 1 ? "" : "s")} at {SevWords[Math.Clamp(r.MinSeverity, 0, 7)]} or worse from {who}" + (r.Target != "" ? $" containing \"{r.Target}\"" : "") + $" within {MonitoringModule.Dur(TimeSpan.FromMinutes(Math.Max(1, r.Minutes)))}",
             _ => $"A hardware part of {who} reports a fault",
         };

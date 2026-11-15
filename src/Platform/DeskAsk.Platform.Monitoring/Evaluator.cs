@@ -132,6 +132,24 @@ public static class Evaluator
                         }
                         break;
                     }
+                    case "autoservice":
+                    {
+                        // the full service list (a few minutes old at most), plus the services a person chose to watch (reported every minute)
+                        var fresh = d.InventoryAt != null && now - d.InventoryAt.Value <= TimeSpan.FromMinutes(20);
+                        var live = d.WatchedAt != null && now - d.WatchedAt.Value <= TimeSpan.FromMinutes(10);
+                        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        if (live)
+                            foreach (var w in d.WatchedList.Where(x => x.Kind == "service" && d.Modes.TryGetValue(x.Name.ToLowerInvariant(), out var m) && m == "watch"))
+                                if (!w.Running && w.State != "unknown") { seen.Add(w.Name); Add("service:" + w.Name.ToLowerInvariant(), r.Severity, w.State == "missing" ? $"Service {w.Name} is not installed on this device." : $"Service {w.Name} is {w.State}.", null); }
+                        if (fresh && d.HasAgent)
+                            foreach (var sv in d.InventoryList)
+                            {
+                                if (sv.State is not ("stopped" or "failed") || seen.Contains(sv.Name)) continue;
+                                if (!ServiceWatch.IsWatched(sv, d.Modes, d.Kind)) continue;
+                                Add("service:" + sv.Name.ToLowerInvariant(), r.Severity, $"Service {(sv.Display != "" && sv.Display != sv.Name ? sv.Display + " (" + sv.Name + ")" : sv.Name)} is {sv.State}.", null);
+                            }
+                        break;
+                    }
                     case "log":
                     {
                         var window = now.AddMinutes(-Math.Max(1, r.Minutes));
@@ -355,5 +373,26 @@ public static class Evaluator
             return number;
         }
         catch (Exception) { return null; }
+    }
+}
+
+
+/// <summary>Which services of a device are watched: the automatic ones, except those a person ignored or that stop by themselves (update helpers and per-user services), and any a person chose to watch.</summary>
+public static class ServiceWatch
+{
+    static readonly HashSet<string> Quiet = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "gupdate", "gupdatem", "edgeupdate", "edgeupdatem", "sppsvc", "MapsBroker", "ClipSVC", "RemoteRegistry", "WbioSrvc", "BITS", "DoSvc", "CDPSvc",
+        "TrustedInstaller", "tiledatamodelsvc", "dbupdate", "dbupdatem", "SysMain", "WSearch", "wuauserv", "UsoSvc", "WaaSMedicSvc", "gpsvc", "StorSvc",
+        "TabletInputService", "ShellHWDetection", "lfsvc", "DiagTrack", "RmSvc", "cloud-init", "cloud-init-local", "cloud-config", "cloud-final", "apt-daily", "apt-daily-upgrade",
+    };
+    /// <summary>Per-user Windows services carry a hexadecimal suffix after an underscore (for example CDPUserSvc_3a7b2).</summary>
+    static bool PerUser(string n) { var i = n.LastIndexOf('_'); return i > 0 && n.Length - i - 1 is >= 4 and <= 8 && n[(i + 1)..].All(Uri.IsHexDigit); }
+    public static bool IsDefaultQuiet(string name) => Quiet.Contains(name) || PerUser(name);
+    /// <summary>A person's choice wins; otherwise only servers watch their automatic services (computers are switched off and updated all the time).</summary>
+    public static bool IsWatched(ServiceInfo s, IReadOnlyDictionary<string, string> modes, string deviceKind)
+    {
+        if (modes.TryGetValue(s.Name.ToLowerInvariant(), out var m)) return m == "watch";
+        return deviceKind == "server" && s.Start == "auto" && !IsDefaultQuiet(s.Name);
     }
 }

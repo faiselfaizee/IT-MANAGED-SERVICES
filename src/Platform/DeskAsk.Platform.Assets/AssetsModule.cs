@@ -328,6 +328,11 @@ public sealed class AssetsSchema : ITenantSchema
               add column if not exists cost numeric(12,2),
               add column if not exists previous_id int references assets.amc(id) on delete set null;
             alter table assets.companies add column if not exists renewal_to text not null default ''"),
+        new(24, "every service of a computer, and which services a person chose to watch or ignore", @"
+            alter table assets.assets add column if not exists m_svc_inv jsonb not null default '[]';
+            alter table assets.assets add column if not exists m_svc_inv_at timestamptz;
+            create table if not exists assets.service_watch (
+              asset_id bigint not null references assets.assets(id) on delete cascade, name text not null, mode text not null check (mode in ('watch','ignore')), primary key (asset_id, name))"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -844,13 +849,13 @@ public sealed class AssetsModule : IPlatformModule
             await using var tx = await db.BeginTransactionAsync(ct);
             Dictionary<string, string> before = new(); int? typeId = null;
             int? assetCompany = null;
-            await using (var c = new NpgsqlCommand("select name, type_id, status, manufacturer, model, serial, location, assigned_to, purchase_date, purchase_cost, warranty_end, notes, custom, site_id, vendor_id, po_number, invoice_number, warranty_months, company_id from assets.assets where id = @i for update", db, tx))
+            await using (var c = new NpgsqlCommand("select name, type_id, status, manufacturer, model, serial, location, assigned_to, purchase_date, purchase_cost, warranty_end, notes, custom, site_id, vendor_id, po_number, invoice_number, warranty_months, ip_address, company_id from assets.assets where id = @i for update", db, tx))
             {
                 P(c, "i", id);
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 if (!await rd.ReadAsync(ct)) return Results.NotFound();
                 typeId = rd.IsDBNull(1) ? null : rd.GetInt32(1);
-                string[] names = { "name", "type_id", "status", "manufacturer", "model", "serial", "location", "assigned_to", "purchase_date", "purchase_cost", "warranty_end", "notes", "custom", "site_id", "vendor_id", "po_number", "invoice_number", "warranty_months" };
+                string[] names = { "name", "type_id", "status", "manufacturer", "model", "serial", "location", "assigned_to", "purchase_date", "purchase_cost", "warranty_end", "notes", "custom", "site_id", "vendor_id", "po_number", "invoice_number", "warranty_months", "ip_address" };
                 assetCompany = rd.IsDBNull(names.Length) ? null : rd.GetInt32(names.Length);
                 for (var i = 0; i < names.Length; i++) before[names[i]] = rd.IsDBNull(i) ? "" : rd.GetValue(i) is DateTime dt ? dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : rd.GetValue(i) is decimal dm ? Money(dm) : Convert.ToString(rd.GetValue(i), CultureInfo.InvariantCulture) ?? "";
             }

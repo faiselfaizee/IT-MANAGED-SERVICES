@@ -118,6 +118,11 @@ public sealed class MonitoringSchema : ITenantSchema
               ('Watched port down for 5 minutes', true, 'port', 0, 5, 'critical', '{network}', true, true, 'high', true);
             insert into monitoring.rules (name, enabled, metric, threshold, minutes, severity, kinds, mail, ticket, ticket_priority, builtin, event_kind, min_severity) values
               ('Critical message from a device', true, 'log', 1, 15, 'critical', '{}', true, false, 'high', true, '', 2)"),
+        new(3, "automatic services of servers, and services a person chose to watch", @"
+            alter table monitoring.rules drop constraint if exists rules_metric_check;
+            alter table monitoring.rules add constraint rules_metric_check check (metric in ('offline','cpu','memory','disk','check','cert','hardware','traffic','port','service','process','log','autoservice'));
+            insert into monitoring.rules (name, enabled, metric, threshold, minutes, severity, kinds, mail, ticket, ticket_priority, builtin) values
+              ('Automatic service stopped (servers, and services you chose to watch)', true, 'autoservice', 0, 0, 'warning', '{}', true, false, 'high', true)"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) => SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
 }

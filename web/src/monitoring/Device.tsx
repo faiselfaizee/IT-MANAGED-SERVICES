@@ -7,6 +7,7 @@ import { Pct, StatusBadge } from './Devices';
 import { AlertRows } from './Alerts';
 import { Ports } from './Ports';
 import { EventList } from './Events';
+import { Services } from './Services';
 
 const RANGES: [string, string][] = [['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days'], ['90d', '90 days']];
 
@@ -58,11 +59,13 @@ export default function Device({ id }: { id: string }) {
 
     {(d.ports ?? []).length > 0 && <><h2>Ports</h2><Ports id={id} ports={d.ports} at={d.portsAt} canEdit={canMute} onChange={reload} /></>}
 
-    {(d.watched ?? []).length > 0 && <><h2>Services and programs</h2>
-      <div className="table-wrap"><table><thead><tr><th>Name</th><th>Kind</th><th>State</th></tr></thead>
-        <tbody>{(d.watched as Rec[]).map((w) => <tr key={w.kind + w.name}><td>{w.name}</td><td>{w.kind === 'service' ? 'Service' : 'Program'}</td>
-          <td>{w.running ? <span className="badge ok">{w.kind === 'process' && w.count > 1 ? `Running (${w.count})` : 'Running'}</span> : <span className="badge bad">{w.state === 'missing' ? 'Not installed' : w.state[0].toUpperCase() + w.state.slice(1)}</span>}</td></tr>)}</tbody></table></div>
-      <p className="muted small">Alert rules of the kind "Service not running" or "Program not running" decide which ones the agent reports{d.watchedAt ? `; last report ${new Date(d.watchedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}` : ''}.</p></>}
+    {(d.agent || (d.services ?? []).length > 0) && <><h2>Services</h2>
+      <Services id={id} list={(d.services ?? []) as Rec[]} at={d.servicesAt} custom={(d.customServices ?? []) as string[]} watched={(d.watched ?? []) as Rec[]} canEdit={canMute} agent={!!d.agent} kind={d.kind} onChange={reload} /></>}
+    {(d.watched ?? []).some((w: Rec) => w.kind === 'process') && <><h2>Programs</h2>
+      <div className="table-wrap"><table><thead><tr><th>Name</th><th>State</th></tr></thead>
+        <tbody>{(d.watched as Rec[]).filter((w) => w.kind === 'process').map((w) => <tr key={w.name}><td>{w.name}</td>
+          <td>{w.running ? <span className="badge ok">{w.count > 1 ? `Running (${w.count})` : 'Running'}</span> : <span className="badge bad">Not running</span>}</td></tr>)}</tbody></table></div>
+      <p className="muted small">Alert rules of the kind "Program not running" decide which ones the agent reports.</p></>}
 
     <h2>Open and recent alerts</h2>
     {alerts.length === 0 ? <Empty>No alerts for this device.</Empty> : <AlertRows items={alerts} device onChange={reload} canAct={canMute} />}

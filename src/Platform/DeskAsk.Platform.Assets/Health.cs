@@ -65,6 +65,19 @@ public sealed class DeviceHealth : IDeviceHealth
                 await using var c = new NpgsqlCommand("update assets.assets set m_services = @s::jsonb, m_services_at = now() where id = @a", db);
                 AgentsApi.P(c, "s", JsonSerializer.Serialize(items)); AgentsApi.P(c, "a", ag.Value.AssetId); await c.ExecuteNonQueryAsync(ct);
             }
+            // the full list of services (every few minutes); Monitoring watches the automatic ones and the ones a person picked
+            if (b.ValueKind == JsonValueKind.Object && b.TryGetProperty("inventory", out var inv) && inv.ValueKind == JsonValueKind.Array)
+            {
+                var list = new List<object>();
+                foreach (var sv in Items(b, "inventory", 1500))
+                {
+                    var nm = AgentsApi.Clip(AgentsApi.Str(sv, "name"), 120); if (nm == "") continue;
+                    var st = AgentsApi.Clip(AgentsApi.Str(sv, "state"), 20); var sa = AgentsApi.Clip(AgentsApi.Str(sv, "start"), 12);
+                    list.Add(new { name = nm, display = AgentsApi.Clip(AgentsApi.Str(sv, "display"), 160), state = st == "" ? "unknown" : st, start = sa == "" ? "other" : sa });
+                }
+                await using var c = new NpgsqlCommand("update assets.assets set m_svc_inv = @s::jsonb, m_svc_inv_at = now() where id = @a", db);
+                AgentsApi.P(c, "s", JsonSerializer.Serialize(list)); AgentsApi.P(c, "a", ag.Value.AssetId); await c.ExecuteNonQueryAsync(ct);
+            }
             var evs = Items(b, "events", 100).Select(e => (ag.Value.AssetId, Kind: "eventlog", Sev: Math.Clamp(e.TryGetProperty("severity", out var sv) && sv.ValueKind == JsonValueKind.Number ? sv.GetInt32() : 3, 0, 7),
                 Source: AgentsApi.Clip(AgentsApi.Str(e, "source"), 120), Id: e.TryGetProperty("id", out var iv) && iv.ValueKind == JsonValueKind.Number ? iv.GetInt32() : 0,
                 Text: AgentsApi.Clip(((AgentsApi.Str(e, "log") ?? "") is { Length: > 0 } lg ? lg + ": " : "") + (AgentsApi.Str(e, "text") ?? ""), 1000))).ToList();
@@ -81,7 +94,14 @@ public sealed class DeviceHealth : IDeviceHealth
                 }
                 w = await watch.ForAsync(ag.Value.AssetId, kind, company, ct);
             }
-            return Results.Ok(new { every = Every(cfg), watch = new { services = w?.Services ?? Array.Empty<string>(), processes = w?.Processes ?? Array.Empty<string>() }, events = w?.Events ?? false });
+            // services a person chose to watch on this device are reported every minute, with the ones the rules name (50 at most)
+            var names = new List<string>(w?.Services ?? Array.Empty<string>());
+            await using (var c = new NpgsqlCommand("select name from assets.service_watch where asset_id = @a and mode = 'watch' order by name limit 50", db))
+            {
+                AgentsApi.P(c, "a", ag.Value.AssetId); await using var rd = await c.ExecuteReaderAsync(ct);
+                while (await rd.ReadAsync(ct)) if (!names.Contains(rd.GetString(0), StringComparer.OrdinalIgnoreCase)) names.Add(rd.GetString(0));
+            }
+            return Results.Ok(new { every = Every(cfg), watch = new { services = names.Take(50).ToArray(), processes = w?.Processes ?? Array.Empty<string>() }, events = w?.Events ?? false });
         }).RequireModule(key);
     }
 
@@ -179,11 +199,17 @@ public sealed class DeviceHealth : IDeviceHealth
             Bind(c); await using var rd = await c.ExecuteReaderAsync(ct);
             while (await rd.ReadAsync(ct)) watchSet[(rd.GetInt64(0), rd.GetString(1))] = rd.GetBoolean(2);
         }
+        var svcModes = new Dictionary<long, Dictionary<string, string>>();
+        await using (var c = new NpgsqlCommand($"select w.asset_id, w.name, w.mode from assets.service_watch w join assets.assets a on a.id = w.asset_id where {where}", db))
+        {
+            Bind(c); await using var rd = await c.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct)) { if (!svcModes.TryGetValue(rd.GetInt64(0), out var m)) svcModes[rd.GetInt64(0)] = m = new(); m[rd.GetString(1).ToLowerInvariant()] = rd.GetString(2); }
+        }
         var outList = new List<DeviceState>();
         await using (var c = new NpgsqlCommand($@"select a.id, a.tag, a.name, a.company_id, coalesce(co.name, ''), {AssetDash.KindSql}, a.ip_address, trim(a.os_name || ' ' || a.os_version),
                 g.id is not null, coalesce(g.version, ''), g.last_seen, case when a.collector_id <> '' and a.monitor <> '' then a.check_up end, a.check_down_at, a.check_rtt, a.checked_at,
                 a.m_at, a.m_cpu, a.m_mem, a.m_mem_total, a.m_uptime, a.m_disks::text, coalesce(a.hw_extra->'datastores', '[]')::text,
-                a.m_ports::text, a.m_ports_at, a.m_services::text, a.m_services_at
+                a.m_ports::text, a.m_ports_at, a.m_services::text, a.m_services_at, a.m_svc_inv::text, a.m_svc_inv_at
             from assets.assets a left join assets.types t on t.id = a.type_id left join assets.companies co on co.id = a.company_id
             left join assets.agents g on g.id = a.agent_id and g.deleted_at is null
             where {where} order by a.id", db))
@@ -215,11 +241,15 @@ public sealed class DeviceHealth : IDeviceHealth
                 var watched = new List<WatchedItem>();
                 foreach (var w in JsonDocument.Parse(rd.GetString(24)).RootElement.EnumerateArray())
                     watched.Add(new WatchedItem(AgentsApi.Str(w, "name") ?? "", AgentsApi.Str(w, "kind") ?? "", Bool(w, "running"), AgentsApi.Str(w, "state") ?? "", (int)D(w, "count")));
+                var inventory = new List<ServiceInfo>();
+                foreach (var sv in JsonDocument.Parse(rd.GetString(26)).RootElement.EnumerateArray())
+                    inventory.Add(new ServiceInfo(AgentsApi.Str(sv, "name") ?? "", AgentsApi.Str(sv, "display") ?? "", AgentsApi.Str(sv, "state") ?? "", AgentsApi.Str(sv, "start") ?? ""));
                 outList.Add(new DeviceState(id, rd.GetString(1), rd.GetString(2), rd.IsDBNull(3) ? null : rd.GetInt32(3), rd.IsDBNull(3) ? "No customer" : rd.GetString(4), rd.GetString(5), rd.GetString(6), rd.GetString(7),
                     rd.GetBoolean(8), rd.GetString(9), rd.IsDBNull(10) ? null : rd.GetDateTime(10), rd.IsDBNull(11) ? null : rd.GetBoolean(11), rd.IsDBNull(12) ? null : rd.GetDateTime(12), rd.GetInt32(13), rd.IsDBNull(14) ? null : rd.GetDateTime(14),
                     mAt, rd.IsDBNull(16) ? null : rd.GetFloat(16), rd.IsDBNull(17) ? null : rd.GetFloat(17), rd.GetInt64(18), rd.GetInt64(19), disks,
                     checks.TryGetValue(id, out var ck) ? ck : Array.Empty<CheckState>(), faults.TryGetValue(id, out var fl) ? fl : Array.Empty<PartFault>(),
-                    ports, rd.IsDBNull(23) ? null : rd.GetDateTime(23), watched, rd.IsDBNull(25) ? null : rd.GetDateTime(25)));
+                    ports, rd.IsDBNull(23) ? null : rd.GetDateTime(23), watched, rd.IsDBNull(25) ? null : rd.GetDateTime(25),
+                    inventory, rd.IsDBNull(27) ? null : rd.GetDateTime(27), svcModes.TryGetValue(id, out var sm) ? sm : null));
             }
         }
         return outList;
@@ -277,6 +307,15 @@ public sealed class DeviceHealth : IDeviceHealth
         await using var c = new NpgsqlCommand(watched == null ? "delete from assets.port_watch where asset_id = @a and if_index = @i"
             : "insert into assets.port_watch (asset_id, if_index, watched) values (@a, @i, @w) on conflict (asset_id, if_index) do update set watched = excluded.watched", db);
         AgentsApi.P(c, "a", assetId); AgentsApi.P(c, "i", port); if (watched != null) AgentsApi.P(c, "w", watched.Value);
+        await c.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task SetServiceModeAsync(long assetId, string service, string? mode, CancellationToken ct = default)
+    {
+        await using var db = await Open(ct);
+        await using var c = new NpgsqlCommand(mode == null ? "delete from assets.service_watch where asset_id = @a and lower(name) = lower(@n)"
+            : "insert into assets.service_watch (asset_id, name, mode) values (@a, @n, @m) on conflict (asset_id, name) do update set mode = excluded.mode", db);
+        AgentsApi.P(c, "a", assetId); AgentsApi.P(c, "n", service); if (mode != null) AgentsApi.P(c, "m", mode);
         await c.ExecuteNonQueryAsync(ct);
     }
 
