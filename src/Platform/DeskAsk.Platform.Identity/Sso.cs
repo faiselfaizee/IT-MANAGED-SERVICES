@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using DeskAsk.Platform.Tenancy;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
@@ -11,6 +12,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DeskAsk.Platform.Identity;
 
@@ -163,7 +165,7 @@ public static class SsoEndpoints
         g.MapPut("", async (JsonElement b, ISettings st, IDataProtectionProvider dp, IAuditLog audit, CancellationToken ct) =>
         {
             var old = await EntraConfig.LoadAsync(st, dp, ct);
-            bool Has(string n, out JsonElement v) => b.ValueKind == JsonValueKind.Object && b.TryGetProperty(n, out v);
+            bool Has(string n, out JsonElement v) { v = default; return b.ValueKind == JsonValueKind.Object && b.TryGetProperty(n, out v); }
             string T(string n, string cur) => Has(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()!.Trim() : cur;
             var tenantId = T("tenantId", old.TenantId); var clientId = T("clientId", old.ClientId);
             var secret = Has("secret", out var sv) && sv.ValueKind == JsonValueKind.String && sv.GetString() != "" ? sv.GetString()!.Trim() : old.Secret;
