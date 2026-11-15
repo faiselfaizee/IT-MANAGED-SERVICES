@@ -1,3 +1,4 @@
+import { PurchaseFields, purchaseBody } from './Purchase';
 import { useState } from 'react';
 import { usePerms } from '../perms';
 import { api, go, openPage, saveFile, useLoad, type Rec } from '../http';
@@ -72,7 +73,8 @@ function Overview({ id, d, reload, admin }: { id: string; d: Rec; reload: () => 
   return <div className="grid">
     <Card title="Identity"><Dl rows={[['Make', i.make], ['Model', i.model], ['Serial number', i.serial], ['BIOS', i.bios], ['Processor', [i.cpuMake, i.cpuModel].filter(Boolean).join(' ')], ['Sockets / cores', i.cpus ? `${i.cpus} / ${i.cores}${i.logical ? ` (${i.logical} threads)` : ''}` : ''], ['Memory', i.ramBytes ? fmtBytes(i.ramBytes) : ''], ['Storage', i.storageBytes ? fmtBytes(i.storageBytes) : '']]} /></Card>
     <Card title="System"><Dl rows={[['Host name', s.hostname], ['DNS name', s.dnsName], ['IP address', s.ip], ['Domain', s.domainType ? `${s.domainType}${s.domain ? ': ' + s.domain : ''}` : ''], ['Operating system', [s.os, s.osVersion].filter(Boolean).join(' ')], ['Antivirus', s.antivirus ? <Badge tone={s.antivirus === 'Protected' ? 'ok' : 'warn'}>{s.antivirus}</Badge> : ''], ['Last patch', s.lastPatch], ['Uptime', s.uptimeSeconds ? fmtUptime(s.uptimeSeconds) : '']]} /></Card>
-    <Card title="Ownership"><Dl rows={[['Customer', d.company || '(own)'], ['Category', d.category], ['Status', d.status], ['Assigned to', o.assignedTo], ['Location', o.location], ['Purchased', o.purchaseDate], ['Warranty ends', o.warrantyEnd ? <>{fmtDay(o.warrantyEnd)} {warrantyLeft !== null && <Badge tone={warrantyLeft < 0 ? 'bad' : warrantyLeft < 60 ? 'warn' : 'ok'}>{warrantyLeft < 0 ? 'expired' : warrantyLeft + ' days left'}</Badge>}</> : ''], ['AMC', o.amc || (o.underAmc ? 'Yes' : '')], ['Notes', o.notes]]} /></Card>
+    <Card title="Ownership"><Dl rows={[['Customer', d.company || '(own)'], ['Category', d.category], ['Status', d.status], ['Assigned to', o.assignedTo], ['Site', o.site ? `${o.site}${o.siteCode ? ` (${o.siteCode})` : ''}` : ''], ['Room or area', o.location],
+      ['Vendor', o.vendor], ['Purchase order', o.poNumber], ['Invoice', o.invoiceNumber], ['Purchased', o.purchaseDate], ['Warranty period', o.warrantyMonths ? `${o.warrantyMonths} months` : ''], ['Warranty ends', o.warrantyEnd ? <>{fmtDay(o.warrantyEnd)} {warrantyLeft !== null && <Badge tone={warrantyLeft < 0 ? 'bad' : warrantyLeft < 60 ? 'warn' : 'ok'}>{warrantyLeft < 0 ? 'expired' : warrantyLeft + ' days left'}</Badge>}</> : ''], ['AMC', o.amc || (o.underAmc ? 'Yes' : '')], ['Notes', o.notes]]} /></Card>
     <Card title="Agent &amp; remote access">
       <Dl rows={[['Agent', a.id ? (a.online ? 'Online' : 'Offline') : 'None'], ['Last seen', a.lastSeen ? `${ago(a.lastSeen)} (${fmtDate(a.lastSeen)})` : ''], ['Data from', a.source], ['Inventory at', a.inventoryAt ? fmtDate(a.inventoryAt) : '']]} />
       <p><label><input type="checkbox" checked={rm.assetAllows} onChange={async (e) => { await api(`/api/assets/${id}/remote`, { body: { on: e.target.checked } }); reload(); }} /> Allow remote commands, shell and remote control on this device</label></p>
@@ -163,18 +165,25 @@ export function QrDialog({ id, tag, onClose }: { id: string; tag: string; onClos
 const STATUS_CHOICES = ['stock', 'in_use', 'repair', 'retired', 'lost'];
 
 function EditAsset({ id, d, onClose }: { id: string; d: Rec; onClose: (changed: boolean) => void }) {
-  const [v, setV] = useState({ name: d.name ?? '', status: d.status ?? 'in_use', manufacturer: d.identity?.make ?? '', model: d.identity?.model ?? '', serial: d.identity?.serial ?? '',
-    location: d.ownership?.location ?? '', assignedTo: d.ownership?.assignedTo ?? '', purchaseDate: d.ownership?.purchaseDate ?? '', warrantyEnd: d.ownership?.warrantyEnd ?? '' });
+  const full = useLoad<Rec>(`/api/assets/${id}`);
+  const a = (full.data?.asset ?? null) as Rec | null;
+  if (!a) return <Modal title={`Edit ${d.tag}`} onClose={() => onClose(false)}><Loading loading error={full.error} /></Modal>;
+  return <EditForm id={id} d={d} a={a} onClose={onClose} />;
+}
+function EditForm({ id, d, a, onClose }: { id: string; d: Rec; a: Rec; onClose: (changed: boolean) => void }) {
+  const [v, setV] = useState<Rec>({ name: a.name ?? '', status: a.status ?? 'in_use', manufacturer: a.manufacturer ?? '', model: a.model ?? '', serial: a.serial ?? '', assignedTo: a.assignedTo ?? '',
+    location: a.location ?? '', siteId: a.siteId ?? null, vendorId: a.vendorId ?? null, poNumber: a.poNumber ?? '', invoiceNumber: a.invoiceNumber ?? '',
+    purchaseDate: a.purchaseDate ?? '', warrantyMonths: a.warrantyMonths ?? null, warrantyEnd: a.warrantyEnd ?? '' });
   const f = useSubmit(() => onClose(true)); const set = (k: string, x: string) => setV({ ...v, [k]: x });
   return <Modal title={`Edit ${d.tag}`} onClose={() => onClose(false)}><div className="form">
     <Field label="Name"><input value={v.name} onChange={(e) => set('name', e.target.value)} autoFocus /></Field>
-    <Field label="Status"><select value={v.status} onChange={(e) => set('status', e.target.value)}>{STATUS_CHOICES.map((x) => <option key={x} value={x}>{x.replace('_', ' ')}</option>)}</select></Field>
-    <div className="row"><Field label="Manufacturer"><input value={v.manufacturer} onChange={(e) => set('manufacturer', e.target.value)} /></Field><Field label="Model"><input value={v.model} onChange={(e) => set('model', e.target.value)} /></Field></div>
-    <div className="row"><Field label="Serial number"><input value={v.serial} onChange={(e) => set('serial', e.target.value)} /></Field><Field label="Location"><input value={v.location} onChange={(e) => set('location', e.target.value)} /></Field></div>
-    <Field label="Assigned to"><input value={v.assignedTo} onChange={(e) => set('assignedTo', e.target.value)} /></Field>
-    <div className="row"><Field label="Purchase date"><input type="date" value={String(v.purchaseDate).slice(0, 10)} onChange={(e) => set('purchaseDate', e.target.value)} /></Field><Field label="Warranty ends"><input type="date" value={String(v.warrantyEnd).slice(0, 10)} onChange={(e) => set('warrantyEnd', e.target.value)} /></Field></div>
+    <div className="row"><Field label="Status"><select value={v.status} onChange={(e) => set('status', e.target.value)}>{STATUS_CHOICES.map((x) => <option key={x} value={x}>{x.replace('_', ' ')}</option>)}</select></Field>
+      <Field label="Assigned to (name or email)"><input value={v.assignedTo} onChange={(e) => set('assignedTo', e.target.value)} /></Field></div>
+    <div className="row"><Field label="Manufacturer"><input value={v.manufacturer} onChange={(e) => set('manufacturer', e.target.value)} /></Field><Field label="Model"><input value={v.model} onChange={(e) => set('model', e.target.value)} /></Field><Field label="Serial number"><input value={v.serial} onChange={(e) => set('serial', e.target.value)} /></Field></div>
+    <PurchaseFields v={v} set={(p) => setV({ ...v, ...p })} companyId={a.companyId} />
+    {!a.companyId && <p className="muted small">Set the customer (Ownership) to choose a site.</p>}
     <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button>
-      <button className="primary" disabled={f.busy || !v.name.trim()} onClick={() => f.submit(() => api(`/api/assets/${id}`, { method: 'PUT', body: { ...v, purchaseDate: v.purchaseDate || null, warrantyEnd: v.warrantyEnd || null } }))}>Save</button></div></div></Modal>;
+      <button className="primary" disabled={f.busy || !String(v.name).trim()} onClick={() => f.submit(() => api(`/api/assets/${id}`, { method: 'PUT', body: { name: v.name, status: v.status, manufacturer: v.manufacturer, model: v.model, serial: v.serial, assignedTo: v.assignedTo, ...purchaseBody(v) } }))}>Save</button></div></div></Modal>;
 }
 
 function AskDelete({ id, d, onClose }: { id: string; d: Rec; onClose: () => void }) {

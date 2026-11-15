@@ -594,8 +594,8 @@ public sealed class AssetsModule : IPlatformModule
         var vendorF = q["vendor"].ToString(); int vendorId = 0; if (vendorF != "" && vendorF != "none" && !int.TryParse(vendorF, out vendorId)) return ("vendor must be a vendor id or none", "", _ => { });
         var w = new List<string>
         {
-            "(@q = '' or a.name ilike @l or a.tag ilike @l or a.serial ilike @l or a.model ilike @l or a.assigned_to ilike @l or a.location ilike @l or a.po_number ilike @l or a.invoice_number ilike @l
-              or exists (select 1 from assets.places sx where sx.id = a.site_id and (sx.name ilike @l or sx.code ilike @l)))",
+            "(@q = '' or a.name ilike @l or a.tag ilike @l or a.serial ilike @l or a.model ilike @l or a.assigned_to ilike @l or a.location ilike @l or a.po_number ilike @l or a.invoice_number ilike @l"
+              + " or exists (select 1 from assets.places sx where sx.id = a.site_id and (sx.name ilike @l or sx.code ilike @l)))",
             "(@st = '' or a.status = @st) and (@ty = 0 or a.type_id = @ty) and (@as = '' or lower(a.assigned_to) = lower(@as))",
         };
         if (agentF != "") w.Add("a.status not in ('retired','lost') and " + AssetDash.Where("agent", agentF));
