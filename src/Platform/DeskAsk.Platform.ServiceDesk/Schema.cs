@@ -124,6 +124,15 @@ public sealed class ServiceDeskSchema : ITenantSchema
               required boolean not null default false, staff_only boolean not null default false, active boolean not null default true,
               position int not null default 0, created_at timestamptz not null default now());
             alter table servicedesk.tickets add column if not exists custom jsonb not null default '{}'::jsonb"),
+        new(7, "incidents and service requests, impact and urgency, major incidents", @"
+            alter table servicedesk.tickets add column if not exists kind text not null default 'incident';
+            alter table servicedesk.tickets drop constraint if exists tickets_kind_check;
+            alter table servicedesk.tickets add constraint tickets_kind_check check (kind in ('incident','request'));
+            alter table servicedesk.tickets add column if not exists impact text not null default '';
+            alter table servicedesk.tickets add column if not exists urgency text not null default '';
+            alter table servicedesk.tickets add column if not exists major boolean not null default false;
+            alter table servicedesk.tickets add column if not exists major_at timestamptz;
+            create index if not exists tickets_kind on servicedesk.tickets (kind, status)"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
         SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);

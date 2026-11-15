@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { api, go, saveFile, upload, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Err, Loading, fmtDate, fmtBytes, useSubmit } from '../ui';
 import { CustomCard, useFields } from './Fields';
-import { PRIORITY, PriorityBadge, STATUS, SlaBadge, StatusBadge } from './List';
+import { KIND, KindBadge, LEVEL, PRIORITY, PriorityBadge, STATUS, SlaBadge, StatusBadge } from './List';
 
 export default function Detail({ id }: { id: string }) {
   const { data, error, loading, reload } = useLoad<Rec>('/api/servicedesk/tickets/' + id);
@@ -20,7 +20,7 @@ export default function Detail({ id }: { id: string }) {
   return <>
     <p><a href="#/servicedesk">← All tickets</a></p>
     <h1>{t.number} {t.subject}</h1>
-    <div className="tools"><StatusBadge s={t.status} /><PriorityBadge p={t.priority} /><SlaBadge s={t.sla} />{t.category && <Badge>{t.category}</Badge>}</div>
+    <div className="tools"><KindBadge k={t.kind} major={t.major} /><StatusBadge s={t.status} /><PriorityBadge p={t.priority} /><SlaBadge s={t.sla} />{t.category && <Badge>{t.category}</Badge>}</div>
     <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(260px, 1fr)', alignItems: 'start' }}>
       <div>
         {t.description && <Card title="Description"><p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{t.description}</p></Card>}
@@ -54,11 +54,16 @@ export default function Detail({ id }: { id: string }) {
         {can.edit && <Assist id={id} t={t} patch={patch} fill={setBody} />}
         <Card title="Details">
           {can.edit ? <div className="form">
+            <label><span>Type</span><select value={t.kind} onChange={(e) => patch({ kind: e.target.value })}>{Object.entries(KIND).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></label>
+            {t.kind === 'incident' && <div className="row">
+              <label><span>Impact</span><select value={t.impact} onChange={(e) => patch({ impact: e.target.value })}><option value="">Not set</option>{Object.entries(LEVEL).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></label>
+              <label><span>Urgency</span><select value={t.urgency} onChange={(e) => patch({ urgency: e.target.value })}><option value="">Not set</option>{Object.entries(LEVEL).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></label></div>}
+            {t.kind === 'incident' && <label className="check"><input type="checkbox" checked={!!t.major} onChange={(e) => patch({ major: e.target.checked })} /> Major incident (many people affected, handled first)</label>}
             <label><span>Priority</span><select value={t.priority} onChange={(e) => patch({ priority: e.target.value })}>{Object.entries(PRIORITY).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></label>
             <label><span>Assigned to</span><select value={t.assigneeId ?? ''} onChange={(e) => patch({ assigneeId: e.target.value || null })}><option value="">Unassigned</option>{staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
             <label><span>Category</span><select value={t.category} onChange={(e) => patch({ category: e.target.value })}><option value="">None</option>{cats.map((c) => <option key={c}>{c}</option>)}</select></label>
           </div> : null}
-          <Dl rows={[['Company', t.company], ['Raised by', [t.requester, t.requesterEmail].filter(Boolean).join(' · ')], ['Asset', t.asset], ['Opened', fmtDate(t.createdAt)],
+          <Dl rows={[['Type', KIND[t.kind] ?? t.kind], ...(!can.edit && t.kind === 'incident' ? [['Impact', LEVEL[t.impact] ?? ''] as [string, string], ['Urgency', LEVEL[t.urgency] ?? ''] as [string, string]] : []), ['Company', t.company], ['Raised by', [t.requester, t.requesterEmail].filter(Boolean).join(' · ')], ['Asset', t.asset], ['Opened', fmtDate(t.createdAt)],
             ...(can.edit ? [['Assigned to', ''] as [string, string]] : [['Assigned to', t.assignee] as [string, string]]),
             ['First reply', t.firstResponseAt ? fmtDate(t.firstResponseAt) : t.paused ? 'Paused' : 'Not yet'], ['Reply due', fmtDate(t.respondDue)], ['Resolution due', t.paused ? 'Paused while waiting for the customer' : fmtDate(t.resolveDue)],
             ['Resolved', t.resolvedAt ? fmtDate(t.resolvedAt) : '']]} />

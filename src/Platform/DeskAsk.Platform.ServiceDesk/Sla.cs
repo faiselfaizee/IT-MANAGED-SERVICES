@@ -8,6 +8,16 @@ namespace DeskAsk.Platform.ServiceDesk;
 public sealed class SlaConfig
 {
     public static readonly string[] Prios = { "critical", "high", "medium", "low" };
+    public static readonly string[] Levels = { "low", "medium", "high" };
+
+    /// <summary>The priority an incident gets from how many people it hurts (impact) and how soon it must be fixed (urgency), as in ITIL.</summary>
+    public static string PriorityFor(string impact, string urgency) => (impact, urgency) switch
+    {
+        ("high", "high") => "critical",
+        ("high", "medium") or ("medium", "high") => "high",
+        ("medium", "medium") or ("high", "low") or ("low", "high") => "medium",
+        _ => "low",
+    };
     public Dictionary<string, double> Respond = new() { ["critical"] = 1, ["high"] = 2, ["medium"] = 4, ["low"] = 8 };
     public Dictionary<string, double> Resolve = new() { ["critical"] = 4, ["high"] = 8, ["medium"] = 24, ["low"] = 72 };
     public int WarnPct = 75;

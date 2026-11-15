@@ -18,13 +18,16 @@ export default function ServiceDeskApp() {
   if (isId) page = <Detail id={a} />;
   else if (a === 'changes' && sees) page = b === 'new' && staff ? <NewChange /> : /^\d+$/.test(b ?? '') ? <ChangeDetail id={b} staff={staff} admin={admin} myId={m?.id} /> : <ChangeList staff={staff} />;
   else if (a === 'problems' && sees) page = b === 'new' && staff ? <NewProblem /> : /^\d+$/.test(b ?? '') ? <ProblemDetail id={b} staff={staff} /> : <ProblemList staff={staff} />;
+  else if (a === 'incidents') page = <List key="incidents" me={m} kind="incident" />;
+  else if (a === 'major') page = <List key="major" me={m} kind="incident" major />;
+  else if (a === 'requests') page = <List key="requests" me={m} kind="request" />;
   else if (a === 'new') page = <NewTicket me={m} />;
   else if (a === 'settings' && admin) page = <Settings />;
   else if (a === 'reports' && (sees || m?.role === 'cadmin')) page = <Reports staff={sees} />;
   else if (a === 'connections' && admin) page = <Integrations />;
   else if (a === 'people' && admin) page = <People />;
-  else page = <List me={m} />;
-  const nav: [string, string, boolean][] = [['', 'Tickets', true], ['new', 'New ticket', !!m?.canRaise], ['changes', 'Changes', sees], ['problems', 'Problems', sees], ['reports', 'Reports', sees || m?.role === 'cadmin'], ['people', 'Customer users', admin], ['connections', 'Connections', admin], ['settings', 'Settings', admin]];
+  else page = <List key="all" me={m} />;
+  const nav: [string, string, boolean][] = [['', 'Tickets', true], ['incidents', 'Incidents', true], ['major', 'Major incidents', sees], ['requests', 'Service requests', true], ['new', 'New ticket', !!m?.canRaise], ['changes', 'Changes', sees], ['problems', 'Problems', sees], ['reports', 'Reports', sees || m?.role === 'cadmin'], ['people', 'Customer users', admin], ['connections', 'Connections', admin], ['settings', 'Settings', admin]];
   const section = isId ? '' : a ?? '';
   return <>
     <nav className="sub" aria-label="Service Desk">{nav.filter(([, , show]) => show).map(([k, l]) => <a key={k} href={'#/servicedesk' + (k ? '/' + k : '')} className={section === k ? 'on' : ''}>{l}</a>)}</nav>

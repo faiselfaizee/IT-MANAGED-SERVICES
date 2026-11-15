@@ -17,7 +17,7 @@ public static class TicketsApi
     const int MaxAttachment = 10 * 1024 * 1024;
 
     const string Cols = @"t.id, t.number, t.subject, t.description, t.status, t.priority, t.category, t.company_id, t.company_name, t.requester_id, t.requester_name, t.requester_email,
-        t.assignee_id, t.assignee_name, t.asset_id, t.asset_name, t.source, t.created_at, t.updated_at, t.first_response_at, t.resolved_at, t.closed_at, t.respond_due, t.resolve_due, t.paused_at, t.paused_s, t.created_by";
+        t.assignee_id, t.assignee_name, t.asset_id, t.asset_name, t.source, t.created_at, t.updated_at, t.first_response_at, t.resolved_at, t.closed_at, t.respond_due, t.resolve_due, t.paused_at, t.paused_s, t.created_by, t.kind, t.impact, t.urgency, t.major, t.major_at";
 
     static DateTime? Dt(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetDateTime(i);
 
@@ -35,6 +35,7 @@ public static class TicketsApi
             assetId = r.IsDBNull(14) ? (long?)null : r.GetInt64(14), asset = r.GetString(15), source = r.GetString(16),
             createdAt = created, updatedAt = r.GetDateTime(18), firstResponseAt = Dt(r, 19), resolvedAt = resolved, closedAt = Dt(r, 21),
             respondDue = Dt(r, 22), resolveDue = due, paused = paused != null, sla = state, respond = respondState,
+            kind = r.GetString(27), impact = r.GetString(28), urgency = r.GetString(29), major = r.GetBoolean(30), majorAt = Dt(r, 31),
         };
     }
 
@@ -103,6 +104,8 @@ public static class TicketsApi
                 P(c, "st", l); where.Add("t.status = any(@st)");
             }
             if (q["priority"].ToString() is { Length: > 0 } pr) { if (!Prios.Contains(pr)) return Bad("bad_priority"); P(c, "pr", pr); where.Add("t.priority = @pr"); }
+            if (q["kind"].ToString() is { Length: > 0 } kd) { if (kd is not ("incident" or "request")) return Bad("bad_kind", "kind must be incident or request"); P(c, "kd", kd); where.Add("t.kind = @kd"); }
+            if (q["major"] == "1") where.Add("t.major");
             if (q["category"].ToString() is { Length: > 0 } cat) { P(c, "cat", cat); where.Add("t.category = @cat"); }
             if (q["company"].ToString() is { Length: > 0 } co && int.TryParse(co, out var coId)) { P(c, "co", coId); where.Add("t.company_id = @co"); }
             var a = q["assignee"].ToString();
@@ -182,7 +185,7 @@ public static class TicketsApi
             var w = await WhoAsync(u, db, ct);
             if (w.Role == "viewer" || (!w.Staff && !w.Customer)) return Forbidden("Your role cannot open tickets.");
             if (w.Customer && (w.CompanyId == null || !w.MayRaise)) return Forbidden(w.CompanyId == null ? "Your account is not linked to a company yet. Ask your administrator." : "You may not open tickets.");
-            string subject, description, category, priority; int? company; long? assetId = null; string assetName = ""; Guid? requesterId = w.Id == Guid.Empty ? null : w.Id; string rName = w.Name, rEmail = w.Email;
+            string subject, description, category, priority, kind = "incident", impact = "", urgency = ""; int? company; long? assetId = null; string assetName = ""; Guid? requesterId = w.Id == Guid.Empty ? null : w.Id; string rName = w.Name, rEmail = w.Email;
             try
             {
                 if (b.ValueKind != JsonValueKind.Object) throw new FormatException("the body must be a JSON object");
@@ -191,6 +194,12 @@ public static class TicketsApi
                 category = Text(b, "category", 60, out _) ?? "";
                 priority = Text(b, "priority", 20, out var hasP) ?? "medium"; if (!hasP || priority == "") priority = "medium";
                 if (!Prios.Contains(priority)) throw new FormatException("priority must be one of " + string.Join(", ", Prios));
+                kind = Text(b, "kind", 20, out var hasK) ?? "incident"; if (!hasK || kind == "") kind = "incident";
+                if (kind is not ("incident" or "request")) throw new FormatException("kind must be incident or request");
+                impact = Text(b, "impact", 10, out _) ?? ""; urgency = Text(b, "urgency", 10, out _) ?? "";
+                if ((impact != "" && !SlaConfig.Levels.Contains(impact)) || (urgency != "" && !SlaConfig.Levels.Contains(urgency))) throw new FormatException("impact and urgency must be low, medium or high");
+                // when no priority was chosen, impact and urgency decide it
+                if (!hasP && impact != "" && urgency != "") priority = SlaConfig.PriorityFor(impact, urgency);
                 company = w.Customer ? w.CompanyId : null;
                 if (w.Staff)
                 {
@@ -226,15 +235,15 @@ public static class TicketsApi
 
             var sla = await SlaConfig.LoadAsync(s, ct);
             await using var c = new NpgsqlCommand(@"insert into servicedesk.tickets
-                (subject, description, priority, category, company_id, company_name, requester_id, requester_name, requester_email, asset_id, asset_name, source, created_by, custom, respond_due, resolve_due)
-                values (@s, @d, @p, @cat, @co, @con, @ri, @rn, @re, @ai, @an, 'web', @by, @cu::jsonb, now() + make_interval(secs => @rp * 3600), now() + make_interval(secs => @rs * 3600))
+                (subject, description, priority, category, company_id, company_name, requester_id, requester_name, requester_email, asset_id, asset_name, source, created_by, custom, kind, impact, urgency, respond_due, resolve_due)
+                values (@s, @d, @p, @cat, @co, @con, @ri, @rn, @re, @ai, @an, 'web', @by, @cu::jsonb, @kd, @im, @ur, now() + make_interval(secs => @rp * 3600), now() + make_interval(secs => @rs * 3600))
                 returning id, number", db);
             P(c, "s", subject); P(c, "d", description); P(c, "p", priority); P(c, "cat", category); P(c, "co", company); P(c, "con", companyName);
             P(c, "ri", requesterId); P(c, "rn", rName); P(c, "re", rEmail); P(c, "ai", assetId); P(c, "an", assetName); P(c, "by", w.Email);
-            P(c, "rp", sla.Respond[priority]); P(c, "rs", sla.Resolve[priority]); P(c, "cu", CustomFields.ToJson(custom));
+            P(c, "rp", sla.Respond[priority]); P(c, "rs", sla.Resolve[priority]); P(c, "cu", CustomFields.ToJson(custom)); P(c, "kd", kind); P(c, "im", impact); P(c, "ur", urgency);
             long id; string number;
             await using (var rd = await c.ExecuteReaderAsync(ct)) { await rd.ReadAsync(ct); id = rd.GetInt64(0); number = rd.GetString(1); }
-            await Event(db, id, "ticket.created", new { number, priority, company }, ct);
+            await Event(db, id, "ticket.created", new { number, priority, company, kind }, ct);
             await audit.WriteAsync("servicedesk.ticket_created", number, subject, ct: ct);
             await Tell(mailq, users, db, id, "created", description, w, ct);
             return Results.Created("/api/servicedesk/tickets/" + id, new { id, number });
@@ -262,6 +271,24 @@ public static class TicketsApi
                 }
                 var pr = Text(b, "priority", 20, out var hasP);
                 if (hasP) { if (!Prios.Contains(pr)) throw new FormatException("priority must be one of " + string.Join(", ", Prios)); sets.Add("priority = @priority"); P(c, "priority", pr); notes.Add("priority: " + pr); priorityChanged = true; }
+                var kd = Text(b, "kind", 20, out var hasKd);
+                if (hasKd) { if (kd is not ("incident" or "request")) throw new FormatException("kind must be incident or request"); sets.Add("kind = @kind"); P(c, "kind", kd); notes.Add("type: " + (kd == "incident" ? "incident" : "service request")); }
+                var im = Text(b, "impact", 10, out var hasIm); var ur = Text(b, "urgency", 10, out var hasUr);
+                if ((hasIm && im != "" && !SlaConfig.Levels.Contains(im)) || (hasUr && ur != "" && !SlaConfig.Levels.Contains(ur))) throw new FormatException("impact and urgency must be low, medium or high");
+                if (hasIm) { sets.Add("impact = @impact"); P(c, "impact", im); notes.Add("impact: " + (im == "" ? "not set" : im)); }
+                if (hasUr) { sets.Add("urgency = @urgency"); P(c, "urgency", ur); notes.Add("urgency: " + (ur == "" ? "not set" : ur)); }
+                if ((hasIm || hasUr) && !hasP)
+                {   // a change of impact or urgency sets the priority again once both are known
+                    await using var cur = new NpgsqlCommand("select impact, urgency from servicedesk.tickets where id = @id", db); P(cur, "id", id);
+                    string i0 = "", u0 = ""; await using (var rr = await cur.ExecuteReaderAsync(ct)) { if (await rr.ReadAsync(ct)) { i0 = rr.GetString(0); u0 = rr.GetString(1); } }
+                    var ni = hasIm ? im! : i0; var nu = hasUr ? ur! : u0;
+                    if (ni != "" && nu != "") { var np = SlaConfig.PriorityFor(ni, nu); sets.Add("priority = @priority"); P(c, "priority", np); notes.Add("priority: " + np + " (from impact and urgency)"); priorityChanged = true; }
+                }
+                if (b.TryGetProperty("major", out var mj) && mj.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                {
+                    var on = mj.GetBoolean();
+                    sets.Add(on ? "major = true, major_at = coalesce(major_at, now())" : "major = false, major_at = null"); notes.Add(on ? "marked as a major incident" : "no longer a major incident");
+                }
                 if (b.TryGetProperty("assigneeId", out var av))
                 {
                     if (av.ValueKind == JsonValueKind.Null) { sets.Add("assignee_id = null, assignee_name = ''"); notes.Add("unassigned"); }
