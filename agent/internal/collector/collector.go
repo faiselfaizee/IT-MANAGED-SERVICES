@@ -205,6 +205,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 	}()
 	go r.wakeLoop(ctx)
+	go r.relayLoop(ctx)
 	if r.Listen != nil {
 		r.Listen.Add = r.addEvent
 		r.Listen.Start(ctx)

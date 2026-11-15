@@ -338,3 +338,21 @@ public interface ITicketDesk
     /// <summary>The ticket's number and status, or null when it no longer exists.</summary>
     Task<(string Number, string Status)?> GetAsync(long ticketId, CancellationToken ct = default);
 }
+
+/// <summary>A site controller (the small program installed inside a customer's network).</summary>
+public sealed record ControllerInfo(string Id, string Name, int? CompanyId, bool Online, string Version);
+
+/// <summary>The answer to a job handed to a controller. Error is the controller's own description ({code, message, step}) when Ok is false.</summary>
+public sealed record RelayReply(bool Ok, System.Text.Json.JsonElement? Result, System.Text.Json.JsonElement? Error, bool TimedOut);
+
+/// <summary>
+/// Hands a job to a customer's controller and waits for its answer (provided by the Assets module, which owns controllers).
+/// The payload may hold secrets: it is sealed while it waits and removed as soon as the controller has taken it.
+/// </summary>
+public interface IControllerRelay
+{
+    /// <summary>Every controller (not removed), with whether it has checked in during the last three minutes.</summary>
+    Task<IReadOnlyList<ControllerInfo>> ControllersAsync(CancellationToken ct = default);
+    /// <summary>Queues the job for the controller and waits up to the timeout for its answer.</summary>
+    Task<RelayReply> CallAsync(string controllerId, string kind, object payload, TimeSpan timeout, CancellationToken ct = default);
+}

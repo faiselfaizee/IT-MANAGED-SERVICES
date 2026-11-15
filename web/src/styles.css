@@ -442,3 +442,10 @@ td.nowrap, th.nowrap { white-space: nowrap; }
 .modal select, .modal input:not([type=checkbox]):not([type=radio]), .modal textarea { max-width: 100%; text-overflow: ellipsis; }
 label.check input[type=checkbox] { width: 18px; height: 18px; flex: none; }
 .row > label.check, .row > button { flex: 0 0 auto; }
+
+/* AD Manager */
+.split { display: grid; gap: 16px; grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.2fr); align-items: start; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+ul.plain { list-style: none; margin: 0 0 10px; padding: 0; } ul.plain li { padding: 3px 0; }
+tr.on td { background: var(--row); }
+label.inline { display: inline-flex; gap: 6px; align-items: center; } label.check { display: flex; gap: 8px; align-items: center; }

@@ -337,6 +337,12 @@ public sealed class AssetsSchema : ITenantSchema
             alter table assets.assets add column if not exists monitored boolean not null default true;
             alter table assets.rentals add column if not exists vendor_id int references assets.vendors(id) on delete set null;
             alter table assets.rentals add column if not exists contract_no text not null default ''"),
+        new(26, "jobs handed to a customer's controller (directory work for AD Manager)", @"
+            create table if not exists assets.relay_jobs (
+              id text primary key, collector_id text not null references assets.collectors(id) on delete cascade,
+              kind text not null, payload text not null default '', status text not null default 'queued' check (status in ('queued','running','done','failed')),
+              result text, error text, created_at timestamptz not null default now(), taken_at timestamptz, finished_at timestamptz);
+            create index if not exists relay_jobs_c on assets.relay_jobs (collector_id, status)"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -394,6 +400,7 @@ public sealed class AssetsModule : IPlatformModule
         s.AddScoped<IAssetDirectory>(sp => sp.GetRequiredService<AssetsDirectory>());
         s.AddScoped<IDeviceHealth, DeviceHealth>();
         s.AddScoped<IDeviceActions, DeviceActions>();
+        s.AddScoped<IControllerRelay, ControllerRelay>();
         s.AddSingleton<IJobHandler, AssetsJanitorJob>();
         s.AddSingleton(new RecurringJob("assets.janitor", AssetsJanitorJob.JobType, TimeSpan.FromMinutes(1)));
         s.AddSingleton<IJobHandler, RenewalsJob>();

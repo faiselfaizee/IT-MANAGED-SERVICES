@@ -195,6 +195,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
         RouteHandlerBuilder Open(RouteHandlerBuilder b) => b.RequireModule(key);
 
         // ================================================================ collector-facing
+        RelayApi.Map(r, key, async (h, db, ct) => (await Auth(h, db, ct))?.Id);
         Open(r.MapPost("/collector/v1/enroll", async (JsonElement body, HttpContext http, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
         {
             var tok = AgentsApi.Str(body, "token") ?? "";

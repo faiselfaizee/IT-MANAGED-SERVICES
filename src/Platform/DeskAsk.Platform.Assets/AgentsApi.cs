@@ -49,6 +49,10 @@ public sealed class AssetsJanitorJob : IJobHandler
         await Sql("update assets.deploys set status = 'failed', message = 'The controller did not pick this up within 30 minutes. Check that it is online (Assets > Agents & collectors).', at = now() where status = 'queued' and at < now() - interval '30 minutes'");
         await Sql("delete from assets.deploy_log where at < now() - interval '30 days'");
         await Sql("delete from assets.agent_q where created_at < now() - interval '3 days'");
+        // directory jobs for the controllers: nobody took it, it never finished, or it is old
+        await Sql("update assets.relay_jobs set status = 'failed', payload = '', finished_at = now(), error = '{\"message\":\"The controller did not pick this up in time. Is it online and up to date (Assets > Agents & collectors)?\"}' where status = 'queued' and created_at < now() - interval '2 minutes'");
+        await Sql("update assets.relay_jobs set status = 'failed', payload = '', finished_at = now(), error = '{\"message\":\"The controller did not answer in time.\"}' where status = 'running' and taken_at < now() - interval '5 minutes'");
+        await Sql("delete from assets.relay_jobs where created_at < now() - interval '15 minutes' and status in ('done','failed')");
         // a password change the agent never fetched: nothing was changed, forget the password
         await Sql("update assets.secret_handoff set state = 'failed', secret_sealed = null, error = 'The agent did not come online within a day.', done_at = now() where state = 'queued' and created_at < now() - interval '1 day'");
         await Sql("delete from assets.secret_handoff where created_at < now() - interval '30 days'");
