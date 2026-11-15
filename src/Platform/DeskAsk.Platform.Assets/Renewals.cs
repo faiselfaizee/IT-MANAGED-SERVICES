@@ -24,6 +24,8 @@ public sealed class RenewalSettings
     public bool Users { get; set; } = true;
     /// <summary>Also mail the vendor (its renewal address, or its contact) about what was bought from it, unless the vendor is set not to be mailed.</summary>
     public bool Vendors { get; set; } = true;
+    /// <summary>Let a customer administrator add, change and renew the AMC contracts of their own company. Off until an administrator allows it.</summary>
+    public bool CustomerAmc { get; set; }
 
     public static async Task<RenewalSettings> LoadAsync(ISettings s, CancellationToken ct)
     {

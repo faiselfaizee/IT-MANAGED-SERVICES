@@ -3,7 +3,7 @@ import { usePerms } from '../perms';
 import Companies from './Companies';
 import Locations from './Locations';
 import Vendors from './Vendors';
-import Contracts from './Contracts';
+import Contracts, { useAmcAccess } from './Contracts';
 import Renewals from './Renewals';
 import DeleteRequests from './DeleteRequests';
 import Credentials from './Credentials';
@@ -23,9 +23,9 @@ const NAV: [string, string][] = [
 
 /** The Assets module: routes inside the #/assets address. */
 export default function AssetsApp() {
-  const perms = usePerms('assets'); const parts = useHash(); const [, a, b] = parts;
+  const perms = usePerms('assets'); const amcOk = useAmcAccess(); const parts = useHash(); const [, a, b] = parts;
   // administrators see every page; other people see the pages they may read (a customer administrator sees only assets and companies)
-  const nav = NAV.filter(([k]) => perms.admin || ['', 'list', 'reports', 'companies', 'locations', 'vendors', 'renewals'].includes(k) || (k === 'delete-requests' && (perms.modify || perms.delete)) || (perms.readAll && ['software', 'amc', 'rentals'].includes(k))); const section = /^\d+$/.test(a ?? '') ? 'list' : a === 'customer' ? '' : a ?? '';
+  const nav = NAV.filter(([k]) => perms.admin || ['', 'list', 'reports', 'companies', 'locations', 'vendors', 'renewals'].includes(k) || (k === 'delete-requests' && (perms.modify || perms.delete)) || (perms.readAll && ['software', 'amc', 'rentals'].includes(k)) || (k === 'amc' && amcOk)); const section = /^\d+$/.test(a ?? '') ? 'list' : a === 'customer' ? '' : a ?? '';
   let page;
   if (/^\d+$/.test(a ?? '')) page = <Detail id={a} tab={b ?? 'overview'} />;
   else switch (a) {

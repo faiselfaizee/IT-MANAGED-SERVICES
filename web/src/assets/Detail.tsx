@@ -172,18 +172,19 @@ function EditAsset({ id, d, onClose }: { id: string; d: Rec; onClose: (changed: 
 }
 function EditForm({ id, d, a, onClose }: { id: string; d: Rec; a: Rec; onClose: (changed: boolean) => void }) {
   const [v, setV] = useState<Rec>({ name: a.name ?? '', status: a.status ?? 'in_use', manufacturer: a.manufacturer ?? '', model: a.model ?? '', serial: a.serial ?? '', assignedTo: a.assignedTo ?? '',
-    location: a.location ?? '', siteId: a.siteId ?? null, vendorId: a.vendorId ?? null, poNumber: a.poNumber ?? '', invoiceNumber: a.invoiceNumber ?? '',
+    ipAddress: d.system?.ip ?? '', location: a.location ?? '', siteId: a.siteId ?? null, vendorId: a.vendorId ?? null, poNumber: a.poNumber ?? '', invoiceNumber: a.invoiceNumber ?? '',
     purchaseDate: a.purchaseDate ?? '', warrantyMonths: a.warrantyMonths ?? null, warrantyEnd: a.warrantyEnd ?? '' });
   const f = useSubmit(() => onClose(true)); const set = (k: string, x: string) => setV({ ...v, [k]: x });
   return <Modal title={`Edit ${d.tag}`} onClose={() => onClose(false)}><div className="form">
     <Field label="Name"><input value={v.name} onChange={(e) => set('name', e.target.value)} autoFocus /></Field>
     <div className="row"><Field label="Status"><select value={v.status} onChange={(e) => set('status', e.target.value)}>{STATUS_CHOICES.map((x) => <option key={x} value={x}>{x.replace('_', ' ')}</option>)}</select></Field>
       <Field label="Assigned to (name or email)"><input value={v.assignedTo} onChange={(e) => set('assignedTo', e.target.value)} /></Field></div>
+    <Field label="IP address (the address DeskAsk uses to reach it)"><input value={v.ipAddress} onChange={(e) => set('ipAddress', e.target.value)} placeholder="10.0.0.25" spellCheck={false} /></Field>
     <div className="row"><Field label="Manufacturer"><input value={v.manufacturer} onChange={(e) => set('manufacturer', e.target.value)} /></Field><Field label="Model"><input value={v.model} onChange={(e) => set('model', e.target.value)} /></Field><Field label="Serial number"><input value={v.serial} onChange={(e) => set('serial', e.target.value)} /></Field></div>
     <PurchaseFields v={v} set={(p) => setV({ ...v, ...p })} companyId={a.companyId} />
     {!a.companyId && <p className="muted small">Set the customer (Ownership) to choose a site.</p>}
     <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button>
-      <button className="primary" disabled={f.busy || !String(v.name).trim()} onClick={() => f.submit(() => api(`/api/assets/${id}`, { method: 'PUT', body: { name: v.name, status: v.status, manufacturer: v.manufacturer, model: v.model, serial: v.serial, assignedTo: v.assignedTo, ...purchaseBody(v) } }))}>Save</button></div></div></Modal>;
+      <button className="primary" disabled={f.busy || !String(v.name).trim()} onClick={() => f.submit(() => api(`/api/assets/${id}`, { method: 'PUT', body: { name: v.name, status: v.status, manufacturer: v.manufacturer, model: v.model, serial: v.serial, assignedTo: v.assignedTo, ipAddress: String(v.ipAddress).trim(), ...purchaseBody(v) } }))}>Save</button></div></div></Modal>;
 }
 
 function AskDelete({ id, d, onClose }: { id: string; d: Rec; onClose: () => void }) {

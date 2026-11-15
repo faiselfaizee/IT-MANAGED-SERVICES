@@ -179,11 +179,11 @@ public static class AssetsDevice
 
     // ---- contracts (AMC and rentals share the shape)
     sealed record Contract(string Table, bool IsAmc);
-    static async Task<List<object>> ListContracts(NpgsqlConnection db, Contract k, CancellationToken ct)
+    static async Task<List<object>> ListContracts(NpgsqlConnection db, Contract k, CancellationToken ct, IReadOnlyList<int>? scope = null)
     {
         var extra = k.IsAmc ? ", m.coverage, m.visits, m.sla_pct, m.vendor_id, coalesce(v.name, ''), m.contract_no, m.cost, m.previous_id, (select n.id from assets.amc n where n.previous_id = m.id limit 1)" : "";
         var join = k.IsAmc ? " left join assets.vendors v on v.id = m.vendor_id" : "";
-        await using var c = new NpgsqlCommand($"select m.id, m.company_id, c.name, m.title, m.start_date, m.end_date, m.notes, m.asset_ids{extra} from assets.{k.Table} m left join assets.companies c on c.id = m.company_id{join} order by m.end_date desc nulls first, m.id desc", db);
+        await using var c = new NpgsqlCommand($"select m.id, m.company_id, c.name, m.title, m.start_date, m.end_date, m.notes, m.asset_ids{extra} from assets.{k.Table} m left join assets.companies c on c.id = m.company_id{join} where (not @sc or m.company_id = any(@scope)) order by m.end_date desc nulls first, m.id desc", db).Scoped(scope);
         var rows = new List<object>(); await using var r = await c.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct))
         {
@@ -222,11 +222,31 @@ public static class AssetsDevice
         return await q.ExecuteScalarAsync(ct) == null ? (Bad("bad_input", "company not found"), null) : (null, id);
     }
 
+    /// <summary>Who may change AMC contracts: administrators always, and customer administrators for their own company when an administrator has allowed it.
+    /// Returns (allowed, companies); the companies are null for an administrator.</summary>
+    internal static async Task<(bool Allowed, IReadOnlyList<int>? Scope)> AmcManage(HttpContext h, ISettings s, CancellationToken ct)
+    {
+        var role = h.User.FindFirstValue("role") ?? "";
+        if (role == "admin") return (true, null);
+        if (role != "cadmin") return (false, null);
+        if (!(await RenewalSettings.LoadAsync(s, ct)).CustomerAmc) return (false, null);
+        var own = await AssetsAccess.ScopeAsync(h, Acts.Read);
+        return own is { Count: > 0 } ? (true, own) : (false, null);
+    }
+    static IResult Forbid() => Results.Json(new { error = "forbidden", detail = "Only an administrator can change this." }, statusCode: 403);
+    static async Task<bool> ContractInScope(NpgsqlConnection db, string table, int id, IReadOnlyList<int>? scope, CancellationToken ct)
+    {
+        if (scope == null) return true;
+        await using var q = new NpgsqlCommand($"select 1 from assets.{table} where id = @i and company_id = any(@scope)", db); P(q, "i", id); P(q, "scope", scope.ToArray());
+        return await q.ExecuteScalarAsync(ct) != null;
+    }
+
     public static void Map(IEndpointRouteBuilder r, string key)
     {
         var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
         var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Read, allCompanies: true);
         var scoped = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Read);
+        var amcEdit = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin", "cadmin")).RequireModule(key);
 
         // ---------------------------------------------------------------- companies
         scoped(r.MapGet("/api/assets/companies", async (HttpContext http, ITenantContext t, CancellationToken ct) =>
@@ -288,9 +308,15 @@ public static class AssetsDevice
         foreach (var k in new[] { new Contract("amc", true), new Contract("rentals", false) })
         {
             var path = "/api/assets/" + k.Table; var what = k.IsAmc ? "amc" : "rental";
-            anyone(r.MapGet(path, async (ITenantContext t, CancellationToken ct) => { await using var db = await Open(t, ct); return Results.Ok(await ListContracts(db, k, ct)); }));
+            (k.IsAmc ? scoped : anyone)(r.MapGet(path, async (HttpContext http, ISettings st, ITenantContext t, CancellationToken ct) =>
+            {
+                // staff see every contract; a customer administrator only their own company's, and only once an administrator has allowed them to work with AMCs
+                var scope = (http.User.FindFirstValue("role") ?? "") == "admin" ? null : await AssetsAccess.ScopeAsync(http, Acts.Read);
+                if (k.IsAmc && scope != null && !(await AmcManage(http, st, ct)).Allowed) return Forbid();
+                await using var db = await Open(t, ct); return Results.Ok(await ListContracts(db, k, ct, scope));
+            }));
 
-            async Task<IResult> Save(int? id, JsonElement body, ITenantContext t, IAuditLog audit, CancellationToken ct)
+            async Task<IResult> Save(int? id, JsonElement body, IReadOnlyList<int>? limit, ITenantContext t, IAuditLog audit, CancellationToken ct)
             {
                 var title = Txt(body, "title", 160, out var hasTitle, out var e1); var notes = Txt(body, "notes", 2000, out var hasNotes, out var e2);
                 var coverage = Txt(body, "coverage", 1000, out var hasCov, out var e3);
@@ -310,9 +336,21 @@ public static class AssetsDevice
                 }
                 await using var db = await Open(t, ct);
                 var (ce, company) = await CompanyOf(db, body, ct); if (ce != null) return ce;
+                if (limit != null)
+                {
+                    // a customer administrator: the contract belongs to their company, and so do the assets on it
+                    if (id != null && !await ContractInScope(db, k.Table, id.Value, limit, ct)) return Results.NotFound();
+                    if ((id == null || body.TryGetProperty("companyId", out _)) && company == null) return Bad("bad_input", "choose the customer");
+                    if (company != null && !limit.Contains(company.Value)) return Forbid();
+                }
                 var hasCompany = body.TryGetProperty("companyId", out _);
                 var hasAssets = body.TryGetProperty("assetIds", out _);
                 var (ae, ids) = await AssetIds(db, body, ct); if (ae != null) return ae;
+                if (limit != null && ids.Length > 0)
+                {
+                    await using var oq = new NpgsqlCommand("select count(*) from assets.assets where id = any(@ids) and company_id = any(@scope)", db); P(oq, "ids", ids); P(oq, "scope", limit.ToArray());
+                    if ((long)(await oq.ExecuteScalarAsync(ct))! != ids.Length) return Bad("bad_input", "one of the assets belongs to another customer");
+                }
                 if (vendorId != null)
                 {
                     await using var vq = new NpgsqlCommand("select company_id from assets.vendors where id = @v", db); P(vq, "v", vendorId);
@@ -345,11 +383,17 @@ public static class AssetsDevice
                 await audit.WriteAsync("assets." + what + "_changed", id.ToString(), ct: ct);
                 return Results.Ok(new { id });
             }
-            admin(r.MapPost(path, (JsonElement body, ITenantContext t, IAuditLog audit, CancellationToken ct) => Save(null, body, t, audit, ct)));
-            admin(r.MapPut(path + "/{id:int}", (int id, JsonElement body, ITenantContext t, IAuditLog audit, CancellationToken ct) => Save(id, body, t, audit, ct)));
-            admin(r.MapDelete(path + "/{id:int}", async (int id, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+            var guard = k.IsAmc ? amcEdit : admin;
+            async Task<(bool Ok, IReadOnlyList<int>? Scope)> Who(HttpContext http, ISettings st, CancellationToken ct) => k.IsAmc ? await AmcManage(http, st, ct) : (true, null);
+            guard(r.MapPost(path, async (JsonElement body, HttpContext http, ISettings st, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+            { var w = await Who(http, st, ct); return w.Ok ? await Save(null, body, w.Scope, t, audit, ct) : Forbid(); }));
+            guard(r.MapPut(path + "/{id:int}", async (int id, JsonElement body, HttpContext http, ISettings st, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+            { var w = await Who(http, st, ct); return w.Ok ? await Save(id, body, w.Scope, t, audit, ct) : Forbid(); }));
+            guard(r.MapDelete(path + "/{id:int}", async (int id, HttpContext http, ISettings st, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
             {
+                var w = await Who(http, st, ct); if (!w.Ok) return Forbid();
                 await using var db = await Open(t, ct);
+                if (!await ContractInScope(db, k.Table, id, w.Scope, ct)) return Results.NotFound();
                 await using var c = new NpgsqlCommand($"delete from assets.{k.Table} where id = @i", db); P(c, "i", id);
                 if (await c.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound();
                 await audit.WriteAsync("assets." + what + "_deleted", id.ToString(), ct: ct);
@@ -357,14 +401,19 @@ public static class AssetsDevice
             }));
         }
 
+        // the web asks whether the signed-in person may change AMC contracts
+        scoped(r.MapGet("/api/assets/amc/access", async (HttpContext http, ISettings st, CancellationToken ct) => Results.Ok(new { canEdit = (await AmcManage(http, st, ct)).Allowed })));
+
         // renewing an AMC: a new contract that follows the old one (same customer, vendor, cover and assets), linked to it
-        admin(r.MapPost("/api/assets/amc/{id:int}/renew", async (int id, JsonElement body, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        amcEdit(r.MapPost("/api/assets/amc/{id:int}/renew", async (int id, JsonElement body, HttpContext http, ISettings st, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
         {
+            var who = await AmcManage(http, st, ct); if (!who.Allowed) return Forbid();
             var start = Day(body, "start", out _, out var e1); var end = Day(body, "end", out _, out var e2); var no = Txt(body, "contractNo", 60, out _, out var e3);
             if ((e1 ?? e2 ?? e3) is { } err) return Bad("bad_input", err);
             decimal? cost = null;
             if (body.TryGetProperty("cost", out var cEl) && cEl.ValueKind != JsonValueKind.Null) { if (!cEl.TryGetDecimal(out var cd) || cd < 0 || cd >= 1_000_000_000m) return Bad("bad_input", "cost must be a number of 0 or more"); cost = Math.Round(cd, 2); }
             await using var db = await Open(t, ct);
+            if (!await ContractInScope(db, "amc", id, who.Scope, ct)) return Results.NotFound();
             DateOnly? oldEnd;
             await using (var q = new NpgsqlCommand("select end_date, (select 1 from assets.amc n where n.previous_id = m.id limit 1) from assets.amc m where id = @i", db))
             {

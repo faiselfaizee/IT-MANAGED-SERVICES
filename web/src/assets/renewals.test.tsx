@@ -20,5 +20,5 @@ test('shows what ends soon and saves the reminder settings', async () => {
   fireEvent.click(screen.getByText('Save'));
   await waitFor(() => expect(calls.some((c) => c[0] === 'PUT')).toBe(true));
   const body = JSON.parse(calls.find((c) => c[0] === 'PUT')![2]);
-  expect(body).toEqual({ enabled: true, days: [30, 7], to: 'it@acme.test', customers: true, users: true, vendors: true });
+  expect(body).toEqual({ enabled: true, days: [30, 7], to: 'it@acme.test', customers: true, users: true, vendors: true, customerAmc: false });
 });

@@ -143,7 +143,7 @@ button.danger { color: var(--bad); } button:disabled { opacity: .45; cursor: def
 
 /* Dialogs and forms */
 .modal { position: fixed; inset: 0; background: rgba(4, 9, 20, .55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 12px 40px; overflow: auto; z-index: 20; }
-.modal > div { width: min(640px, 100%); border-radius: var(--r-lg); padding: 22px 24px; background: var(--glass-solid); } .modal h2 { margin-top: 0; font-size: 18px; }
+.modal > div { width: min(640px, 100%); min-width: 0; max-width: 100%; border-radius: var(--r-lg); padding: 22px 24px; background: var(--glass-solid); } .modal h2 { margin-top: 0; font-size: 18px; }
 .form { display: grid; gap: 12px; } .form label { display: grid; gap: 4px; } .form label > span { color: var(--muted); font-size: 13px; }
 .row { display: flex; gap: 10px; flex-wrap: wrap; } .row > * { flex: 1; min-width: 120px; }
 .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
@@ -387,7 +387,7 @@ td.msg { max-width: 640px; overflow-wrap: anywhere; }
 .totp { font-size: 18px; letter-spacing: .12em; color: var(--accent); }
 .managed-box { margin-top: 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--field); } .managed-box h3 { margin: 0 0 8px; font-size: 15px; }
 .with-btn { display: flex; gap: 8px; } .with-btn input { flex: 1; }
-.item-form { min-width: min(640px, 82vw); } .asset-pick .picks { margin: 4px 0 0; }
+.item-form { min-width: 0; } .asset-pick .picks { margin: 4px 0 0; }
 .generator { display: grid; gap: 10px; } .gen-out code { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 18px; word-break: break-all; display: block; padding: 12px 14px; background: var(--field); border: 1px solid var(--line); border-radius: var(--r-sm); }
 .generator .checks { display: flex; flex-wrap: wrap; gap: 6px 16px; } .generator label { display: grid; gap: 4px; } .generator label.check { display: flex; gap: 6px; }
 .vault-cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
@@ -429,3 +429,16 @@ ul.plain { list-style: none; padding: 0; margin: 0; }
 .vendor-form .row > * { min-width: 0; } .vendor-form input, .vendor-form textarea, .vendor-form select { width: 100%; box-sizing: border-box; }
 td.nowrap, th.nowrap { white-space: nowrap; }
 .modal .row > label { min-width: 0; } .modal .row > label > select, .modal .row > label > input { width: 100%; min-width: 0; box-sizing: border-box; }
+
+/* Forms: every field fits the window it sits in, in every module. A grid track, a flex child or a fieldset may not grow past its container, and a field fills its row. */
+.form { grid-template-columns: minmax(0, 1fr); }
+.form > *, .modal > div > * { min-width: 0; max-width: 100%; }
+.form fieldset, .modal fieldset { min-width: 0; max-width: 100%; }
+.form label > input:not([type=checkbox]):not([type=radio]):not([type=range]), .form label > select, .form label > textarea,
+.form > input:not([type=checkbox]):not([type=radio]), .form > select, .form > textarea { width: 100%; min-width: 0; }
+.row { min-width: 0; } .row > * { flex: 1 1 140px; min-width: 0; }
+.row > input:not([type=checkbox]), .row > select { width: auto; }
+.with-btn { min-width: 0; } .with-btn > input { min-width: 0; }
+.modal select, .modal input:not([type=checkbox]):not([type=radio]), .modal textarea { max-width: 100%; text-overflow: ellipsis; }
+label.check input[type=checkbox] { width: 18px; height: 18px; flex: none; }
+.row > label.check, .row > button { flex: 0 0 auto; }

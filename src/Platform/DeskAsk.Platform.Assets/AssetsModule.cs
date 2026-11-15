@@ -490,6 +490,13 @@ public sealed class AssetsModule : IPlatformModule
             foreach (var (json, col) in new[] { ("manufacturer", "manufacturer"), ("model", "model"), ("serial", "serial"), ("location", "location"), ("assignedTo", "assigned_to") })
             { var v = Str(b, json, 200, out var has); if (has) r.Set[col] = v; }
             var notes = Str(b, "notes", 4000, out var hasNotes); if (hasNotes) r.Set["notes"] = notes;
+            // the address the monitoring and the remote tools use to reach the device; an agent only fills it when empty, so a typed one stays
+            var ip = Str(b, "ipAddress", 64, out var hasIp);
+            if (hasIp)
+            {
+                if (ip != "" && !System.Net.IPAddress.TryParse(ip, out _)) throw new FormatException("ipAddress must be an IPv4 or IPv6 address, for example 10.0.0.25");
+                r.Set["ip_address"] = ip;
+            }
 
             var pd = Date(b, "purchaseDate", out var hasPd); if (hasPd) r.Set["purchase_date"] = pd;
             var we = Date(b, "warrantyEnd", out var hasWe); if (hasWe) r.Set["warranty_end"] = we;
