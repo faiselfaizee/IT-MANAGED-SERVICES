@@ -69,7 +69,12 @@ public class VaultTests : IClassFixture<WebApplicationFactory<Program>>
         await Sql("delete from access.groups where name = 'Vault engineers VT'");
         await Sql(@"insert into jobs.recurring (name, type, interval_seconds, next_run) values ('vault.tick', 'vault.tick', 60, now() + interval '1 day')
             on conflict (name) do update set next_run = now() + interval '1 day'; delete from jobs.queue where type = 'vault.tick' and status = 'queued'");
-        async Task Tick() { await Sql("update jobs.recurring set next_run = now() where name = 'vault.tick'"); await Until(async () => (await Scalar("select next_run > now() + interval '30 seconds' from jobs.recurring where name = 'vault.tick'")) is true); await Until(async () => Convert.ToInt64(await Scalar("select count(*) from jobs.queue where type = 'vault.tick' and status in ('queued','running')")) == 0); }
+        // runs the minute job until the managed account reaches the state (the job is queued by the scheduler and taken by a worker)
+        async Task TickUntil(string state) => await Until(async () =>
+        {
+            await Sql("update jobs.recurring set next_run = now() where name = 'vault.tick' and next_run > now()");
+            return (await Scalar("select state from vault.managed")) as string == state;
+        }, 60);
 
         async Task<(string Id, HttpClient C)> User(string email, string role)
         {
@@ -186,7 +191,7 @@ public class VaultTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(0L, Convert.ToInt64(await Scalar("select count(*) from assets.secret_handoff where secret_sealed is not null")));
         Assert.Equal("Old-Pass-1", (await J(await eng.GetAsync($"/api/vault/items/{sql}/secret"))).GetProperty("password").GetString()); // not yet confirmed
         Assert.Equal(HttpStatusCode.OK, (await agent.PostAsync($"/agent/v1/secret/{hid}/result", Json(new { ok = true }))).StatusCode);
-        await Tick();
+        await TickUntil("ok");
         var managed = (await J(await eng.GetAsync($"/api/vault/items/{sql}/managed")));
         Assert.Equal("ok", managed.GetProperty("account").GetProperty("state").GetString());
         Assert.Equal(newPw, (await J(await eng.GetAsync($"/api/vault/items/{sql}/secret"))).GetProperty("password").GetString());
@@ -198,7 +203,7 @@ public class VaultTests : IClassFixture<WebApplicationFactory<Program>>
         var msg2 = (await J(await agent.GetAsync("/agent/v1/poll?v=3.2.0"))).GetProperty("msgs").EnumerateArray().Single(m => m.GetProperty("type").GetString() == "setpw");
         await agent.GetAsync($"/agent/v1/secret/{msg2.GetProperty("id").GetString()}");
         await agent.PostAsync($"/agent/v1/secret/{msg2.GetProperty("id").GetString()}/result", Json(new { ok = false, error = "the new password does not meet the password policy" }));
-        await Tick();
+        await TickUntil("failed");
         var failed = (await J(await eng.GetAsync("/api/vault/managed"))).GetProperty("items").EnumerateArray().Single();
         Assert.Equal("failed", failed.GetProperty("state").GetString()); Assert.Contains("password policy", failed.GetProperty("lastError").GetString());
         Assert.Equal(newPw, (await J(await eng.GetAsync($"/api/vault/items/{sql}/secret"))).GetProperty("password").GetString());
