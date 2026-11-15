@@ -98,6 +98,24 @@ public class MonitoringV31Tests : IClassFixture<WebApplicationFactory<Program>>
     static async Task<JsonElement> J(HttpResponseMessage r) => JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement.Clone();
     static async Task Sql(string sql) { await using var db = new NpgsqlConnection(Pg); await db.OpenAsync(); await using var c = new NpgsqlCommand(sql, db); await c.ExecuteNonQueryAsync(); }
     static async Task<long> Scalar(string sql) { await using var db = new NpgsqlConnection(Pg); await db.OpenAsync(); await using var c = new NpgsqlCommand(sql, db); return Convert.ToInt64(await c.ExecuteScalarAsync()); }
+    /// <summary>What the job queue, the outbox and the report claims looked like, for a failure message.</summary>
+    static async Task<string> Dump()
+    {
+        var sb = new StringBuilder();
+        await using var db = new NpgsqlConnection(Pg); await db.OpenAsync();
+        foreach (var (title, sql) in new[] {
+            ("jobs (not done, or the last 40)", "select id, type, status, attempts, run_at, started_at, finished_at, left(last_error, 200), dedupe_key from jobs.queue where status <> 'done' or id > (select max(id) - 40 from jobs.queue) order by id"),
+            ("outbox", "select id, to_addr, left(subject, 60), status, attempts, next_try_at, left(last_error, 200), created_at from mail.outbox order by id desc limit 30"),
+            ("report claims", "select month, scope, recipient, at from monitoring.report_sent"),
+            ("now", "select now()") })
+        {
+            sb.AppendLine("== " + title);
+            await using var c = new NpgsqlCommand(sql, db); await using var rd = await c.ExecuteReaderAsync();
+            while (await rd.ReadAsync()) sb.AppendLine(string.Join(" | ", Enumerable.Range(0, rd.FieldCount).Select(i => rd.IsDBNull(i) ? "-" : Convert.ToString(rd.GetValue(i), System.Globalization.CultureInfo.InvariantCulture))));
+        }
+        return sb.ToString();
+    }
+
     static async Task Until(Func<Task<bool>> ok, int seconds = 30) { for (var i = 0; i < seconds * 4; i++) { if (await ok()) return; await Task.Delay(250); } Assert.Fail("timed out"); }
 
     [PgFact]
@@ -236,7 +254,12 @@ public class MonitoringV31Tests : IClassFixture<WebApplicationFactory<Program>>
 
         Assert.Equal(HttpStatusCode.OK, (await api.PutAsync("/api/monitoring/settings", Json(new { recipients = "", reportEnabled = true, reportTo = "noc@mon31.test", reportCustomers = true, companies = new[] { new { companyId = acme, recipients = "it@acme31.test" } } }))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await api.PostAsync("/api/monitoring/reports/send", Json(new { month }))).StatusCode);
-        await Until(async () => await Scalar("select count(*) from mail.outbox where subject like 'Uptime report%' and status = 'sent'") == 2, 60);
+        for (var i = 0; ; i++)
+        {
+            if (await Scalar("select count(*) from mail.outbox where subject like 'Uptime report%' and status = 'sent'") == 2) break;
+            if (i >= 240) Assert.Fail("The uptime reports were not sent in 60 s.\n" + await Dump());
+            await Task.Delay(250);
+        }
         Assert.Equal(2, await Scalar("select count(*) from mail.outbox_files where content_type = 'application/pdf' and name like 'uptime-%.pdf'"));
         var raw = smtp.Messages.First(m => m.Contains("Uptime report"));
         Assert.Contains("Content-Disposition: attachment", raw); Assert.Contains("application/pdf", raw);
