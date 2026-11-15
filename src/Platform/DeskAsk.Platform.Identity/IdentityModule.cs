@@ -54,6 +54,7 @@ public sealed class IdentityModule : IPlatformModule
         s.AddHttpContextAccessor();
         s.AddSingleton<TenantKeys>();
         s.AddSingleton<ITotpClock, SystemTotpClock>();
+        s.AddSingleton<ILdapClient, LdapClient>();
         s.AddScoped<TwoStepService>();
         s.AddScoped<IUserDirectory, UserDirectory>();
         s.AddSingleton<IJobHandler, IdentityPruneJob>();
@@ -129,6 +130,7 @@ public sealed class IdentityModule : IPlatformModule
         r.MapPost("/account/login", LoginPost).AllowAnonymous();
         TwoStepEndpoints.Map(r);
         SsoEndpoints.Map(r);
+        AdEndpoints.Map(r);
         UsersEndpoints.Map(r);
         r.MapPost("/api/platform/identity/keys/rotate", async (ITenantContext t, TenantKeys keys, IAuditLog audit, CancellationToken ct) =>
         {
@@ -309,6 +311,9 @@ public sealed class IdentityModule : IPlatformModule
 
         var user = await db.Users.FirstOrDefaultAsync(x => x.Email == email && x.Active, http.RequestAborted);
         var res = hasher.VerifyHashedPassword(user ?? Dummy, user?.PasswordHash ?? hasher.HashPassword(Dummy, "x"), f["password"].ToString());   // same work whether or not the account exists
+        // people who came from Active Directory sign in with their directory password
+        var viaDirectory = user != null && res == PasswordVerificationResult.Failed && await AdEndpoints.PasswordOkAsync(http, user, f["password"].ToString());
+        if (viaDirectory) res = PasswordVerificationResult.Success;
         if (user == null || res == PasswordVerificationResult.Failed)
         {
             fails.AddOrUpdate(key, (1, DateTime.UtcNow.AddMinutes(15)), (_, o) => (o.until > DateTime.UtcNow ? o.n + 1 : 1, DateTime.UtcNow.AddMinutes(15)));

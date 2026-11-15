@@ -19,4 +19,13 @@ How it behaves:
 
 Google Authenticator and other authenticator apps already work as the second step (each person: account menu › Security).
 
-Planned: Active Directory (LDAP) import and sign-in, then Google Workspace.
+## Active Directory (LDAP), v3.7.0
+Users › **Active Directory…**
+
+- **Server:** a domain controller the DeskAsk server can reach (`dc01.acme.local`, or `dc01.acme.local:3269`). Use LDAPS (port 636). If the controller's certificate is not trusted by the DeskAsk server, install its CA there, or tick "Accept the controller's certificate" (less safe). Without LDAPS the connection uses Windows negotiated (signed and sealed) binding, which works on a Windows DeskAsk server only.
+- **Base DN:** where to look, for example `DC=acme,DC=local`; an extra LDAP filter can narrow it, for example members of one group.
+- **Account:** an ordinary read-only account (`svc-deskask@acme.local`). DeskAsk reads users with it and uses it to find a person before checking their password.
+- **Import from Active Directory** lists people (up to 3,000; disabled accounts are marked), and creates accounts with the chosen role. They are recognised by their AD object GUID.
+- **Sign-in:** people imported from AD sign in on the normal page with their email and **AD password**; DeskAsk checks it against the controller each time and never stores it. The DeskAsk two-step code still applies if they turned it on. Disabled or locked AD accounts are refused by the controller. Switching "sign in with AD password" off stops it at once.
+
+Planned: Google Workspace.

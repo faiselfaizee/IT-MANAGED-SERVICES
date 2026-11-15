@@ -10,12 +10,13 @@ const roleName = (r: string) => ROLES.find(([k]) => k === r)?.[1] ?? r;
 
 export default function Users({ meId }: { meId?: string }) {
   const { data, error, loading, reload } = useLoad<Rec[]>('/api/platform/users');
-  const [form, setForm] = useState<Rec | null>(null); const [pw, setPw] = useState<Rec | null>(null); const [sso, setSso] = useState<'' | 'settings' | 'import'>('');
+  const [form, setForm] = useState<Rec | null>(null); const [pw, setPw] = useState<Rec | null>(null); const [sso, setSso] = useState<'' | 'settings' | 'import' | 'adsettings' | 'adimport'>('');
   const list = Array.isArray(data) ? data : [];
   return <>
     <h1>Users</h1>
     <div className="tools"><button className="primary" onClick={() => setForm({ email: '', name: '', role: 'engineer', password: '' })}>Add user</button>
       <button onClick={() => setSso('import')}>Import from Microsoft</button><button onClick={() => setSso('settings')}>Microsoft sign-in…</button>
+      <button onClick={() => setSso('adimport')}>Import from Active Directory</button><button onClick={() => setSso('adsettings')}>Active Directory…</button>
       <span className="muted">Staff sign in as administrator, engineer or viewer. Customer users see only their own company's tickets.</span></div>
     <Loading loading={loading && !data} error={error} />
     {data && (list.length === 0 ? <Empty>No users yet.</Empty> : <table><thead><tr><th>Name</th><th>Role</th><th>Two-step</th><th>Status</th><th /></tr></thead><tbody>
@@ -33,6 +34,8 @@ export default function Users({ meId }: { meId?: string }) {
     {pw && <PasswordForm user={pw} onClose={() => setPw(null)} />}
     {sso === 'settings' && <SsoSettings onClose={() => setSso('')} />}
     {sso === 'import' && <ImportEntra onClose={(ch) => { setSso(''); if (ch) reload(); }} />}
+    {sso === 'adsettings' && <AdSettings onClose={() => setSso('')} />}
+    {sso === 'adimport' && <ImportEntra base="/api/platform/ad" title="Import from Active Directory" onClose={(ch) => { setSso(''); if (ch) reload(); }} />}
   </>;
 }
 
@@ -101,13 +104,13 @@ function SsoForm({ init, onClose }: { init: Rec; onClose: () => void }) {
 }
 
 /** Choose people from the Microsoft directory and give them DeskAsk accounts. */
-function ImportEntra({ onClose }: { onClose: (changed: boolean) => void }) {
-  const { data, error, loading } = useLoad<Rec>('/api/platform/sso/entra/users');
+function ImportEntra({ onClose, base = '/api/platform/sso/entra', title = 'Import from Microsoft' }: { onClose: (changed: boolean) => void; base?: string; title?: string }) {
+  const { data, error, loading } = useLoad<Rec>(`${base}/users`);
   const [sel, setSel] = useState<Set<string>>(new Set()); const [role, setRole] = useState('engineer'); const [q, setQ] = useState(''); const [done, setDone] = useState('');
   const f = useSubmit(() => undefined);
   const items = ((data?.items ?? []) as Rec[]).filter((u) => !q || `${u.name} ${u.email}`.toLowerCase().includes(q.toLowerCase()));
   const pick = (u: Rec) => { const n = new Set(sel); if (n.has(u.id)) n.delete(u.id); else n.add(u.id); setSel(n); };
-  return <Modal title="Import from Microsoft" onClose={() => onClose(done !== '')}><div className="form">
+  return <Modal title={title} onClose={() => onClose(done !== '')}><div className="form">
     {done ? <><p>{done}</p><div className="actions"><button className="primary" onClick={() => onClose(true)}>Close</button></div></> : <>
       <Loading loading={loading && !data} error={error} />
       {data && <>
@@ -117,9 +120,37 @@ function ImportEntra({ onClose }: { onClose: (changed: boolean) => void }) {
           {items.map((u) => <label key={u.id} style={{ display: 'block' }}><input type="checkbox" disabled={u.exists} checked={sel.has(u.id)} onChange={() => pick(u)} /> {u.name} <span className="muted">{u.email}</span> {u.exists && <Badge tone="ok">has an account</Badge>} {u.guest && <Badge>guest</Badge>} {!u.enabled && <Badge tone="bad">disabled in Microsoft</Badge>}</label>)}
         </div>
         <Field label={`Role for the ${sel.size} chosen`}><select value={role} onChange={(e) => setRole(e.target.value)}>{ROLES.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
-        <p className="muted small">Imported people sign in with Microsoft. For customer roles, link the person to a company afterwards (Edit).</p>
+        <p className="muted small">Imported people sign in with their directory account. For customer roles, link the person to a company afterwards (Edit).</p>
         <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button>
-          <button className="primary" disabled={f.busy || sel.size === 0} onClick={() => f.submit(async () => { const r = await api<Rec>('/api/platform/sso/entra/import', { body: { role, users: ((data.items ?? []) as Rec[]).filter((u) => sel.has(u.id)) } }); setDone(`${r.created} added, ${r.linked} linked, ${r.skipped} skipped.`); })}>Import {sel.size}</button></div></>}
+          <button className="primary" disabled={f.busy || sel.size === 0} onClick={() => f.submit(async () => { const r = await api<Rec>(`${base}/import`, { body: { role, users: ((data.items ?? []) as Rec[]).filter((u) => sel.has(u.id)) } }); setDone(`${r.created} added, ${r.linked} linked, ${r.skipped} skipped.`); })}>Import {sel.size}</button></div></>}
     </>}
+  </div></Modal>;
+}
+
+/** How DeskAsk reaches Active Directory: server, base DN and a read-only account. People imported from it sign in with their AD password. */
+function AdSettings({ onClose }: { onClose: () => void }) {
+  const { data } = useLoad<Rec>('/api/platform/ad');
+  if (!data) return <Modal title="Active Directory" onClose={onClose}><Loading loading error="" /></Modal>;
+  return <AdForm init={data} onClose={onClose} />;
+}
+function AdForm({ init, onClose }: { init: Rec; onClose: () => void }) {
+  const [v, setV] = useState<Rec>({ enabled: init.enabled, server: init.server, useSsl: init.useSsl, trustAnyCertificate: init.trustAnyCertificate, baseDn: init.baseDn, bindUser: init.bindUser, bindPassword: '', filter: init.filter, signIn: init.signIn });
+  const [note, setNote] = useState(''); const f = useSubmit(() => onClose()); const set = (k: string, x: unknown) => setV({ ...v, [k]: x });
+  const save = () => api('/api/platform/ad', { method: 'PUT', body: { ...v, bindPassword: v.bindPassword || undefined } });
+  return <Modal title="Active Directory" onClose={onClose}><div className="form">
+    <p className="muted small">The DeskAsk server must reach a domain controller. Use LDAPS (port 636) where you can. Give DeskAsk an ordinary read-only account; it only reads users and checks passwords.</p>
+    <div className="row"><Field label="Domain controller (address or address:port)"><input value={v.server} onChange={(e) => set('server', e.target.value)} placeholder="dc01.acme.local" spellCheck={false} /></Field>
+      <Field label="Base DN to search"><input value={v.baseDn} onChange={(e) => set('baseDn', e.target.value)} placeholder="DC=acme,DC=local" spellCheck={false} /></Field></div>
+    <div className="row"><Field label="Read-only account (user@acme.local or full DN)"><input value={v.bindUser} onChange={(e) => set('bindUser', e.target.value)} spellCheck={false} /></Field>
+      <Field label={init.hasPassword ? 'Password (saved; type a new one to replace it)' : 'Password'}><input type="password" value={v.bindPassword} onChange={(e) => set('bindPassword', e.target.value)} autoComplete="new-password" /></Field></div>
+    <Field label="Extra filter (optional, LDAP form)"><input value={v.filter} onChange={(e) => set('filter', e.target.value)} placeholder="(memberOf=CN=DeskAsk,OU=Groups,DC=acme,DC=local)" spellCheck={false} /></Field>
+    <label><input type="checkbox" checked={v.useSsl} onChange={(e) => set('useSsl', e.target.checked)} /> Use LDAPS (encrypted, port 636 unless a port is given)</label>
+    {v.useSsl && <label><input type="checkbox" checked={v.trustAnyCertificate} onChange={(e) => set('trustAnyCertificate', e.target.checked)} /> Accept the controller's certificate even if this server does not trust it (less safe)</label>}
+    <label><input type="checkbox" checked={v.signIn} onChange={(e) => set('signIn', e.target.checked)} /> People imported from AD sign in with their AD password</label>
+    <label><input type="checkbox" checked={v.enabled} onChange={(e) => set('enabled', e.target.checked)} /> Switch on</label>
+    {note && <p className="note" role="status">{note}</p>}
+    <Err text={f.err} /><div className="actions"><button onClick={onClose}>Cancel</button>
+      <button disabled={f.busy} onClick={() => f.submit(async () => { await save(); const r = await api<Rec>('/api/platform/ad/test', { method: 'POST', body: {} }).then(() => 'Connected: the account can read the directory.', (e) => (e as Error).message); setNote(r); throw new Error(''); })}>Save and test</button>
+      <button className="primary" disabled={f.busy} onClick={() => f.submit(save)}>Save</button></div>
   </div></Modal>;
 }
