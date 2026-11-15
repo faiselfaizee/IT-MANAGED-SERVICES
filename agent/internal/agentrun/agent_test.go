@@ -278,3 +278,34 @@ func TestTheAgentReportsTheServicesAndProgramsMonitoringAsksAbout(t *testing.T) 
 		t.Fatal("no second sample")
 	}
 }
+
+func TestTheAgentChangesAPasswordForTheVaultAndReportsBack(t *testing.T) {
+	got := make(chan map[string]any, 1)
+	fetched := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/agent/v1/secret/n123", func(w http.ResponseWriter, r *http.Request) {
+		fetched++
+		_, _ = w.Write([]byte(`{"account":"svc-sql","target":"local","password":"S3cret!new"}`))
+	})
+	mux.HandleFunc("/agent/v1/secret/n123/result", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		got <- b
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	var set [3]string
+	old := setPasswordFunc
+	setPasswordFunc = func(a, tg, p string) error { set = [3]string{a, tg, p}; return nil }
+	defer func() { setPasswordFunc = old }()
+	r := NewRunner(config.Agent{Server: srv.URL, AgentID: "gAAA", Key: "dkag_secretsecretsecretsecret"}, "1.0.0")
+	r.handle(context.Background(), message{Type: "setpw", ID: "n123"})
+	select {
+	case b := <-got:
+		if b["ok"] != true || set != [3]string{"svc-sql", "local", "S3cret!new"} || fetched != 1 {
+			t.Fatalf("result %v, set %v, fetched %d", b, set, fetched)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no result was reported")
+	}
+}

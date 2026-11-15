@@ -49,6 +49,9 @@ public sealed class AssetsJanitorJob : IJobHandler
         await Sql("update assets.deploys set status = 'failed', message = 'The controller did not pick this up within 30 minutes. Check that it is online (Assets > Agents & collectors).', at = now() where status = 'queued' and at < now() - interval '30 minutes'");
         await Sql("delete from assets.deploy_log where at < now() - interval '30 days'");
         await Sql("delete from assets.agent_q where created_at < now() - interval '3 days'");
+        // a password change the agent never fetched: nothing was changed, forget the password
+        await Sql("update assets.secret_handoff set state = 'failed', secret_sealed = null, error = 'The agent did not come online within a day.', done_at = now() where state = 'queued' and created_at < now() - interval '1 day'");
+        await Sql("delete from assets.secret_handoff where created_at < now() - interval '30 days'");
         await Sql("delete from assets.jobs where created_at < now() - interval '180 days'");
         // performance data: minute points for two days, hourly figures for 90 days (rolled up a few times an hour)
         if (DateTime.UtcNow.Minute % 15 == 3)

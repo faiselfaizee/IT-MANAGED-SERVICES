@@ -288,6 +288,11 @@ public sealed class AssetsSchema : ITenantSchema
               event_id int not null default 0, text text not null default '');
             create index if not exists events_asset on assets.events (asset_id, id desc);
             create index if not exists events_at on assets.events (at)"),
+        new(22, "password changes handed to agents for the Vault", @"
+            create table if not exists assets.secret_handoff (
+              id text primary key, asset_id bigint not null references assets.assets(id) on delete cascade, agent_id text not null,
+              account text not null, target text not null, secret_sealed text, state text not null default 'queued' check (state in ('queued','fetched','done','failed','cancelled')),
+              error text not null default '', by_name text not null default '', created_at timestamptz not null default now(), fetched_at timestamptz, done_at timestamptz)"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -561,6 +566,7 @@ public sealed class AssetsModule : IPlatformModule
         ConfigsApi.Map(r, Key);
         AssetDash.Map(r, Key);
         DeviceHealth.Map(r, Key);
+        SecretHandoff.Map(r, Key);
         RenewalsApi.Map(r, Key);
 
         // ---- types

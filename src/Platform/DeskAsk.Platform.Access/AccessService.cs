@@ -63,6 +63,43 @@ public sealed class AccessService : IAccess
         return companies.ToList();
     }
 
+    public async Task<IReadOnlyList<(Guid Id, string Name)>> GroupsAsync(CancellationToken ct = default)
+    {
+        await using var db = await Open(ct);
+        await using var c = new NpgsqlCommand("select id, name from access.groups order by lower(name)", db);
+        var o = new List<(Guid, string)>(); await using var rd = await c.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct)) o.Add((rd.GetGuid(0), rd.GetString(1)));
+        return o;
+    }
+
+    public async Task<IReadOnlyList<Guid>> GroupsOfAsync(Guid userId, CancellationToken ct = default)
+    {
+        await using var db = await Open(ct);
+        await using var c = new NpgsqlCommand(@"with recursive grp as (
+              select group_id from access.members where kind = 'user' and member_id = @u
+              union
+              select m.group_id from access.members m join grp on m.kind = 'group' and m.member_id = grp.group_id)
+            select group_id from grp", db);
+        c.Parameters.AddWithValue("u", userId);
+        var o = new List<Guid>(); await using var rd = await c.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct)) o.Add(rd.GetGuid(0));
+        return o;
+    }
+
+    public async Task<IReadOnlyList<Guid>> GroupUsersAsync(Guid groupId, CancellationToken ct = default)
+    {
+        await using var db = await Open(ct);
+        await using var c = new NpgsqlCommand(@"with recursive sub as (
+              select @g::uuid as group_id
+              union
+              select m.member_id from access.members m join sub on m.group_id = sub.group_id and m.kind = 'group')
+            select distinct m.member_id from access.members m join sub on m.group_id = sub.group_id where m.kind = 'user'", db);
+        c.Parameters.AddWithValue("g", groupId);
+        var o = new List<Guid>(); await using var rd = await c.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct)) o.Add(rd.GetGuid(0));
+        return o;
+    }
+
     public async Task SetCompanyAsync(Guid userId, int? companyId, CancellationToken ct = default)
     {
         await using var db = await Open(ct);

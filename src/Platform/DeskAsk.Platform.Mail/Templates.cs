@@ -16,6 +16,8 @@ public static class MailTemplates
     public const string SettingKey = "mail.templates";
     static readonly string[] Ticket = { "number", "subject", "status", "priority", "message", "requester", "company", "assignee", "by", "link", "site" };
     static readonly string[] Alert = { "severity", "device", "tag", "company", "rule", "message", "opened", "duration", "ticket", "link", "site" };
+    static readonly string[] VaultReq = { "requester", "vault", "reason", "ticket", "minutes", "decision", "by", "note", "link", "site" };
+    static readonly string[] VaultRot = { "account", "device", "vault", "error", "link", "site" };
     static readonly string[] Report = { "company", "month", "availability", "devices", "outages", "alerts", "link", "site" };
 
     public static readonly TemplateDef[] All =
@@ -47,6 +49,15 @@ public static class MailTemplates
         new("monitoring_resolved", "Monitoring alert cleared", "Sent to the alert recipients when an alert clears, if that is switched on in Monitoring settings.", Alert,
             "[Cleared] {{company}}: {{device}} - {{rule}}",
             "The alert for {{device}} ({{tag}}, {{company}}) has cleared after {{duration}}.\n\n{{message}}\n\nOpen the device:\n{{link}}\n\n{{site}}"),
+        new("vault_request", "Vault access requested", "Sent to the people who can approve when someone asks for access to an item in a vault. The item's name is encrypted, so the message names the vault.", VaultReq,
+            "Access request: {{requester}} in {{vault}}",
+            "{{requester}} asks for access to an item in the vault {{vault}} for {{minutes}} minutes.\n\nReason: {{reason}}\nTicket: {{ticket}}\n\nApprove or deny it in the Vault:\n{{link}}\n\n{{site}}"),
+        new("vault_decision", "Vault request answered", "Sent to the person who asked for access when the request is approved or denied.", VaultReq,
+            "Your access request was {{decision}}",
+            "Hello {{requester}},\n\n{{by}} {{decision}} your request for access to an item in {{vault}}.\n{{note}}\n\nOpen the Vault:\n{{link}}\n\n{{site}}"),
+        new("vault_rotation_failed", "Password change failed", "Sent to the vault's managers when the agent could not change a managed account's password.", VaultRot,
+            "Password change failed: {{account}} on {{device}}",
+            "The scheduled password change for {{account}} on {{device}} (vault {{vault}}) did not work.\n\n{{error}}\n\nThe password in the vault has not changed. Open the account:\n{{link}}\n\n{{site}}"),
     };
 
     public static TemplateDef? Find(string key) => All.FirstOrDefault(t => t.Key == key);

@@ -165,6 +165,12 @@ public interface IAccess
     Task<IReadOnlyList<int>?> ScopeAsync(System.Security.Claims.ClaimsPrincipal user, string module, string action, CancellationToken ct = default);
     /// <summary>Ties a customer user to the one company whose data they may see (null removes the tie).</summary>
     Task SetCompanyAsync(Guid userId, int? companyId, CancellationToken ct = default);
+    /// <summary>Every security group: id and name.</summary>
+    Task<IReadOnlyList<(Guid Id, string Name)>> GroupsAsync(CancellationToken ct = default);
+    /// <summary>The groups a person is in, directly or through a group inside a group.</summary>
+    Task<IReadOnlyList<Guid>> GroupsOfAsync(Guid userId, CancellationToken ct = default);
+    /// <summary>The people in a group, directly or through groups inside it.</summary>
+    Task<IReadOnlyList<Guid>> GroupUsersAsync(Guid groupId, CancellationToken ct = default);
 }
 
 public static class Acts { public const string Read = "read", Add = "add", Modify = "modify", Delete = "delete"; public static readonly string[] All = { Read, Add, Modify, Delete }; }
@@ -270,7 +276,17 @@ public interface IDeviceActions
 {
     /// <summary>Asks the device's agent to restart a service. Returns the job id, or null when the device has no agent.</summary>
     Task<string?> RestartServiceAsync(long assetId, string service, string by, CancellationToken ct = default);
+    /// <summary>
+    /// Asks the device's agent to set an account's password (target local, domain or linux). The password is held sealed until the agent
+    /// fetches it once. Returns a handle for <see cref="PasswordChangeAsync"/>, or null when the device has no agent or the wrong system.
+    /// </summary>
+    Task<string?> SetPasswordAsync(long assetId, string account, string target, string password, string by, CancellationToken ct = default);
+    /// <summary>Where a password change stands: queued (not fetched yet), fetched (the agent has it), done or failed.</summary>
+    Task<PasswordChange?> PasswordChangeAsync(string handle, CancellationToken ct = default);
+    /// <summary>Withdraws a password change the agent has not fetched yet. True when it was withdrawn.</summary>
+    Task<bool> CancelPasswordChangeAsync(string handle, CancellationToken ct = default);
 }
+public sealed record PasswordChange(string State, string Error, DateTime Created, DateTime? FetchedAt, DateTime? DoneAt);
 /// <summary>The lowest processor and memory use over a time window (so "above 90% for 15 minutes" means the lowest was above 90).</summary>
 public sealed record Sustained(double? MinCpu, double? MinMem, int Samples, DateTime First);
 /// <summary>One point of a performance chart: minute values, or hourly average and peak.</summary>

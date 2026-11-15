@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/deskask/platform/agent/internal/account"
 	"log"
 	"net/url"
 	"os"
@@ -179,6 +180,8 @@ func (r *Runner) handle(ctx context.Context, m message) {
 		go r.rdSetup(ctx, m.RD, defaultRdEnv())
 	case "rdremove":
 		go r.rdRemove(ctx, defaultRdEnv())
+	case "setpw":
+		go r.setPassword(ctx, m.ID)
 	case "uninstall":
 		log.Printf("the platform asked this agent to uninstall")
 		config.Remove(ConfigFile)
@@ -334,3 +337,37 @@ func limit(names []string) []string {
 	}
 	return names
 }
+
+// setPassword changes an account's password for the Vault: it fetches the new password once (the platform forgets it after this
+// fetch), sets it, and reports whether that worked. The password is never logged.
+func (r *Runner) setPassword(ctx context.Context, nonce string) {
+	pctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	var s struct {
+		Account  string `json:"account"`
+		Target   string `json:"target"`
+		Password string `json:"password"`
+	}
+	if err := r.cl.Do(pctx, "GET", "/agent/v1/secret/"+nonce, nil, &s); err != nil {
+		log.Printf("password change %s: could not fetch it: %v", nonce, err)
+		return
+	}
+	err := setPasswordFunc(s.Account, s.Target, s.Password)
+	s.Password = ""
+	res := map[string]any{"ok": err == nil}
+	if err != nil {
+		res["error"] = err.Error()
+		log.Printf("password change for %s failed: %v", s.Account, err)
+	} else {
+		log.Printf("password of %s changed for the vault", s.Account)
+	}
+	for i := 0; i < 5; i++ {
+		if e := r.cl.Do(pctx, "POST", "/agent/v1/secret/"+nonce+"/result", res, nil); e == nil {
+			return
+		}
+		sleep(pctx, time.Duration(i+1)*2*time.Second)
+	}
+}
+
+// setPasswordFunc is account.SetPassword; replaced in tests.
+var setPasswordFunc = account.SetPassword

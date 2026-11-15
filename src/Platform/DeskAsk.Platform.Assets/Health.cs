@@ -323,8 +323,47 @@ public sealed class DeviceHealth : IDeviceHealth
 /// <summary>Restarting a service through the device's agent, for Monitoring rules that ask for it. Runs as an agent job (shown under the asset's commands).</summary>
 public sealed class DeviceActions : IDeviceActions
 {
-    readonly ITenantContext tenant; readonly AgentHub hub; readonly IAuditLog audit;
-    public DeviceActions(ITenantContext t, AgentHub h, IAuditLog a) { tenant = t; hub = h; audit = a; }
+    readonly ITenantContext tenant; readonly AgentHub hub; readonly IAuditLog audit; readonly IConfiguration cfg;
+    public DeviceActions(ITenantContext t, AgentHub h, IAuditLog a, IConfiguration c) { tenant = t; hub = h; audit = a; cfg = c; }
+
+    public async Task<string?> SetPasswordAsync(long assetId, string account, string target, string password, string by, CancellationToken ct = default)
+    {
+        if (!SecretHandoff.ValidAccount(account) || target is not ("local" or "domain" or "linux") || string.IsNullOrEmpty(password) || password.Length > 256) return null;
+        await using var db = new NpgsqlConnection(tenant.Require().ConnectionString); await db.OpenAsync(ct);
+        string agent, platform, name;
+        await using (var c = new NpgsqlCommand("select g.id, g.platform, a.name from assets.assets a join assets.agents g on g.id = a.agent_id and g.deleted_at is null and g.uninstall_at is null where a.id = @a", db))
+        {
+            AgentsApi.P(c, "a", assetId); await using var rd = await c.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct)) return null;
+            agent = rd.GetString(0); platform = rd.GetString(1); name = rd.GetString(2);
+        }
+        if ((platform == "windows") != (target != "linux")) return null;
+        var id = "pw" + AgentsApi.Rand(24);
+        await using (var c = new NpgsqlCommand("insert into assets.secret_handoff (id, asset_id, agent_id, account, target, secret_sealed, by_name) values (@i, @a, @g, @u, @t, @s, @b)", db))
+        {
+            AgentsApi.P(c, "i", id); AgentsApi.P(c, "a", assetId); AgentsApi.P(c, "g", agent); AgentsApi.P(c, "u", account); AgentsApi.P(c, "t", target);
+            AgentsApi.P(c, "s", SecretBox.Seal(cfg, tenant.Require().Id, password)); AgentsApi.P(c, "b", by); await c.ExecuteNonQueryAsync(ct);
+        }
+        await AgentsApi.Enqueue(db, hub, tenant, agent, "setpw", new { id }, ct);
+        await audit.WriteAsync("assets.password_change_sent", assetId.ToString(), $"new password for {target} account {account} on {name}, asked by {by}", ct: ct);
+        return id;
+    }
+
+    public async Task<PasswordChange?> PasswordChangeAsync(string handle, CancellationToken ct = default)
+    {
+        await using var db = new NpgsqlConnection(tenant.Require().ConnectionString); await db.OpenAsync(ct);
+        await using var c = new NpgsqlCommand("select state, error, created_at, fetched_at, done_at from assets.secret_handoff where id = @i", db); AgentsApi.P(c, "i", handle);
+        await using var rd = await c.ExecuteReaderAsync(ct);
+        if (!await rd.ReadAsync(ct)) return null;
+        return new(rd.GetString(0), rd.GetString(1), rd.GetDateTime(2), rd.IsDBNull(3) ? null : rd.GetDateTime(3), rd.IsDBNull(4) ? null : rd.GetDateTime(4));
+    }
+
+    public async Task<bool> CancelPasswordChangeAsync(string handle, CancellationToken ct = default)
+    {
+        await using var db = new NpgsqlConnection(tenant.Require().ConnectionString); await db.OpenAsync(ct);
+        await using var c = new NpgsqlCommand("update assets.secret_handoff set state = 'cancelled', secret_sealed = null, done_at = now() where id = @i and state = 'queued'", db); AgentsApi.P(c, "i", handle);
+        return await c.ExecuteNonQueryAsync(ct) > 0;
+    }
 
     public async Task<string?> RestartServiceAsync(long assetId, string service, string by, CancellationToken ct = default)
     {
