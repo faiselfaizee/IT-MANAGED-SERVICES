@@ -45,7 +45,7 @@ public class AssetsTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.GetAsync("/api/assets")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.PostAsync("/api/assets", Json(new { name = "x" }))).StatusCode);
 
-        var unlicensed = factory.WithWebHostBuilder(b => b.UseSetting("Licensing:AllowUnlicensed", "false").UseSetting("Licensing:CacheSeconds", "0"));
+        await using var unlicensed = factory.WithWebHostBuilder(b => b.UseSetting("Licensing:AllowUnlicensed", "false").UseSetting("Licensing:CacheSeconds", "0"));
         var admin = await TestSupport.AdminClient(unlicensed);
         await admin.DeleteAsync("/api/platform/settings/" + LicenseResolver.SettingKey);
         var r = await admin.GetAsync("/api/assets");
@@ -229,7 +229,7 @@ public class AssetsTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task TheLicenceLimitCountsActiveAssets()
     {
         var vendor = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var f = factory.WithWebHostBuilder(b =>
+        await using var f = factory.WithWebHostBuilder(b =>
         {
             b.UseSetting("Licensing:AllowUnlicensed", "false"); b.UseSetting("Licensing:CacheSeconds", "0");
             b.UseSetting("Licensing:VendorPublicKeyPem", vendor.ExportSubjectPublicKeyInfoPem());

@@ -24,7 +24,8 @@ public class JobsTests : IClassFixture<WebApplicationFactory<Program>>
     readonly WebApplicationFactory<Program> factory;
 
     public JobsTests(WebApplicationFactory<Program> f) =>
-        factory = f.WithWebHostBuilder(TestSupport.Configure).WithWebHostBuilder(b => b.ConfigureTestServices(s => s.AddSingleton<IJobHandler, TestWorkHandler>()));
+        // one level only: the fixture shuts down the servers it made itself, so a server made from a server is closed by the test that made it
+        factory = f.WithWebHostBuilder(b => { TestSupport.Configure(b); b.ConfigureTestServices(s => s.AddSingleton<IJobHandler, TestWorkHandler>()); });
 
     static async Task Sql(string sql)
     {
@@ -191,7 +192,9 @@ public class JobsTests : IClassFixture<WebApplicationFactory<Program>>
     [PgFact]
     public async Task TheWorkerRoleRunsJobsInTheBackground()
     {
-        var f = factory.WithWebHostBuilder(b => { b.UseSetting("Platform:Roles", "all"); b.UseSetting("Jobs:PollSeconds", "1"); });
+        // closed at the end: a worker left running would take other tests' jobs from the shared database (it has no licence, so a
+        // monitoring report it picked up ended without sending anything)
+        await using var f = factory.WithWebHostBuilder(b => { b.UseSetting("Platform:Roles", "all"); b.UseSetting("Jobs:PollSeconds", "1"); });
         var (t, _) = await Start(f);
         var id = await Enqueue(f, t);
         for (var i = 0; i < 30 && await Scalar<string>($"select status from jobs.queue where id = {id}") != "done"; i++) await Task.Delay(500);

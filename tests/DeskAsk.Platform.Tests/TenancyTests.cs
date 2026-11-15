@@ -77,7 +77,7 @@ public class WebAppFilesTests : IClassFixture<WebApplicationFactory<Program>>
         File.WriteAllText(Path.Combine(dir, "assets", "app.js"), "console.log(1)");
         try
         {
-            var c = f.WithWebHostBuilder(b => b.UseWebRoot(dir)).CreateClient();
+            await using var web = f.WithWebHostBuilder(b => b.UseWebRoot(dir)); var c = web.CreateClient();
             var js = await c.GetAsync("/assets/app.js");
             Assert.Equal(HttpStatusCode.OK, js.StatusCode);
             Assert.Contains("javascript", js.Content.Headers.ContentType!.MediaType);
