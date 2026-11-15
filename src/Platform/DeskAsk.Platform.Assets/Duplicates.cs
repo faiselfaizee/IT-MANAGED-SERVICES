@@ -18,6 +18,13 @@ public static class DuplicateCheck
 {
     public sealed record Match(long Id, string Tag, string Name, string Hostname, string Ip, string Serial, string Status, string[] Why, bool Hard);
 
+    /// <summary>"N/A", "To be filled by O.E.M.", all zeros and the like: not a serial number, so never a reason to call two assets the same.</summary>
+    public static bool IsPlaceholder(string s)
+    {
+        var v = s.Trim().ToLowerInvariant();
+        return v is "" or "n/a" or "na" or "none" or "null" or "unknown" or "tbd" or "-" || v.Contains("o.e.m") || v.Contains("default string") || v.Contains("not specified") || v.Contains("to be filled") || v.Contains("system serial") || v.Trim('0', '-', ' ', 'x', 'f') == "";
+    }
+
     static readonly Regex Hex = new("^[0-9a-f]{12}$", RegexOptions.Compiled);
 
     /// <summary>aa:bb:cc:dd:ee:ff from aa-bb-.., aabb.ccdd.eeff or aabbccddeeff; null when it is not a MAC address.</summary>
@@ -47,7 +54,7 @@ public static class DuplicateCheck
     /// <summary>Other assets of the same customer (retired and lost ones do not count) that share a serial number, MAC address, host name, IP address or name.</summary>
     public static async Task<List<Match>> Find(NpgsqlConnection db, int? company, string? name, string? hostname, string? ip, IReadOnlyList<string>? macs, string? serial, long excludeId, CancellationToken ct)
     {
-        var host = FirstLabel(hostname ?? ""); var sn = (serial ?? "").Trim(); if (AgentsApi.BadSerial(sn)) sn = "";
+        var host = FirstLabel(hostname ?? ""); var sn = (serial ?? "").Trim(); if (IsPlaceholder(sn)) sn = "";
         var res = new List<Match>();
         await using var c = new NpgsqlCommand(@"select id, tag, name, hostname, ip_address, serial, status, mac_addresses::text,
                 (@h <> '' and (split_part(lower(hostname), '.', 1) = @h or split_part(lower(dns_name), '.', 1) = @h)),
@@ -115,7 +122,7 @@ public static class DuplicatesApi
             foreach (var a in rows)
             {
                 var co = (a.Company?.ToString(CultureInfo.InvariantCulture) ?? "-") + "|";
-                if (a.Serial != "" && !AgentsApi.BadSerial(a.Serial)) Link(a, "s|" + a.Serial.ToLowerInvariant(), "same serial number");
+                if (a.Serial != "" && !DuplicateCheck.IsPlaceholder(a.Serial)) Link(a, "s|" + a.Serial.ToLowerInvariant(), "same serial number");
                 foreach (var m in a.Macs) Link(a, "m|" + co + m, "same MAC address");
                 if (a.Host != "") Link(a, "h|" + co + DuplicateCheck.FirstLabel(a.Host), "same host name");
                 if (a.Ip != "") Link(a, "i|" + co + a.Ip, "same IP address");
