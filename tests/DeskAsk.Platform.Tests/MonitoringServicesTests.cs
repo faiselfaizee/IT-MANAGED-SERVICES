@@ -1,3 +1,5 @@
+using DeskAsk.Platform;
+using DeskAsk.Platform.Monitoring;
 using Xunit;
 
 /// <summary>Automatic services of servers, ignoring and choosing services (no database).</summary>
