@@ -353,3 +353,8 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); cur
 .bar-list .track { height: 8px; border-radius: 6px; background: var(--row); overflow: hidden; }
 .bar-list .track i { display: block; height: 100%; border-radius: 6px; background: var(--info); }
 .bar-list .num { font-variant-numeric: tabular-nums; min-width: 2ch; text-align: right; }
+tr.sel td { background: var(--row); }
+.port-chart { margin-top: 10px; }
+td.msg { max-width: 640px; overflow-wrap: anywhere; }
+.form fieldset.own { display: grid; grid-template-columns: 1fr 1fr 1.4fr auto; gap: 8px; align-items: center; }
+@media (max-width: 760px) { .form fieldset.own { grid-template-columns: 1fr; } }

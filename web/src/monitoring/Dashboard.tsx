@@ -10,7 +10,7 @@ export const devHref = (co: string, filter = '') => '#/monitoring/devices' + (()
 export const alertHref = (co: string, filter = '') => '#/monitoring/alerts' + (() => { const q = [co !== 'all' ? `company=${co}` : '', filter].filter(Boolean).join('&'); return q ? '?' + q : ''; })();
 const attention = (m: Rec) => 3 * n(m.critical) + n(m.warning);
 
-export const METRIC_WORDS: Record<string, string> = { offline: 'Device down', cpu: 'Processor', memory: 'Memory', disk: 'Disk space', check: 'Service checks', cert: 'Certificates', hardware: 'Hardware' };
+export const METRIC_WORDS: Record<string, string> = { offline: 'Device down', cpu: 'Processor', memory: 'Memory', disk: 'Disk space', check: 'Service checks', cert: 'Certificates', hardware: 'Hardware', traffic: 'Port traffic', port: 'Port down', service: 'Services', process: 'Programs', log: 'Device messages' };
 
 export function statusParts(m: Rec, co: string): Part[] {
   return [
@@ -63,7 +63,7 @@ export default function Dashboard() {
 
 function Tile({ m, index }: { m: Rec; index: number }) {
   const co = coKey(m); const delay = Math.min(index, 12) * 70;
-  const figs: [string, number][] = [['Down', n(m.down)], ['Disks nearly full', n(m.diskCritical)], ['Checks failing', n(m.checksFailing)], ['Certificates expiring', n(m.certUrgent) + n(m.certSoon)]];
+  const figs: [string, number][] = [['Down', n(m.down)], ['Watched ports down', n(m.portsDown)], ['Disks nearly full', n(m.diskCritical)], ['Checks failing', n(m.checksFailing)], ['Services stopped', n(m.servicesDown)]];
   return <a className={`co-tile${co === 'all' ? ' all' : ''}${n(m.critical) > 0 ? ' attn' : n(m.warning) > 0 ? ' warn' : ''}`} href={`#/monitoring/customer/${co}`}>
     <div className="co-tile-head"><b className="co-name">{m.company}</b><span className="muted"><CountUp value={n(m.devices)} delay={delay} /> devices</span></div>
     <div className="co-tile-body">
@@ -90,7 +90,7 @@ export function CustomerDash({ id }: { id: string }) {
   return <>
     <nav className="crumbs" aria-label="Breadcrumb"><a href="#/monitoring">Monitoring</a><span aria-hidden="true">›</span><span aria-current="page">{m.company}</span></nav>
     <header className="dash-head"><h1>{m.company}</h1><p className="muted">{n(m.devices)} devices, {n(m.watched)} watched, {n(m.withMetrics)} sending performance data</p>
-      <a className="button primary" href={devHref(co)}>View all devices</a></header>
+      <a className="button" href={`#/monitoring/reports?company=${co}`}>Uptime report</a><a className="button primary" href={devHref(co)}>View all devices</a></header>
     <div className="rings dash-rings">
       <Ring title="Device status" unit="devices" delay={0} empty="No devices in service." parts={statusParts(m, co)} />
       <Ring title="Open alerts" unit="alerts" delay={120} empty="No open alerts. All clear." parts={[
@@ -105,6 +105,12 @@ export function CustomerDash({ id }: { id: string }) {
         { key: 'ok', label: 'Passing', value: n(m.checksOk), tone: 'ok', href: devHref(co, 'check=ok') },
         { key: 'f', label: 'Failing', value: n(m.checksFailing), tone: 'bad', href: devHref(co, 'check=failing') },
         { key: 'n', label: 'Not run yet', value: n(m.checksNotRun), tone: 'none', href: devHref(co, 'check=notrun') }]} />
+      <Ring title="Watched ports" unit="ports" delay={720} empty="No watched ports. Ports with a description are watched; tick others on a device's Ports list." parts={[
+        { key: 'up', label: 'Up', value: Math.max(0, n(m.portsWatched) - n(m.portsDown)), tone: 'ok', href: devHref(co, 'kind=network') },
+        { key: 'down', label: 'Down', value: n(m.portsDown), tone: 'bad', href: devHref(co, 'port=down') }]} />
+      <Ring title="Watched services and programs" unit="watched" delay={840} empty="Nothing watched. Add a rule of the kind Service or Program not running." parts={[
+        { key: 'ok', label: 'Running', value: Math.max(0, n(m.servicesWatched) - n(m.servicesDown)), tone: 'ok', href: devHref(co) },
+        { key: 'down', label: 'Stopped or missing', value: n(m.servicesDown), tone: 'bad', href: devHref(co, 'service=down') }]} />
       <Ring title="Certificates" unit="checked" delay={600} empty="No certificate checks yet." parts={[
         { key: 'ok', label: 'More than 30 days left', value: n(m.certOk), tone: 'ok', href: devHref(co, 'cert=ok') },
         { key: 's', label: '8 to 30 days left', value: n(m.certSoon), tone: 'warn', href: devHref(co, 'cert=soon') },

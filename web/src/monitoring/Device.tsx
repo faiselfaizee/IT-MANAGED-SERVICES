@@ -5,6 +5,8 @@ import { Act, ago, Empty, fmtBytes, fmtDate, fmtUptime, Loading } from '../ui';
 import { LineChart } from './Chart';
 import { Pct, StatusBadge } from './Devices';
 import { AlertRows } from './Alerts';
+import { Ports } from './Ports';
+import { EventList } from './Events';
 
 const RANGES: [string, string][] = [['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days'], ['90d', '90 days']];
 
@@ -23,6 +25,7 @@ export default function Device({ id }: { id: string }) {
   const from = series.data ? new Date(series.data.from).getTime() : Date.now() - 86400_000; const to = series.data ? new Date(series.data.to).getTime() : Date.now();
   const step = series.data?.hourly ? 3600_000 : 60_000;
   const canMute = perms.modify || perms.admin;
+  const perf = !!(d.agent || d.metricsAt); // a switch or printer has no processor figures to chart
   return <>
     <nav className="crumbs" aria-label="Breadcrumb"><a href="#/monitoring">Monitoring</a><span aria-hidden="true">›</span>
       <a href={`#/monitoring/customer/${d.companyId ?? 'none'}`}>{d.company}</a><span aria-hidden="true">›</span><span aria-current="page">{d.name}</span></nav>
@@ -33,30 +36,42 @@ export default function Device({ id }: { id: string }) {
       {canMute && <> <Act label="Unmute" run={async () => { await api(`/api/monitoring/devices/${id}/mute`, { method: 'DELETE' }); reload(); }} /></>}</p>}
 
     <div className="mon-now">
+      {perf && <>
       <div><span className="muted">Processor</span><b>{d.cpu == null ? '–' : d.cpu.toFixed(0) + '%'}</b></div>
       <div><span className="muted">Memory</span><b>{d.mem == null ? '–' : d.mem.toFixed(0) + '%'}</b><span className="muted small">{d.memTotal ? 'of ' + fmtBytes(d.memTotal) : ''}</span></div>
       <div><span className="muted">Lowest disk free</span><b>{d.worstDisk == null ? '–' : d.worstDisk.toFixed(0) + '%'}</b></div>
       <div><span className="muted">Running for</span><b>{d.uptimeS ? fmtUptime(d.uptimeS) : '–'}</b></div>
+      </>}
       <div><span className="muted">Reachable</span><b>{d.pingUp === false ? 'No' : d.pingUp ? 'Yes' : '–'}</b><span className="muted small">{d.pingUp ? d.rttMs + ' ms' : d.pingUp === false && d.downSince ? 'since ' + ago(d.downSince) : 'no site controller'}</span></div>
       <div><span className="muted">Agent</span><b>{d.agent ? (d.agentSeen ? ago(d.agentSeen) : 'never') : 'none'}</b><span className="muted small">{d.agentVersion}</span></div>
     </div>
     {d.agent && !d.metricsAt && <p className="muted">No performance data yet. Agents send processor, memory and disk use from version 3.0: update the agent from the asset page.</p>}
 
+    {perf && <>
     <div className="tools"><span className="muted">Period</span>{RANGES.map(([k, l]) => <button key={k} className={range === k ? 'primary' : ''} aria-pressed={range === k} onClick={() => setRange(k)}>{l}</button>)}
       {series.data?.hourly && <span className="muted">Hourly averages; the faint line is the hourly peak.</span>}</div>
     <LineChart title="Processor and memory use" at={at} from={from} to={to} stepMs={step} series={[
       { key: 'cpu', label: 'Processor', values: pts.map((p) => p.cpu), peaks: series.data?.hourly ? pts.map((p) => p.cpuMax) : undefined, cls: 's1' },
       { key: 'mem', label: 'Memory', values: pts.map((p) => p.mem), peaks: series.data?.hourly ? pts.map((p) => p.memMax) : undefined, cls: 's2' }]} />
     <LineChart title="Lowest free disk space" at={at} from={from} to={to} stepMs={step} series={[{ key: 'disk', label: 'Free space', values: pts.map((p) => p.diskFree), cls: 's3' }]} />
+    </>}
+
+    {(d.ports ?? []).length > 0 && <><h2>Ports</h2><Ports id={id} ports={d.ports} at={d.portsAt} canEdit={canMute} onChange={reload} /></>}
+
+    {(d.watched ?? []).length > 0 && <><h2>Services and programs</h2>
+      <div className="table-wrap"><table><thead><tr><th>Name</th><th>Kind</th><th>State</th></tr></thead>
+        <tbody>{(d.watched as Rec[]).map((w) => <tr key={w.kind + w.name}><td>{w.name}</td><td>{w.kind === 'service' ? 'Service' : 'Program'}</td>
+          <td>{w.running ? <span className="badge ok">{w.kind === 'process' && w.count > 1 ? `Running (${w.count})` : 'Running'}</span> : <span className="badge bad">{w.state === 'missing' ? 'Not installed' : w.state[0].toUpperCase() + w.state.slice(1)}</span>}</td></tr>)}</tbody></table></div>
+      <p className="muted small">Alert rules of the kind "Service not running" or "Program not running" decide which ones the agent reports{d.watchedAt ? `; last report ${new Date(d.watchedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}` : ''}.</p></>}
 
     <h2>Open and recent alerts</h2>
     {alerts.length === 0 ? <Empty>No alerts for this device.</Empty> : <AlertRows items={alerts} device onChange={reload} canAct={canMute} />}
 
     <div className="grid two">
-      <section><h2>Disks and datastores</h2>
+      {(perf || (d.disks ?? []).length > 0) && <section><h2>Disks and datastores</h2>
         {(d.disks ?? []).length === 0 ? <Empty>No disk data.</Empty> : <table><thead><tr><th>Disk</th><th>Free</th><th>Size</th></tr></thead>
           <tbody>{(d.disks as Rec[]).map((k) => <tr key={k.name}><td>{k.name}</td><td><Pct v={k.freePct} invert /> <span className="muted small">{fmtBytes(k.free)}</span></td><td>{fmtBytes(k.total)}</td></tr>)}</tbody></table>}
-      </section>
+      </section>}
       <section><h2>Service checks</h2>
         {(d.checks ?? []).length === 0 ? <Empty>No service checks. Add them on the asset's Checks tab.</Empty> : <table><thead><tr><th>Check</th><th>Result</th><th>Checked</th></tr></thead>
           <tbody>{(d.checks as Rec[]).map((c) => <tr key={c.id}><td>{c.name} <span className="muted small">{String(c.type).toUpperCase()}</span></td>
@@ -67,6 +82,9 @@ export default function Device({ id }: { id: string }) {
         {(d.faults ?? []).length > 0 && <><h2>Hardware faults</h2><ul>{(d.faults as Rec[]).map((f, i) => <li key={i}><span className={`badge ${f.state === 'Critical' ? 'bad' : 'warn'}`}>{f.state}</span> {f.name || f.part}</li>)}</ul></>}
       </section>
     </div>
+
+    <h2>Recent messages</h2>
+    <EventList asset={id} take={15} showDevice={false} />
 
     {canMute && !d.muted && <section className="card"><h2 style={{ marginTop: 0 }}>Maintenance</h2>
       <p className="muted">Mute the device while you work on it: no new alerts open and its open alerts close. It unmutes by itself at the end.</p>

@@ -58,8 +58,12 @@ export function LineChart({ title, at, series, from, to, stepMs, unit = '%' }: {
           {ticks.map((t, i) => <text key={i} x={x(t)} y={H - 6} textAnchor={i === 0 ? 'start' : i === ticks.length - 1 ? 'end' : 'middle'} className="axis">{fmtTime(t, long)}</text>)}
           {series.map((s) => s.peaks && <path key={s.key + 'p'} d={paths(at, s.peaks, x, y, stepMs * 3)} className={`peak ${s.cls}`} />)}
           {series.map((s) => <path key={s.key} d={paths(at, s.values, x, y, stepMs * 3)} className={`line ${s.cls}`} />)}
-          {series.map((s) => { const i = last(s); return i < 0 ? null : <g key={s.key + 'l'}><circle cx={x(at[i])} cy={y(s.values[i]!)} r={3.5} className={`end ${s.cls}`} />
-            <text x={x(at[i]) + 8} y={y(s.values[i]!) + 4} className="end-label">{s.values[i]!.toFixed(0)}{unit}</text></g>; })}
+          {(() => { // end labels, pushed apart when two lines finish close together
+            const ends = series.map((s) => ({ s, i: last(s) })).filter((e) => e.i >= 0).map((e) => ({ ...e, ly: y(e.s.values[e.i]!) + 4 })).sort((p, q) => p.ly - q.ly);
+            for (let k = 1; k < ends.length; k++) if (ends[k].ly - ends[k - 1].ly < 13) ends[k].ly = ends[k - 1].ly + 13;
+            return ends.map(({ s, i, ly }) => <g key={s.key + 'l'}><circle cx={x(at[i])} cy={y(s.values[i]!)} r={3.5} className={`end ${s.cls}`} />
+              <text x={x(at[i]) + 8} y={ly} className="end-label">{s.values[i]!.toFixed(0)}{unit}</text></g>);
+          })()}
           {hover != null && <g className="cross"><line x1={x(at[hover])} x2={x(at[hover])} y1={T} y2={H - B} />
             {series.map((s) => s.values[hover] != null && <circle key={s.key} cx={x(at[hover])} cy={y(s.values[hover]!)} r={4} className={`end ${s.cls}`} />)}</g>}
           <rect x={L} y={T} width={W - L - R} height={H - T - B} fill="transparent" />

@@ -5,8 +5,10 @@ import Device from './Device';
 import Alerts from './Alerts';
 import Rules from './Rules';
 import Settings from './Settings';
+import Events from './Events';
+import Reports from './Reports';
 
-const NAV: [string, string, boolean][] = [['', 'Dashboard', false], ['devices', 'Devices', false], ['alerts', 'Alerts', false], ['rules', 'Alert rules', false], ['settings', 'Settings', true]];
+const NAV: [string, string, boolean][] = [['', 'Dashboard', false], ['devices', 'Devices', false], ['alerts', 'Alerts', false], ['events', 'Messages', false], ['reports', 'Uptime report', false], ['rules', 'Alert rules', false], ['settings', 'Settings', true]];
 
 /** The Monitoring module: routes inside the #/monitoring address. */
 export default function MonitoringApp() {
@@ -20,6 +22,8 @@ export default function MonitoringApp() {
     case 'devices': page = <Devices key={location.hash} />; break;
     case 'device': page = <Device key={b} id={b ?? ''} />; break;
     case 'alerts': page = <Alerts key={location.hash} />; break;
+    case 'events': page = <Events key={location.hash} />; break;
+    case 'reports': page = <Reports key={location.hash} />; break;
     case 'rules': page = <Rules admin={admin} />; break;
     case 'settings': page = admin ? <Settings /> : <Dashboard />; break;
     default: page = <Dashboard />;

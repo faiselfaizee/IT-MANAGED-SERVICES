@@ -82,3 +82,50 @@ test('an administrator adds a rule; the form shows only the fields that rule nee
   const body = JSON.parse(calls.find((c) => c.url === '/api/monitoring/rules' && c.method === 'POST')!.body);
   expect(body).toMatchObject({ name: 'Busy servers', metric: 'cpu', threshold: 85, minutes: 10, kinds: ['server'], companyId: null });
 });
+
+test('a service rule names the services and can restart them; the form asks only what that kind needs', async () => {
+  const calls = mock({ '/api/platform/me': { role: 'admin' }, '/api/assets/companies': [], '/api/monitoring/rules': { items: [] } });
+  location.hash = '#/monitoring/rules'; render(<MonitoringApp />);
+  fireEvent.click(await screen.findByRole('button', { name: 'New rule' }));
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'SQL running' } });
+  fireEvent.change(screen.getByLabelText('What to watch'), { target: { value: 'service' } });
+  fireEvent.change(screen.getByLabelText('Service names (as in Services, or systemd units), separated by commas'), { target: { value: 'MSSQLSERVER, SQLSERVERAGENT' } });
+  fireEvent.click(screen.getByLabelText('Ask the agent to restart the service once when the alert opens'));
+  fireEvent.change(screen.getByLabelText('What to watch'), { target: { value: 'log' } });
+  expect(screen.getByLabelText('At this level or worse')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('What to watch'), { target: { value: 'service' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+  await waitFor(() => expect(calls.some((c) => c.url === '/api/monitoring/rules' && c.method === 'POST')).toBe(true));
+  expect(JSON.parse(calls.find((c) => c.method === 'POST')!.body)).toMatchObject({ metric: 'service', target: 'MSSQLSERVER, SQLSERVERAGENT', restart: true, teams: true });
+});
+
+test('a switch shows its ports; a port can be watched and its traffic opened', async () => {
+  const calls = mock({
+    '/api/platform/me': { role: 'admin' }, '/api/monitoring/events': { total: 1, items: [{ id: 1, assetId: 7, asset: 'CORE-SW1', at: new Date().toISOString(), kind: 'trap', severity: 3, source: 'linkDown', eventId: 0, text: 'linkDown: Gi1/0/1' }] },
+    '/api/monitoring/devices/7/ports/2/series': { hourly: false, from: new Date(Date.now() - 86400000).toISOString(), to: new Date().toISOString(), points: [{ at: new Date().toISOString(), inPct: 64, outPct: 3 }] },
+    '/api/monitoring/devices/7/series': { hourly: false, from: new Date(Date.now() - 86400000).toISOString(), to: new Date().toISOString(), points: [] },
+    '/api/monitoring/devices/7': { device: { id: 7, name: 'CORE-SW1', tag: 'AST-7', company: 'Acme', companyId: 1, status: 'critical', disks: [], checks: [], faults: [], watched: [],
+      portsAt: new Date().toISOString(), ports: [{ index: '1', name: 'Gi1/0/1', alias: 'Uplink to FW', up: false, adminUp: true, mbps: 1000, rates: true, inPct: 0, outPct: 0, watched: true, errors: 0, discards: 0 },
+        { index: '2', name: 'Gi1/0/2', alias: '', up: true, adminUp: true, mbps: 1000, rates: true, inPct: 64.2, outPct: 2.5, inBps: 642e6, outBps: 25e6, watched: false, errors: 0.4, discards: 0 }] }, alerts: [] },
+  });
+  location.hash = '#/monitoring/device/7'; render(<MonitoringApp />);
+  await waitFor(() => expect(screen.getByText('Uplink to FW')).toBeTruthy());
+  expect(screen.getByText('642.0 Mbit/s')).toBeTruthy();
+  expect(await screen.findByText('linkDown: Gi1/0/1')).toBeTruthy();
+  fireEvent.click(screen.getByLabelText('Watch Gi1/0/2'));
+  await waitFor(() => expect(calls.find((c) => c.url === '/api/monitoring/devices/7/ports/2/watch')?.body).toBe(JSON.stringify({ watched: true })));
+  fireEvent.click(screen.getAllByRole('button', { name: 'Traffic' })[1]);
+  await waitFor(() => expect(screen.getByRole('img', { name: 'Gi1/0/2: share of 1 Gbps in use: In latest 64%, Out latest 3%' })).toBeTruthy());
+});
+
+test('settings send a Teams test and keep a saved webhook when it comes back unchanged', async () => {
+  const calls = mock({ '/api/platform/me': { role: 'admin' }, '/api/assets/companies': [], '/api/monitoring/settings': { recipients: 'noc@x.test', mailResolved: true, teams: 'contoso.webhook.office.com/…', companies: [], escalateMinutes: 15, escalateRecipients: '', escalateTeams: '', reportEnabled: false, reportTo: '', reportCustomers: true } });
+  location.hash = '#/monitoring/settings'; render(<MonitoringApp />);
+  await waitFor(() => expect((screen.getByLabelText('Microsoft Teams channel webhook') as HTMLInputElement).value).toBe('contoso.webhook.office.com/…'));
+  fireEvent.click(screen.getAllByRole('button', { name: 'Send a test message' })[0]);
+  await waitFor(() => expect(calls.find((c) => c.url === '/api/monitoring/settings/teams-test')?.body).toBe('{}')); // the saved one, not the hint
+  fireEvent.click(screen.getByLabelText("Mail last month's uptime report as a PDF on the 1st of every month"));
+  fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+  await waitFor(() => expect(calls.some((c) => c.url === '/api/monitoring/settings' && c.method === 'PUT')).toBe(true));
+  expect(JSON.parse(calls.find((c) => c.method === 'PUT')!.body)).toMatchObject({ teams: 'contoso.webhook.office.com/…', reportEnabled: true, escalateMinutes: 15 });
+});

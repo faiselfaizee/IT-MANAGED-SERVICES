@@ -9,7 +9,9 @@ export const DEV_FILTERS: Record<string, Record<string, string>> = {
   check: { ok: 'Checks passing', failing: 'A check failing', notrun: 'A check not run yet' },
   cert: { ok: 'Certificates fine', soon: 'Certificate expires within 30 days', urgent: 'Certificate expires within 7 days' },
   kind: { computer: 'Computers', server: 'Servers', network: 'Network devices', printer: 'Printers', other: 'Other devices' },
-  metric: { offline: 'Down alerts', cpu: 'Processor alerts', memory: 'Memory alerts', disk: 'Disk alerts', check: 'Check alerts', cert: 'Certificate alerts', hardware: 'Hardware alerts' },
+  metric: { offline: 'Down alerts', cpu: 'Processor alerts', memory: 'Memory alerts', disk: 'Disk alerts', check: 'Check alerts', cert: 'Certificate alerts', hardware: 'Hardware alerts', traffic: 'Traffic alerts', port: 'Port alerts', service: 'Service alerts', process: 'Program alerts', log: 'Message alerts' },
+  port: { down: 'A watched port down', busy: 'A port above 80%' },
+  service: { down: 'A service or program stopped' },
 };
 const TONE: Record<string, string> = { ok: 'ok', warning: 'warn', critical: 'bad', muted: 'info', unwatched: '' };
 const WORD: Record<string, string> = { ok: 'OK', warning: 'Warning', critical: 'Critical', muted: 'Muted', unwatched: 'Not watched' };
