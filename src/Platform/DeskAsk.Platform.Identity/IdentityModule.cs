@@ -128,6 +128,7 @@ public sealed class IdentityModule : IPlatformModule
         r.MapGet("/account/login", LoginPage).AllowAnonymous();
         r.MapPost("/account/login", LoginPost).AllowAnonymous();
         TwoStepEndpoints.Map(r);
+        SsoEndpoints.Map(r);
         UsersEndpoints.Map(r);
         r.MapPost("/api/platform/identity/keys/rotate", async (ITenantContext t, TenantKeys keys, IAuditLog audit, CancellationToken ct) =>
         {
@@ -261,6 +262,7 @@ public sealed class IdentityModule : IPlatformModule
         + "input,button{width:100%;padding:11px 14px;margin:6px 0;font:inherit;border-radius:12px}input{color:inherit;background:var(--field);border:1px solid var(--line)}input::placeholder{color:var(--muted)}"
         + "input:focus{outline:none;border-color:#2fe0cf;box-shadow:0 0 0 3px rgba(47,224,207,.3)}"
         + "button{margin-top:14px;border:0;cursor:pointer;font-weight:600;color:#04201d;background:linear-gradient(135deg,#2fe0cf,#7a9bff);box-shadow:0 10px 26px -8px rgba(47,224,207,.7),inset 0 1px 0 rgba(255,255,255,.5)}button:hover{filter:brightness(1.07)}"
+        + ".sso{display:block;text-align:center;padding:11px 14px;border-radius:12px;border:1px solid var(--line);color:inherit;text-decoration:none;font-weight:600;background:var(--field)}.sso:hover{border-color:#2fe0cf}"
         + ".e{color:var(--bad);margin:0 0 8px}.m{display:flex;align-items:center;gap:10px;margin:0 0 18px;color:var(--muted);font-weight:600}.m i{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#2fe0cf,#5b6bff)}";
 
     internal static string Html(string body) => "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"dark light\"><title>Sign in</title>"
@@ -269,8 +271,9 @@ public sealed class IdentityModule : IPlatformModule
     internal static string LocalOrRoot(string? url) =>
         !string.IsNullOrEmpty(url) && url[0] == '/' && !url.StartsWith("//") && !url.StartsWith("/\\") ? url : "/";
 
-    static IResult Page(HttpContext http, IAntiforgery af, string? returnUrl, string error = "", int status = 200)
+    static async Task<IResult> Page(HttpContext http, IAntiforgery af, string? returnUrl, string error = "", int status = 200)
     {
+        var sso = await SsoEndpoints.EnabledAsync(http);
         var t = af.GetAndStoreTokens(http);
         var body = "<form method=\"post\" action=\"/account/login\"><div class=\"m\"><i></i>DeskAsk</div><h2>Sign in</h2>"
             + (error == "" ? "" : "<p class=\"e\" role=\"alert\">" + WebUtility.HtmlEncode(error) + "</p>")
@@ -278,11 +281,13 @@ public sealed class IdentityModule : IPlatformModule
             + "<input type=\"hidden\" name=\"returnUrl\" value=\"" + WebUtility.HtmlEncode(LocalOrRoot(returnUrl)) + "\">"
             + "<input name=\"email\" type=\"email\" placeholder=\"Email\" autocomplete=\"username\" required>"
             + "<input name=\"password\" type=\"password\" placeholder=\"Password\" autocomplete=\"current-password\" required>"
-            + "<button type=\"submit\">Sign in</button></form>";
+            + "<button type=\"submit\">Sign in</button>"
+            + (sso ? "<p class=\"m\" style=\"margin:14px 0 0;justify-content:center\">or</p><a class=\"sso\" href=\"/account/sso/microsoft?returnUrl=" + Uri.EscapeDataString(LocalOrRoot(returnUrl)) + "\">Sign in with Microsoft</a>" : "")
+            + "</form>";
         return Results.Content(Html(body), "text/html; charset=utf-8", Encoding.UTF8, status);
     }
 
-    static IResult LoginPage(HttpContext http, IAntiforgery af, string? returnUrl) =>
+    static Task<IResult> LoginPage(HttpContext http, IAntiforgery af, string? returnUrl) =>
         Page(http, af, returnUrl ?? http.Request.Query["ReturnUrl"].ToString());
 
     static readonly ConcurrentDictionary<string, (int n, DateTime until)> fails = new();
@@ -299,7 +304,7 @@ public sealed class IdentityModule : IPlatformModule
         if (fails.TryGetValue(key, out var fl) && fl.n >= MaxFails && fl.until > DateTime.UtcNow)
         {
             await audit.WriteAsync("auth.locked", target: email, actor: email);
-            return Page(http, af, returnUrl, "Too many attempts. Try again in a few minutes.", StatusCodes.Status429TooManyRequests);
+            return await Page(http, af, returnUrl, "Too many attempts. Try again in a few minutes.", StatusCodes.Status429TooManyRequests);
         }
 
         var user = await db.Users.FirstOrDefaultAsync(x => x.Email == email && x.Active, http.RequestAborted);
@@ -309,7 +314,7 @@ public sealed class IdentityModule : IPlatformModule
             fails.AddOrUpdate(key, (1, DateTime.UtcNow.AddMinutes(15)), (_, o) => (o.until > DateTime.UtcNow ? o.n + 1 : 1, DateTime.UtcNow.AddMinutes(15)));
             log.LogWarning("Failed sign-in for {Email} on {Tenant}", email, tenant.Require().Id);
             await audit.WriteAsync("auth.login_failed", target: email, actor: email);
-            return Page(http, af, returnUrl, "Email or password is not correct.", StatusCodes.Status401Unauthorized);
+            return await Page(http, af, returnUrl, "Email or password is not correct.", StatusCodes.Status401Unauthorized);
         }
         fails.TryRemove(key, out _);
         if (user.TotpEnabled) return TwoStepEndpoints.Pending(http, af, user.Id, returnUrl);   // password was right; the session starts after the second step

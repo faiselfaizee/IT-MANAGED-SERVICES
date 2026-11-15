@@ -33,6 +33,8 @@ public sealed class IdentitySchema : ITenantSchema
             id bigserial primary key, tenant_id text not null, kid text not null, private_sealed text not null,
             created_at timestamptz not null default now(), retired_at timestamptz);
             create unique index if not exists keys_active on identity.keys (tenant_id) where retired_at is null"),
+        new(4, "directory sign-in: the person's id at the directory", @"alter table identity.users add column if not exists external_id text;
+            create unique index if not exists users_external on identity.users (external_id) where external_id is not null"),
     };
 
     public async Task EnsureAsync(IServiceProvider sp, TenantInfo tenant, CancellationToken ct)

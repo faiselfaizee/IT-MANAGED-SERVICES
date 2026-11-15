@@ -15,6 +15,7 @@ public sealed class UserAccount
     public bool TotpEnabled { get; set; }
     public long TotpLastStep { get; set; }               // a code is accepted once: only steps after this one
     public string RecoveryHashes { get; set; } = "[]";   // SHA-256 of the unused recovery codes
+    public string? ExternalId { get; set; }              // the person's object id at the directory they sign in with (Microsoft Entra)
 }
 
 /// <summary>The identity schema of one customer database: users plus the OpenIddict tables (clients, authorizations, tokens).</summary>
@@ -38,6 +39,7 @@ public sealed class IdentityDb : DbContext
             e.Property(x => x.TotpEnabled).HasColumnName("totp_enabled");
             e.Property(x => x.TotpLastStep).HasColumnName("totp_last_step");
             e.Property(x => x.RecoveryHashes).HasColumnName("recovery_hashes");
+            e.Property(x => x.ExternalId).HasColumnName("external_id");
         });
     }
 }

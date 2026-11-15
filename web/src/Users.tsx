@@ -10,11 +10,12 @@ const roleName = (r: string) => ROLES.find(([k]) => k === r)?.[1] ?? r;
 
 export default function Users({ meId }: { meId?: string }) {
   const { data, error, loading, reload } = useLoad<Rec[]>('/api/platform/users');
-  const [form, setForm] = useState<Rec | null>(null); const [pw, setPw] = useState<Rec | null>(null);
+  const [form, setForm] = useState<Rec | null>(null); const [pw, setPw] = useState<Rec | null>(null); const [sso, setSso] = useState<'' | 'settings' | 'import'>('');
   const list = Array.isArray(data) ? data : [];
   return <>
     <h1>Users</h1>
     <div className="tools"><button className="primary" onClick={() => setForm({ email: '', name: '', role: 'engineer', password: '' })}>Add user</button>
+      <button onClick={() => setSso('import')}>Import from Microsoft</button><button onClick={() => setSso('settings')}>Microsoft sign-in…</button>
       <span className="muted">Staff sign in as administrator, engineer or viewer. Customer users see only their own company's tickets.</span></div>
     <Loading loading={loading && !data} error={error} />
     {data && (list.length === 0 ? <Empty>No users yet.</Empty> : <table><thead><tr><th>Name</th><th>Role</th><th>Two-step</th><th>Status</th><th /></tr></thead><tbody>
@@ -30,6 +31,8 @@ export default function Users({ meId }: { meId?: string }) {
       </tr>)}</tbody></table>)}
     {form && <UserForm init={form} self={form.id === meId} onClose={(ch) => { setForm(null); if (ch) reload(); }} />}
     {pw && <PasswordForm user={pw} onClose={() => setPw(null)} />}
+    {sso === 'settings' && <SsoSettings onClose={() => setSso('')} />}
+    {sso === 'import' && <ImportEntra onClose={(ch) => { setSso(''); if (ch) reload(); }} />}
   </>;
 }
 
@@ -66,5 +69,57 @@ function PasswordForm({ user, onClose }: { user: Rec; onClose: () => void }) {
     <Field label="New password (at least 10 characters)"><input type="password" autoComplete="new-password" value={p} onChange={(e) => setP(e.target.value)} autoFocus /></Field>
     <Err text={f.err} /><div className="actions"><button onClick={onClose}>Cancel</button>
       <button className="primary" disabled={f.busy || p.length < 10} onClick={() => f.submit(() => api(`/api/platform/users/${user.id}/password`, { body: { password: p } }))}>Set password</button></div>
+  </div></Modal>;
+}
+
+/** Setting up sign-in with Microsoft Entra ID: the app registration's ids and secret, and who may be created at their first sign-in. */
+function SsoSettings({ onClose }: { onClose: () => void }) {
+  const { data } = useLoad<Rec>('/api/platform/sso');
+  if (!data) return <Modal title="Sign in with Microsoft" onClose={onClose}><Loading loading error="" /></Modal>;
+  return <SsoForm init={data} onClose={onClose} />;
+}
+function SsoForm({ init, onClose }: { init: Rec; onClose: () => void }) {
+  const [v, setV] = useState<Rec>({ enabled: init.enabled, tenantId: init.tenantId, clientId: init.clientId, secret: '', domains: init.domains, autoCreate: init.autoCreate, defaultRole: init.defaultRole });
+  const [note, setNote] = useState(''); const f = useSubmit(() => onClose()); const set = (k: string, x: unknown) => setV({ ...v, [k]: x });
+  const save = () => api('/api/platform/sso', { method: 'PUT', body: { ...v, secret: v.secret || undefined } });
+  return <Modal title="Sign in with Microsoft" onClose={onClose}><div className="form">
+    <p className="muted small">In the Microsoft Entra admin centre create an app registration (App registrations › New). Add the web redirect address below, create a client secret, and under API permissions add the Microsoft Graph <em>application</em> permission User.Read.All with admin consent (only needed to import users).</p>
+    <Field label="Redirect address to register"><input value={init.redirectUri} readOnly onFocus={(e) => e.target.select()} /></Field>
+    <Field label="Directory (tenant) id"><input value={v.tenantId} onChange={(e) => set('tenantId', e.target.value)} spellCheck={false} /></Field>
+    <Field label="Application (client) id"><input value={v.clientId} onChange={(e) => set('clientId', e.target.value)} spellCheck={false} /></Field>
+    <Field label={init.hasSecret ? 'Client secret (saved; type a new one to replace it)' : 'Client secret'}><input type="password" value={v.secret} onChange={(e) => set('secret', e.target.value)} autoComplete="new-password" /></Field>
+    <label><input type="checkbox" checked={v.autoCreate} onChange={(e) => set('autoCreate', e.target.checked)} /> Create an account at first sign-in for people who have none</label>
+    {v.autoCreate && <div className="row"><Field label="Only these email domains (blank: any in the directory)"><input value={v.domains} onChange={(e) => set('domains', e.target.value)} placeholder="acme.com, acme.in" /></Field>
+      <Field label="Role of new people"><select value={v.defaultRole} onChange={(e) => set('defaultRole', e.target.value)}>{ROLES.filter(([k]) => k !== 'admin').map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field></div>}
+    <label><input type="checkbox" checked={v.enabled} onChange={(e) => set('enabled', e.target.checked)} /> Show "Sign in with Microsoft" on the sign-in page</label>
+    <p className="muted small">People are matched by their Microsoft email. Microsoft's own sign-in, including its multi-factor step, replaces the two-step code of DeskAsk for them. Password sign-in keeps working.</p>
+    {note && <p className="note" role="status">{note}</p>}
+    <Err text={f.err} /><div className="actions"><button onClick={onClose}>Cancel</button>
+      <button disabled={f.busy} onClick={() => f.submit(async () => { await save(); const r = await api<Rec>('/api/platform/sso/test', { method: 'POST', body: {} }).then(() => 'The app can read the directory.', (e) => (e as Error).message); setNote(r); throw new Error(''); })}>Save and test</button>
+      <button className="primary" disabled={f.busy} onClick={() => f.submit(save)}>Save</button></div>
+  </div></Modal>;
+}
+
+/** Choose people from the Microsoft directory and give them DeskAsk accounts. */
+function ImportEntra({ onClose }: { onClose: (changed: boolean) => void }) {
+  const { data, error, loading } = useLoad<Rec>('/api/platform/sso/entra/users');
+  const [sel, setSel] = useState<Set<string>>(new Set()); const [role, setRole] = useState('engineer'); const [q, setQ] = useState(''); const [done, setDone] = useState('');
+  const f = useSubmit(() => undefined);
+  const items = ((data?.items ?? []) as Rec[]).filter((u) => !q || `${u.name} ${u.email}`.toLowerCase().includes(q.toLowerCase()));
+  const pick = (u: Rec) => { const n = new Set(sel); if (n.has(u.id)) n.delete(u.id); else n.add(u.id); setSel(n); };
+  return <Modal title="Import from Microsoft" onClose={() => onClose(done !== '')}><div className="form">
+    {done ? <><p>{done}</p><div className="actions"><button className="primary" onClick={() => onClose(true)}>Close</button></div></> : <>
+      <Loading loading={loading && !data} error={error} />
+      {data && <>
+        <Field label="Find"><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name or email" /></Field>
+        <div style={{ maxHeight: 280, overflow: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
+          {items.length === 0 && <p className="muted">Nobody found.</p>}
+          {items.map((u) => <label key={u.id} style={{ display: 'block' }}><input type="checkbox" disabled={u.exists} checked={sel.has(u.id)} onChange={() => pick(u)} /> {u.name} <span className="muted">{u.email}</span> {u.exists && <Badge tone="ok">has an account</Badge>} {u.guest && <Badge>guest</Badge>} {!u.enabled && <Badge tone="bad">disabled in Microsoft</Badge>}</label>)}
+        </div>
+        <Field label={`Role for the ${sel.size} chosen`}><select value={role} onChange={(e) => setRole(e.target.value)}>{ROLES.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
+        <p className="muted small">Imported people sign in with Microsoft. For customer roles, link the person to a company afterwards (Edit).</p>
+        <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button>
+          <button className="primary" disabled={f.busy || sel.size === 0} onClick={() => f.submit(async () => { const r = await api<Rec>('/api/platform/sso/entra/import', { body: { role, users: ((data.items ?? []) as Rec[]).filter((u) => sel.has(u.id)) } }); setDone(`${r.created} added, ${r.linked} linked, ${r.skipped} skipped.`); })}>Import {sel.size}</button></div></>}
+    </>}
   </div></Modal>;
 }
