@@ -497,7 +497,7 @@ public sealed class AssetsModule : IPlatformModule
             if (hasStatus) { if (!Statuses.Contains(status)) throw new FormatException("status must be one of " + string.Join(", ", Statuses)); r.Set["status"] = status; }
 
             foreach (var (json, col) in new[] { ("manufacturer", "manufacturer"), ("model", "model"), ("serial", "serial"), ("location", "location"), ("assignedTo", "assigned_to") })
-            { var v = Str(b, json, 200, out var has); if (has) r.Set[col] = v; }
+            { var v = Str(b, json, 200, out var has); if (has) r.Set[col] = col == "serial" && v != null && AgentsApi.BadSerial(v) ? "" : v; }
             var notes = Str(b, "notes", 4000, out var hasNotes); if (hasNotes) r.Set["notes"] = notes;
             var host = Str(b, "hostname", 255, out var hasHost); if (hasHost) r.Set["hostname"] = host;
             var macIn = Str(b, "macAddress", 400, out var hasMac);
