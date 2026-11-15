@@ -16,7 +16,7 @@ public static class ItemsApi
     public static readonly string[] Types = { "login", "note", "card", "identity", "ssh", "server", "network", "wifi", "database", "apikey" };
 
     /// <summary>May someone with this role read the contents of an item?</summary>
-    internal static bool CanRead(string? role, bool requiresApproval) => VaultModule.Rank(role) >= (requiresApproval ? 3 : 2);
+    public static bool CanRead(string? role, bool requiresApproval) => VaultModule.Rank(role) >= (requiresApproval ? 3 : 2);
 
     sealed record Row(long Id, int VaultId, int? FolderId, string Type, string DataEnc, string TitleEnc, int KeyVersion, int Revision, long? AssetId,
         bool Managed, bool RequiresApproval, DateTime? PwChangedAt, string CreatedBy, string UpdatedBy, DateTime CreatedAt, DateTime UpdatedAt, DateTime? DeletedAt);
