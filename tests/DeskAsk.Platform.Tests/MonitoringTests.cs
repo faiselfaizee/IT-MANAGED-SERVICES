@@ -105,9 +105,10 @@ public class MonitoringTests : IClassFixture<WebApplicationFactory<Program>>
         await Sql("truncate monitoring.alerts, monitoring.mutes restart identity; truncate mail.outbox, mail.outbox_files restart identity; delete from identity.users where \"Email\" like '%@mon.test'");
 
         // the starting rules are there
-        var rules = (await J(await api.GetAsync("/api/monitoring/rules"))).GetProperty("items").EnumerateArray().ToList();
-        Assert.Contains(rules, x => x.GetProperty("name").GetString() == "Server or network device down" && x.GetProperty("builtin").GetBoolean());
-        Assert.Contains(rules, x => x.GetProperty("name").GetString() == "Disk space below 5%" && x.GetProperty("description").GetString() == "Less than 5% free on a disk or datastore of any device");
+        // the starting rules come with the schema (other tests may have changed this database's rules already)
+        var seeds = string.Join("\n", MonitoringSchema.Migrations.Select(m => m.Sql));
+        foreach (var n in new[] { "Server or network device down", "Disk space below 5%", "Watched port down for 5 minutes", "Critical message from a device" }) Assert.Contains($"'{n}'", seeds);
+        Assert.Equal("Less than 5% free on a disk or datastore of any device", RulesApi.Describe(new Rule(0, "x", true, "disk", 5, 0, "critical", Array.Empty<string>(), null, true, false, "high", true)));
         await Sql("delete from monitoring.rules");
         async Task<int> Rule(object o) { var r = await api.PostAsync("/api/monitoring/rules", Json(o)); Assert.Equal(HttpStatusCode.OK, r.StatusCode); return (await J(r)).GetProperty("id").GetInt32(); }
         await Rule(new { name = "Memory high", metric = "memory", threshold = 90, minutes = 0, severity = "warning", kinds = new[] { "server" } });

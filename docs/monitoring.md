@@ -1,4 +1,4 @@
-# Monitoring (v3.0.0)
+# Monitoring (v3.0.0, extended in v3.1.0)
 
 Monitoring watches the devices that are already in Assets. It does not need a separate agent or a separate list of devices.
 
@@ -88,9 +88,52 @@ On a device page, choose **Mute** for 1 hour up to a week, or until someone unmu
 
 Under Access, "Monitoring" grants (read or modify, for all customers or one) work as they do for Assets and Service Desk.
 
+## Added in v3.1.0
+
+### Port traffic (network devices)
+- **What is read:** for devices read in SNMP or Network device mode, the site controller reads every port's counters every 5 minutes: state, speed, traffic in and out (as a share of the port speed and in bits per second), and errors and discards per minute. It uses the device's SNMP login, v2c or v3.
+- **Where it shows:** the device page lists the ports, and **Traffic** opens a chart (6 hours to 30 days). Readings are kept 2 days, hourly figures 30 days.
+- **Watched ports:** ports with a description (such as "Uplink to FW") are watched by default. Tick or untick others on the device page. A watched port that goes down opens an alert.
+- **New rules:** "Port busy above 80% for 15 minutes" (warning) and "Watched port down for 5 minutes" (critical, opens a ticket).
+
+### Services and programs (agent)
+- **Rule kinds:** "Service not running" and "Program not running". Each names what to watch, for example `Spooler, MSSQLSERVER` or `sqlservr.exe, nginx`. Agents 3.1 and later report on those names once a minute: Windows services through the service manager, Linux services through systemd, and programs from the running process list.
+- **Restart:** a service rule can ask the agent to restart the service once when the alert opens. The restart runs as an agent job, shown under the asset's commands and in the audit log, and the alert notes it.
+
+### Device messages: syslog, SNMP traps and Windows event logs
+- **Syslog and traps:** the site controller receives syslog on UDP 514 and SNMP traps (v1, v2c) on UDP 162.
+  - Point devices at the controller's address.
+  - Messages from addresses that are not devices of that site are ignored, and the controller log says which addresses they came from.
+  - A source sending more than 120 messages a minute is cut off for the rest of the minute.
+  - SNMPv3 traps are not decoded yet.
+- **Windows event logs:** agents send new errors and critical events from the System and Application logs, when a message rule asks for them.
+- **Messages page:** Monitoring › Messages lists everything, and each device page shows its own. Messages are kept 14 days.
+- **Rule kind "Device messages":** N messages of a kind (any, syslog, trap or Windows event), at a level or worse, optionally containing a text (or program or trap name), within M minutes. The starting rule "Critical message from a device" fires on any message at critical or worse.
+
+### Microsoft Teams
+- **Setting it up:**
+  1. In Teams, create a webhook for a channel: Workflows › "Post to a channel when a webhook request is received". Older incoming webhooks also work.
+  2. Paste the address in Monitoring › Settings.
+  3. Use **Send a test message** to check it.
+  A customer can have its own channel.
+- **What gets posted:** alerts post a card with the device, customer, rule, time and a button that opens the device; cleared alerts post too, if that is switched on. Each rule has "Post to the Teams channel" (on by default).
+- **Delivery:** posts are retried after 1, 2, 4 and 8 minutes if Teams does not answer. Webhook addresses are stored encrypted, and settings show only their host.
+
+### Escalation
+If nobody acknowledges a critical alert within the set minutes, it goes once to an escalation mail list and Teams channel. The mail template is "Monitoring alert not acknowledged".
+
+### Monthly uptime report
+- **What it shows:** Monitoring › Uptime report shows, per customer and month:
+  - availability by device (the share of the month with no open "down" alert)
+  - outages and total down time
+  - alerts by kind
+  - tickets opened from alerts
+  You can download it as a PDF.
+- **Monthly mail:** when switched on in settings, the report goes out as a PDF on the 1st of every month (or by the 3rd, if the server was off). The all-customers report goes to the listed addresses, and each customer with its own recipients gets theirs. **Send the reports for this month now** sends any month again.
+- **Mail attachments:** mail can now carry attachments, through both SMTP and Microsoft 365.
+
 ## Not in this version
 
-- **Other ways to notify:** text messages, Teams, Slack and phone calls are not available. Mail and tickets are.
+- **Other ways to notify:** text messages, Slack and phone calls are not available. Mail, Teams and tickets are.
 - **macOS performance data:** the agent does not send it yet. Linux and Windows are supported.
-- **More metrics:** per-process figures, network traffic and SNMP interface load are not watched yet. Network devices are watched by ping, ports read at inventory time and hardware state.
-- **Escalation:** there is no "mail again if not acknowledged within X minutes".
+- **More metrics:** per-process processor and memory figures, NetFlow traffic analysis and topology maps are not available yet.
