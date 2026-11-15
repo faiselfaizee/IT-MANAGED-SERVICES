@@ -28,7 +28,7 @@ public class RenewalsTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/platform/mail/config", Json(new { provider = "smtp", from = "desk@example.test", fromName = "DeskAsk", host = "127.0.0.1", port = smtp.Port, security = "none", user = "", password = "" }))).StatusCode);
 
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/assets/renewals/settings", Json(new { enabled = true, days = new int[0], to = "boss@renew.test", customers = true }))).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/assets/renewals/settings", Json(new { enabled = true, days = new[] { 30 }, to = "", customers = false }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/assets/renewals/settings", Json(new { enabled = true, days = new[] { 30 }, to = "", customers = false, users = false, vendors = false }))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/assets/renewals/settings", Json(new { enabled = true, days = new[] { 7, 30 }, to = "boss@renew.test", customers = true }))).StatusCode);
         var saved = JsonDocument.Parse(await (await admin.GetAsync("/api/assets/renewals/settings")).Content.ReadAsStringAsync()).RootElement;
         Assert.Equal(30, saved.GetProperty("days")[0].GetInt32());   // kept longest first

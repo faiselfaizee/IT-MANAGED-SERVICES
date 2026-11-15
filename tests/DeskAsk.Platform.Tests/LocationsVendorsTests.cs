@@ -47,7 +47,7 @@ public class LocationsVendorsTests : IClassFixture<WebApplicationFactory<Program
 
         // a customer administrator manages their own company's locations and vendors, and nobody else's
         Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "cadm@loc.test", name = "Acme admin", role = "cadmin", password = Pw }))).StatusCode);
-        Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "eng@loc.test", name = "Engineer", role = "engineer", password = Pw }))).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "eng@loc.test", name = "Viewer", role = "viewer", password = Pw }))).StatusCode);
         Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "ravi@acme.loc.test", name = "Ravi Kumar", role = "customer", password = Pw }))).StatusCode);
         var cid = (await J(await admin.GetAsync("/api/platform/users"))).EnumerateArray().Single(x => x.GetProperty("email").GetString() == "cadm@loc.test").GetProperty("id").GetString();
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync($"/api/platform/access/user-companies/{cid}", Json(new { companyId = acme }))).StatusCode);
