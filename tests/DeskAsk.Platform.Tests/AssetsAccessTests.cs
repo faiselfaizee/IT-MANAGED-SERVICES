@@ -53,7 +53,7 @@ public class AssetsAccessTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "view@del.test", name = "viewer", role = "viewer", password = Pw }))).StatusCode);
         var eng = await TestSupport.ClientFor(factory, "eng@del.test", Pw);
 
-        var made = await eng.PostAsync("/api/assets", Json(new { name = "Reception PC", status = "in_use" }));
+        var made = await eng.PostAsync("/api/assets", Json(new { name = "Reception PC " + Guid.NewGuid().ToString("N")[..6], status = "in_use" }));
         Assert.True(made.IsSuccessStatusCode, await made.Content.ReadAsStringAsync());
         var id = JsonDocument.Parse(await made.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetInt64();
         Assert.True((await eng.PutAsync($"/api/assets/{id}", Json(new { location = "Front desk" }))).IsSuccessStatusCode);
