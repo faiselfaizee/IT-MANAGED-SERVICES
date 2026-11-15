@@ -14,6 +14,8 @@ func Int(n int64) Value       { return Value{Tag: tagInteger, Int: n} }
 func Gauge(n int64) Value     { return Value{Tag: tagGauge32, Int: n} }
 func Ticks(n int64) Value     { return Value{Tag: tagTimeTicks, Int: n} }
 func ObjectID(o string) Value { return Value{Tag: tagOID, OID: o} }
+func Counter(n int64) Value   { return Value{Tag: tagCounter32, Int: n} }
+func Counter64(n int64) Value { return Value{Tag: tagCounter64, Int: n} }
 
 // FakeDevice answers SNMP v2c GET and GETNEXT for community "public" from vals, on a local UDP port. It is used by tests of
 // readers built on this package; stop closes it.
@@ -74,7 +76,7 @@ func FakeDevice(vals map[string]Value) (addr string, stop func()) {
 				val = encInt(v.Int)
 			case tagOctet:
 				val = tlv(tagOctet, v.Bytes)
-			case tagGauge32, tagTimeTicks, tagCounter32:
+			case tagGauge32, tagTimeTicks, tagCounter32, tagCounter64:
 				b := encInt(v.Int)
 				_, body, _ := (&reader{b: b}).tlv()
 				val = tlv(v.Tag, body)

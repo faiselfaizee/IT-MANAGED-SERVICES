@@ -136,6 +136,8 @@ type results struct {
 	Bmc         []invRes      `json:"bmc"` // what a server's management controller reported, merged into the asset
 	Errors      []errRes      `json:"errors"`
 	Checks      []CheckResult `json:"checks"`
+	Traffic     []trafficRes  `json:"traffic,omitempty"` // port states and rates of network devices
+	Events      []eventRes    `json:"events,omitempty"`  // syslog messages and traps received
 }
 
 // Report is the body of one check-in.
@@ -171,6 +173,11 @@ type Runner struct {
 	lastScan time.Time
 	scanning bool
 
+	traffic     map[string]*trafficReading // last counter reading per network device
+	lastTraffic map[string]time.Time
+	// Listen receives syslog and traps; nil in tests that do not want it. SyslogAddr/TrapAddr default to :514 and :162.
+	Listen *Listener
+
 	wake      chan struct{}   // a result is ready or the platform has new work: check in now
 	deploying map[string]bool // installs in flight, by asset id (the platform keeps handing out nothing twice, this guards a retry)
 }
@@ -198,6 +205,10 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 	}()
 	go r.wakeLoop(ctx)
+	if r.Listen != nil {
+		r.Listen.Add = r.addEvent
+		r.Listen.Start(ctx)
+	}
 	failures := 0
 	for ctx.Err() == nil {
 		w, err := r.CheckIn(ctx)
@@ -273,6 +284,14 @@ func merge(old, cur report) report {
 	if cur.Found != nil {
 		old.Found = cur.Found
 	}
+	old.Results.Traffic = append(old.Results.Traffic, cur.Results.Traffic...)
+	if len(old.Results.Traffic) > 2000 {
+		old.Results.Traffic = old.Results.Traffic[len(old.Results.Traffic)-2000:]
+	}
+	old.Results.Events = append(old.Results.Events, cur.Results.Events...)
+	if len(old.Results.Events) > maxEvents {
+		old.Results.Events = old.Results.Events[len(old.Results.Events)-maxEvents:]
+	}
 	old.Deploys = append(old.Deploys, cur.Deploys...)
 	old.Log = append(old.Log, cur.Log...)
 	return old
@@ -328,7 +347,17 @@ func (r *Runner) watch(ctx context.Context, a asset, checks []CheckDef) {
 	if bdue {
 		r.lastInv[bkey] = time.Now()
 	}
+	tdue := up && (a.Monitor == "network" || a.Monitor == "snmp") && time.Since(r.lastTraffic[a.ID]) >= TrafficEvery
+	if tdue {
+		if r.lastTraffic == nil {
+			r.lastTraffic = map[string]time.Time{}
+		}
+		r.lastTraffic[a.ID] = time.Now()
+	}
 	r.mu.Unlock()
+	if tdue {
+		r.readTraffic(ctx, a, target)
+	}
 	if bdue {
 		r.readBmc(ctx, a, bkey)
 	}
@@ -576,4 +605,16 @@ func Inventory(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	return inv.JSON(), nil
+}
+
+// maxEvents bounds the syslog messages and traps kept between check-ins.
+const maxEvents = 5000
+
+func (r *Runner) addEvent(e eventRes) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.pending.Results.Events) >= maxEvents {
+		return
+	}
+	r.pending.Results.Events = append(r.pending.Results.Events, e)
 }

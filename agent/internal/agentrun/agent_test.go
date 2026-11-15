@@ -3,6 +3,7 @@ package agentrun
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -234,5 +235,46 @@ func TestTheRunnerSendsPerformanceSamplesAndFollowsTheAskedInterval(t *testing.T
 	case <-got:
 		t.Fatal("the asked interval was not followed")
 	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func TestTheAgentReportsTheServicesAndProgramsMonitoringAsksAbout(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads /proc")
+	}
+	self, _ := os.Executable()
+	got := make(chan map[string]any, 10)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/agent/v1/metrics", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		got <- b
+		_, _ = fmt.Fprintf(w, `{"every":15,"watch":{"services":["no-such-unit-dk"],"processes":[%q,"not-running-dk"]},"events":true}`, filepath.Base(self))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	old := MetricsEvery
+	MetricsEvery = 30 * time.Millisecond
+	defer func() { MetricsEvery = old }()
+	r := NewRunner(config.Agent{Server: srv.URL, AgentID: "gAAA", Key: "dkag_secretsecretsecretsecret"}, "1.0.0")
+	r.metricsEveryForTest = 30 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.metricsLoop(ctx)
+	first := <-got
+	if _, ok := first["processes"]; ok {
+		t.Fatal("nothing was asked for yet")
+	}
+	select {
+	case b := <-got:
+		ps := b["processes"].([]any)
+		if !ps[0].(map[string]any)["running"].(bool) || ps[1].(map[string]any)["running"].(bool) {
+			t.Fatalf("processes %v", ps)
+		}
+		if b["services"].([]any)[0].(map[string]any)["running"].(bool) {
+			t.Fatalf("services %v", b["services"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no second sample")
 	}
 }

@@ -139,7 +139,9 @@ func cmdRun(isCollector bool) error {
 			return fmt.Errorf("this computer is not set up as a collector yet (run collector-install): %w", err)
 		}
 		log.Printf("deskask collector %s -> %s", version, cfg.Server)
-		return collector.NewRunner(cfg, version).Run(ctx)
+		cr := collector.NewRunner(cfg, version)
+		cr.Listen = &collector.Listener{SyslogAddr: ":514", TrapAddr: ":162"}
+		return cr.Run(ctx)
 	}
 	logToFile("agent.log")
 	var cfg config.Agent

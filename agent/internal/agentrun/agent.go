@@ -17,6 +17,7 @@ import (
 	"github.com/deskask/platform/agent/internal/inventory"
 	"github.com/deskask/platform/agent/internal/metrics"
 	"github.com/deskask/platform/agent/internal/svc"
+	"github.com/deskask/platform/agent/internal/watch"
 )
 
 const ConfigFile = "agent.json"
@@ -87,8 +88,9 @@ type message struct {
 
 // Runner is the agent's long-running part.
 type Runner struct {
-	Cfg     config.Agent
-	Version string
+	metricsEveryForTest time.Duration // tests only: ignore the interval the platform asks for
+	Cfg                 config.Agent
+	Version             string
 	// Exit ends the program (so the service manager restarts it); replaced in tests.
 	Exit func(code int)
 	// RestartSoon asks the system to start the program again after it ends (Windows); nil in tests.
@@ -256,8 +258,9 @@ func (r *Runner) SendInventory(ctx context.Context) error {
 // MetricsEvery is how often a performance sample is sent; the platform may ask for another interval in its answer.
 var MetricsEvery = time.Minute
 
-// metricsLoop sends processor, memory and disk use once a minute for the Monitoring module. A server that does not know the
-// endpoint yet (older than 3.0) is asked again an hour later; a system the agent cannot read stops the loop.
+// metricsLoop sends processor, memory and disk use once a minute for the Monitoring module, with the state of the services and
+// programs Monitoring asked about and new errors from the Windows event logs. A server that does not know the endpoint yet (older
+// than 3.0) is asked again an hour later; a system the agent cannot read stops the loop.
 func (r *Runner) metricsLoop(ctx context.Context) {
 	var s metrics.Sampler
 	if _, err := s.Take(); err != nil { // the first reading only primes the processor counters
@@ -265,6 +268,9 @@ func (r *Runner) metricsLoop(ctx context.Context) {
 		return
 	}
 	every := MetricsEvery
+	var services, processes []string
+	events := false
+	var elog watch.EventLog
 	for ctx.Err() == nil {
 		sleep(ctx, every)
 		smp, err := s.Take()
@@ -272,10 +278,27 @@ func (r *Runner) metricsLoop(ctx context.Context) {
 			log.Printf("performance data: %v", err)
 			continue
 		}
+		body := sample{Sample: smp}
+		if len(services) > 0 {
+			body.Services = watch.Services(ctx, services)
+		}
+		if len(processes) > 0 {
+			if names, err := watch.Running(); err == nil {
+				body.Processes = watch.Processes(processes, names)
+			}
+		}
+		if events {
+			body.Events = elog.Read(ctx)
+		}
 		var out struct {
 			Every int `json:"every"`
+			Watch struct {
+				Services  []string `json:"services"`
+				Processes []string `json:"processes"`
+			} `json:"watch"`
+			Events bool `json:"events"`
 		}
-		err = r.cl.Do(ctx, "POST", "/agent/v1/metrics", smp, &out)
+		err = r.cl.Do(ctx, "POST", "/agent/v1/metrics", body, &out)
 		var he *client.Error
 		switch {
 		case err == nil:
@@ -284,10 +307,30 @@ func (r *Runner) metricsLoop(ctx context.Context) {
 			} else {
 				every = MetricsEvery
 			}
+			if r.metricsEveryForTest > 0 {
+				every = r.metricsEveryForTest
+			}
+			services, processes, events = limit(out.Watch.Services), limit(out.Watch.Processes), out.Events
 		case errors.As(err, &he) && he.Status == 404:
 			every = time.Hour
 		default:
 			every = MetricsEvery
 		}
 	}
+}
+
+// sample is what the agent sends once a minute.
+type sample struct {
+	metrics.Sample
+	Services  []watch.Service `json:"services,omitempty"`
+	Processes []watch.Process `json:"processes,omitempty"`
+	Events    []watch.Event   `json:"events,omitempty"`
+}
+
+// limit keeps at most 50 names, so a mistake in a rule cannot make the agent run hundreds of queries a minute.
+func limit(names []string) []string {
+	if len(names) > 50 {
+		return names[:50]
+	}
+	return names
 }

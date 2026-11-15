@@ -42,6 +42,11 @@ public sealed class MailSchema : ITenantSchema
               id bigserial primary key, inbox_id bigint not null references mail.inbox(id) on delete cascade,
               name text not null, content_type text not null default 'application/octet-stream', data bytea not null);
             create index if not exists inbox_files_inbox on mail.inbox_files (inbox_id)"),
+        new(4, "files attached to outgoing mail", @"
+            create table if not exists mail.outbox_files (
+              id bigserial primary key, outbox_id bigint not null references mail.outbox(id) on delete cascade,
+              name text not null, content_type text not null default 'application/octet-stream', data bytea not null);
+            create index if not exists outbox_files_outbox on mail.outbox_files (outbox_id)"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) => SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
 }
@@ -89,19 +94,21 @@ public static class MailSender
 {
     static string OneLine(string s) => s.Replace("\r", " ").Replace("\n", " ").Trim();
 
-    public static async Task SendAsync(MailConfig c, string to, string subject, string body, CancellationToken ct, string? html = null)
+    public static async Task SendAsync(MailConfig c, string to, string subject, string body, CancellationToken ct, string? html = null, IReadOnlyList<MailFile>? files = null)
     {
-        subject = OneLine(subject);
-        if (c.Provider == "smtp") await Smtp(c, to, subject, body, html, ct);
-        else if (c.Provider == "graph") await Graph(c, to, subject, body, html, ct);
+        subject = OneLine(subject); files ??= Array.Empty<MailFile>();
+        if (c.Provider == "smtp") await Smtp(c, to, subject, body, html, files, ct);
+        else if (c.Provider == "graph") await Graph(c, to, subject, body, html, files, ct);
         else throw new InvalidOperationException("Mail is not set up.");
     }
 
-    static async Task Smtp(MailConfig c, string to, string subject, string body, string? html, CancellationToken ct)
+    static async Task Smtp(MailConfig c, string to, string subject, string body, string? html, IReadOnlyList<MailFile> files, CancellationToken ct)
     {
         var m = new MimeMessage();
         m.From.Add(new MailboxAddress(c.FromName, c.From)); m.To.Add(MailboxAddress.Parse(to)); m.Subject = subject;
-        m.Body = new BodyBuilder { TextBody = body, HtmlBody = string.IsNullOrEmpty(html) ? null : html }.ToMessageBody();
+        var bb = new BodyBuilder { TextBody = body, HtmlBody = string.IsNullOrEmpty(html) ? null : html };
+        foreach (var f in files) bb.Attachments.Add(f.Name, f.Data, MimeKit.ContentType.Parse(f.ContentType));
+        m.Body = bb.ToMessageBody();
         using var smtp = new SmtpClient { Timeout = 20000 };
         var sec = c.Security switch { "ssl" => SecureSocketOptions.SslOnConnect, "none" => SecureSocketOptions.None, _ => SecureSocketOptions.StartTls };
         await smtp.ConnectAsync(c.Host, c.Port, sec, ct);
@@ -119,13 +126,14 @@ public static class MailSender
         return JsonDocument.Parse(tj).RootElement.GetProperty("access_token").GetString()!;
     }
 
-    static async Task Graph(MailConfig c, string to, string subject, string body, string? html, CancellationToken ct)
+    static async Task Graph(MailConfig c, string to, string subject, string body, string? html, IReadOnlyList<MailFile> files, CancellationToken ct)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         var access = await GraphToken(c, http, ct);
+        var attachments = files.Select(f => new Dictionary<string, object> { ["@odata.type"] = "#microsoft.graph.fileAttachment", ["name"] = f.Name, ["contentType"] = f.ContentType, ["contentBytes"] = Convert.ToBase64String(f.Data) }).ToArray();
         var req = new HttpRequestMessage(HttpMethod.Post, $"https://graph.microsoft.com/v1.0/users/{Uri.EscapeDataString(c.From)}/sendMail")
         {
-            Content = new StringContent(JsonSerializer.Serialize(new { message = new { subject, body = new { contentType = string.IsNullOrEmpty(html) ? "Text" : "HTML", content = string.IsNullOrEmpty(html) ? body : html }, toRecipients = new[] { new { emailAddress = new { address = to } } } }, saveToSentItems = false }), Encoding.UTF8, "application/json"),
+            Content = new StringContent(JsonSerializer.Serialize(new { message = new { subject, attachments, body = new { contentType = string.IsNullOrEmpty(html) ? "Text" : "HTML", content = string.IsNullOrEmpty(html) ? body : html }, toRecipients = new[] { new { emailAddress = new { address = to } } } }, saveToSentItems = false }), Encoding.UTF8, "application/json"),
         };
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
         var res = await http.SendAsync(req, ct);
@@ -152,16 +160,26 @@ public sealed class MailQueue : IMailQueue
         return true;
     }
 
-    async Task Insert(NpgsqlConnection db, string to, string subject, string body, string html, string? reference, CancellationToken ct)
+    async Task Insert(NpgsqlConnection db, string to, string subject, string body, string html, string? reference, CancellationToken ct, IReadOnlyList<MailFile>? files = null)
     {
-        await using var c = new NpgsqlCommand("insert into mail.outbox (to_addr, subject, body, body_html, reference) values (@t, @s, @b, @h, @r)", db);
+        await using var c = new NpgsqlCommand("insert into mail.outbox (to_addr, subject, body, body_html, reference) values (@t, @s, @b, @h, @r) returning id", db);
         c.Parameters.AddWithValue("t", to); c.Parameters.AddWithValue("s", subject.Length > 300 ? subject[..300] : subject); c.Parameters.AddWithValue("b", body); c.Parameters.AddWithValue("h", html); c.Parameters.AddWithValue("r", reference ?? "");
-        await c.ExecuteNonQueryAsync(ct);
+        var id = (long)(await c.ExecuteScalarAsync(ct))!;
+        foreach (var f in files ?? Array.Empty<MailFile>())
+        {
+            await using var fc = new NpgsqlCommand("insert into mail.outbox_files (outbox_id, name, content_type, data) values (@o, @n, @c, @d)", db);
+            fc.Parameters.AddWithValue("o", id); fc.Parameters.AddWithValue("n", f.Name); fc.Parameters.AddWithValue("c", f.ContentType); fc.Parameters.AddWithValue("d", f.Data);
+            await fc.ExecuteNonQueryAsync(ct);
+        }
         await jobs.EnqueueAsync(MailJob.JobType, "{}", null, "mail.send", ct);
     }
 
-    public async Task<bool> EnqueueTemplateAsync(string template, string to, IReadOnlyDictionary<string, string> values, string? reference = null, CancellationToken ct = default)
+    public Task<bool> EnqueueTemplateAsync(string template, string to, IReadOnlyDictionary<string, string> values, string? reference = null, CancellationToken ct = default) =>
+        EnqueueTemplateAsync(template, to, values, Array.Empty<MailFile>(), reference, ct);
+
+    public async Task<bool> EnqueueTemplateAsync(string template, string to, IReadOnlyDictionary<string, string> values, IReadOnlyList<MailFile> files, string? reference = null, CancellationToken ct = default)
     {
+        if (files.Sum(f => (long)f.Data.Length) > 10 * 1024 * 1024) throw new ArgumentException("Attachments may be 10 MB in all at most.");
         to = (to ?? "").Trim();
         if (to.Length == 0 || to.Length > 254 || !to.Contains('@') || to.Any(char.IsWhiteSpace)) return false;
         var cfg = await MailSettings.LoadAsync(settings, dp, ct);
@@ -171,7 +189,7 @@ public sealed class MailQueue : IMailQueue
         var t = tenant.Require();
         var (subject, text, html) = MailTemplates.Render(def, sub, body, values, MailTemplates.BaseUrl(cfg, t), cfg.FromName != "" ? cfg.FromName : t.Name);
         await using var db = new NpgsqlConnection(t.ConnectionString); await db.OpenAsync(ct);
-        await Insert(db, to, subject, text, html, reference, ct);
+        await Insert(db, to, subject, text, html, reference, ct, files);
         return true;
     }
 }
@@ -195,7 +213,13 @@ public sealed class MailJob : IJobHandler
         {
             try
             {
-                await MailSender.SendAsync(cfg, m.to, m.subject, m.body, ct, m.html);
+                var files = new List<MailFile>();
+                await using (var fc = new NpgsqlCommand("select name, content_type, data from mail.outbox_files where outbox_id = @o order by id", db))
+                {
+                    fc.Parameters.AddWithValue("o", m.id); await using var fr = await fc.ExecuteReaderAsync(ct);
+                    while (await fr.ReadAsync(ct)) files.Add(new MailFile(fr.GetString(0), fr.GetString(1), (byte[])fr[2]));
+                }
+                await MailSender.SendAsync(cfg, m.to, m.subject, m.body, ct, m.html, files);
                 await using var u = new NpgsqlCommand("update mail.outbox set status = 'sent', sent_at = now(), attempts = attempts + 1, last_error = '' where id = @i", db); u.Parameters.AddWithValue("i", m.id); await u.ExecuteNonQueryAsync(ct);
             }
             catch (Exception e) when (e is not OperationCanceledException)

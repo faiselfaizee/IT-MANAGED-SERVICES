@@ -192,7 +192,12 @@ public interface IMailQueue
     Task<bool> EnqueueAsync(string to, string subject, string body, string? reference = null, CancellationToken ct = default);
     /// <summary>Queues a message written from one of the customer's mail templates (they can edit the wording). Values replace {{name}} in the template; a "path" value (for example "#/servicedesk/5") becomes a full {{link}}.</summary>
     Task<bool> EnqueueTemplateAsync(string template, string to, IReadOnlyDictionary<string, string> values, string? reference = null, CancellationToken ct = default);
+    /// <summary>As EnqueueTemplateAsync, with files attached (for example a PDF report). Keep them small: 10 MB in all at most.</summary>
+    Task<bool> EnqueueTemplateAsync(string template, string to, IReadOnlyDictionary<string, string> values, IReadOnlyList<MailFile> files, string? reference = null, CancellationToken ct = default);
 }
+
+/// <summary>A file attached to an outgoing message.</summary>
+public sealed record MailFile(string Name, string ContentType, byte[] Data);
 
 /// <summary>A file that came with an incoming message.</summary>
 public sealed record InboundFile(string Name, string ContentType, byte[] Data);
