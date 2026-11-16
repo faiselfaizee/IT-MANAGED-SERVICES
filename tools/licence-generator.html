@@ -63,7 +63,7 @@
     </div>
     <label>Modules</label>
     <div id="mods"></div>
-    <p class="muted">Limits are optional, written like <code>agents=10, customers=50</code>.</p>
+    <p class="muted">Limits are optional, written like <code>max_assets=200</code>. Assets: max_assets, customer_write=1. Monitoring: max_devices. Service Desk: agents (staff accounts). AD Manager: max_domains. Vault: max_users. Backup: max_devices (devices with file backup). A module left without limits is unlimited.</p>
     <div class="actions"><button class="primary" id="issue">Create licence</button></div>
     <div id="issuemsg" class="msg"></div>
     <div id="outwrap" hidden>
@@ -104,16 +104,18 @@ async function issueToken(privatePem, payload) {
   const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, priv, enc.encode(header + '.' + body));
   return { token: header + '.' + body + '.' + b64u(sig), kid, publicPem: derToPem(spki, 'PUBLIC KEY') };
 }
-function parseLimits(text) {
+const LIMITS = { assets: ['max_assets', 'customer_write'], monitoring: ['max_devices'], servicedesk: ['agents'], adsuite: ['max_domains'], vault: ['max_users'], backup: ['max_devices'] };
+function parseLimits(text, mod) {
   const out = {}; for (const part of text.split(/[,+;\s]+/).filter(Boolean)) {
-    const m = part.match(/^([A-Za-z][\w-]*)=(\d+)$/); if (!m) throw new Error(`Limit "${part}" must look like agents=10.`); out[m[1]] = Number(m[2]);
+    const m = part.match(/^([A-Za-z][\w-]*)=(\d+)$/); if (!m) throw new Error(`Limit "${part}" must look like max_assets=200.`);
+    if (mod && !(LIMITS[mod] || []).includes(m[1])) throw new Error(`"${m[1]}" is not a limit of ${mod}. Known: ${(LIMITS[mod] || []).join(', ') || 'none'}.`); out[m[1]] = Number(m[2]);
   } return Object.keys(out).length ? out : null;
 }
 function download(name, text) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
 function say(id, text, cls) { const e = $(id); e.textContent = text; e.className = 'msg ' + (cls || ''); }
 
 // modules
-$('mods').innerHTML = MODULES.map(([k, n]) => `<div class="mod"><label><input type="checkbox" data-m="${k}" ${k === 'servicedesk' || k === 'assets' ? 'checked' : ''}> ${n}</label><input type="text" data-l="${k}" placeholder="limits, for example agents=10"></div>`).join('');
+$('mods').innerHTML = MODULES.map(([k, n]) => `<div class="mod"><label><input type="checkbox" data-m="${k}" ${k === 'servicedesk' || k === 'assets' ? 'checked' : ''}> ${n}</label><input type="text" data-l="${k}" placeholder="${(LIMITS[k] || []).map((x) => x + '=').join(', ') || 'no limits'}"></div>`).join('');
 
 // key handling
 $('pick').onclick = () => $('pemfile').click();
@@ -142,7 +144,7 @@ $('issue').onclick = async () => {
     const days = Number($('days').value), grace = Number($('grace').value);
     if (!Number.isInteger(days) || days < 1) throw new Error('Valid for must be a whole number of days, at least 1.');
     if (!Number.isInteger(grace) || grace < 0) throw new Error('Grace must be a whole number of days, 0 or more.');
-    const modules = {}; document.querySelectorAll('[data-m]:checked').forEach((c) => { const k = c.dataset.m; modules[k] = { limits: parseLimits(document.querySelector(`[data-l="${k}"]`).value) }; });
+    const modules = {}; document.querySelectorAll('[data-m]:checked').forEach((c) => { const k = c.dataset.m; modules[k] = { limits: parseLimits(document.querySelector(`[data-l="${k}"]`).value, k) }; });
     if (!Object.keys(modules).length) throw new Error('Choose at least one module.');
     const now = Math.floor(Date.now() / 1000);
     const payload = { v: 1, tenant, plan: $('plan').value.trim() || 'standard', issued: now, notBefore: now, expires: now + days * 86400, graceDays: grace, modules };

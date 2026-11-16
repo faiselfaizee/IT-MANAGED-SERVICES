@@ -487,6 +487,7 @@ public sealed class AssetsModule : IPlatformModule
         s.AddScoped<IAssetDirectory>(sp => sp.GetRequiredService<AssetsDirectory>());
         s.AddScoped<IDeviceHealth, DeviceHealth>();
         s.AddScoped<IDeviceActions, DeviceActions>();
+        s.AddScoped<ILicenseUsage, AssetsLicenseUsage>();
         s.AddScoped<IControllerRelay, ControllerRelay>();
         s.AddSingleton<IJobHandler, AssetsJanitorJob>();
         s.AddSingleton(new RecurringJob("assets.janitor", AssetsJanitorJob.JobType, TimeSpan.FromMinutes(1)));
@@ -1009,6 +1010,7 @@ public sealed class AssetsModule : IPlatformModule
                 var (_, active) = await Counts(db, ct);
                 if (!await ent.WithinLimitAsync(Key, "max_assets", active, ct)) return Results.Json(new { error = "limit_reached", limit = "max_assets" }, statusCode: 402);
             }
+            if (changes.ContainsKey("monitored") && v.Set["monitored"] is true && await MonitorLimit.RefuseAsync(db, ent, new[] { id }, ct) is { } refusedMon) return refusedMon;
             var sets = string.Join(", ", v.Set.Keys.Select((k, i) => $"{k} = @p{i}"));
             await using (var up = new NpgsqlCommand($"update assets.assets set {sets}, updated_at = now(), updated_by = @by where id = @id", db, tx))
             {

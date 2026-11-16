@@ -38,7 +38,7 @@ public static class KeysApi
         }), key);
 
         // first set-up, or a new start after losing both the master password and the recovery code (reset: true)
-        VaultModule.Use(r.MapPost("/api/vault/keys", async (JsonElement b, HttpContext http, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        VaultModule.Use(r.MapPost("/api/vault/keys", async (JsonElement b, HttpContext http, ITenantContext t, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
         {
             var me = VaultModule.Me(http.User); if (me == Guid.Empty) return VaultModule.Forbid("Sign in again.");
             var pub = VaultModule.Str(b, "publicKey") ?? ""; var priv = VaultModule.Str(b, "wrappedPrivate"); var rec = VaultModule.Str(b, "wrappedRecovery"); var kdf = Kdf(b);
@@ -50,6 +50,12 @@ public static class KeysApi
             bool exists;
             await using (var c = new NpgsqlCommand("select 1 from vault.keys where user_id = @u", db, tx)) { VaultModule.P(c, "u", me); exists = await c.ExecuteScalarAsync(ct) != null; }
             if (exists && !reset) return Results.Conflict(new { error = "already_set_up", detail = "Your vault is already set up. Unlock it with your master password or recovery code." });
+            // a new person setting up the Vault takes a Vault user of the licence (someone resetting their keys does not)
+            if (!exists && (await ent.CurrentAsync(ct)).Limit(Modules.Vault, LicenseLimits.MaxUsers) is int lim)
+            {
+                await using var c = new NpgsqlCommand("select count(*) from vault.keys", db, tx);
+                if ((long)(await c.ExecuteScalarAsync(ct))! >= lim) return LimitResult.Reached(Modules.Vault, LicenseLimits.MaxUsers, lim, "Vault users");
+            }
             if (exists)
             {
                 // the old keys are gone with the password: shared vaults are given again by their managers, the personal vault cannot be read any more
@@ -113,5 +119,18 @@ public static class KeysApi
                 groups = groups.Select(g => new { id = g.Id, name = g.Name }),
             });
         }), key);
+    }
+}
+
+/// <summary>People who have set up the Vault, for the licence page.</summary>
+public sealed class VaultLicenseUsage : ILicenseUsage
+{
+    readonly ITenantContext tenant;
+    public VaultLicenseUsage(ITenantContext t) { tenant = t; }
+    public async Task<IReadOnlyDictionary<string, long>> UsageAsync(CancellationToken ct = default)
+    {
+        await using var db = await VaultModule.Open(tenant, ct);
+        await using var c = new NpgsqlCommand("select count(*) from vault.keys", db);
+        return new Dictionary<string, long> { [Modules.Vault + ":" + LicenseLimits.MaxUsers] = (long)(await c.ExecuteScalarAsync(ct))! };
     }
 }

@@ -74,6 +74,7 @@ public class BackupParseTests
 }
 
 /// <summary>From the agent, syslog, a report mail and the report address to jobs, alerts with mail and a ticket, and back to normal.</summary>
+[Collection("backup")]
 public class BackupTests : IClassFixture<WebApplicationFactory<Program>>
 {
     static readonly string Pg = Environment.GetEnvironmentVariable("TEST_PG_CONNECTION") ?? "";

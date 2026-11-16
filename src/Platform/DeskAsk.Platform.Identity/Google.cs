@@ -120,7 +120,7 @@ public static class GoogleSso
             return Results.Redirect(url);
         }).AllowAnonymous();
 
-        r.MapGet("/account/sso/google/callback", async (HttpContext http, ISettings st, IDataProtectionProvider dp, IConfiguration cfg, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit) =>
+        r.MapGet("/account/sso/google/callback", async (HttpContext http, ISettings st, IDataProtectionProvider dp, IConfiguration cfg, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent) =>
         {
             var q = http.Request.Query; var ct = http.RequestAborted;
             if (q.ContainsKey("error")) return Error("Google did not sign you in: " + q["error"]);
@@ -166,6 +166,7 @@ public static class GoogleSso
                     return Error("There is no DeskAsk account for " + email + ". Ask an administrator to add or import you.", 403);
                 }
                 var role = UsersEndpoints.Roles.Contains(c.DefaultRole) && c.DefaultRole != "admin" ? c.DefaultRole : "customer";
+                if (StaffLimit.IsStaff(role) && await StaffLimit.RefuseAsync(ent, db, 1, ct) != null) return Error("All staff accounts of the licence are in use. Ask an administrator to add you.", 403);
                 var name = SsoEndpoints.Str(claims, "name") is { Length: > 0 } nm ? nm : email;
                 user = new UserAccount { Email = email, Name = name.Length > 200 ? name[..200] : name, Role = role };
                 user.PasswordHash = hasher.HashPassword(user, SsoEndpoints.B64(RandomNumberGenerator.GetBytes(32)));
@@ -247,11 +248,12 @@ public static class GoogleSso
             return Results.Ok(new { items, more = page != null });
         });
         // people chosen from the Workspace directory: created with the role, or linked when they already have an account (by email)
-        g.MapPost("/import", async (JsonElement b, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, CancellationToken ct) =>
+        g.MapPost("/import", async (JsonElement b, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
         {
             var role = (b.TryGetProperty("role", out var rv) && rv.ValueKind == JsonValueKind.String ? rv.GetString()! : "").Trim().ToLowerInvariant();
             if (!UsersEndpoints.Roles.Contains(role)) return Results.BadRequest(new { error = "Choose a role." });
             if (!b.TryGetProperty("users", out var us) || us.ValueKind != JsonValueKind.Array || us.GetArrayLength() is 0 or > 500) return Results.BadRequest(new { error = "Choose 1 to 500 people." });
+            if (await StaffLimit.RefuseImportAsync(ent, db, role, us.EnumerateArray().Select(x => SsoEndpoints.Str(x, "email")), ct) is { } over) return over;
             int created = 0, linked = 0, skipped = 0;
             foreach (var u in us.EnumerateArray())
             {

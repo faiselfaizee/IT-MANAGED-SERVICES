@@ -6,10 +6,10 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const lic = { state: 'valid', plan: 'standard', tenant: 'acme', expires: '2027-01-01T00:00:00Z', graceUntil: '2027-01-15T00:00:00Z', modules: [{ key: 'assets', limits: { max_assets: 100 } }] };
 
 test('shows what the licence covers and what is missing', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(lic), { status: 200 })));
+  vi.stubGlobal('fetch', vi.fn(async (u: string) => new Response(JSON.stringify(String(u).includes('/usage') ? { 'assets:max_assets': 100, 'monitoring:max_devices': 40 } : lic), { status: 200 })));
   render(<Licence />);
   await waitFor(() => expect(screen.getByText('Valid')).toBeTruthy());
-  expect(screen.getByText('max assets: 100')).toBeTruthy();
+  await waitFor(() => expect(screen.getByText(/Assets in service/).textContent).toBe('Assets in service: 100 / 100 (limit reached)'));
   expect(screen.getByText('Service Desk').closest('tr')?.textContent).toContain('No');
 });
 

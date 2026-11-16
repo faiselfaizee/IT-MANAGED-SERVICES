@@ -106,7 +106,16 @@ internal static class DomainsApi
                 AdModule.P(c, "en", AdModule.Bool(body, "enabled", true));
             }
         }
-        AdModule.AdminOnly(r.MapPost("/api/adsuite/domains", (JsonElement body, ClaimsPrincipal u, ITenantContext t, IDataProtectionProvider dp, ICompanyDirectory co, IControllerRelay rl, IAuditLog a, CancellationToken ct) => Save(null, body, u, t, dp, co, rl, a, ct)), key);
+        AdModule.AdminOnly(r.MapPost("/api/adsuite/domains", async (JsonElement body, ClaimsPrincipal u, ITenantContext t, IDataProtectionProvider dp, ICompanyDirectory co, IControllerRelay rl, IAuditLog a, IEntitlements ent, CancellationToken ct) =>
+        {
+            if ((await ent.CurrentAsync(ct)).Limit(Modules.AdSuite, LicenseLimits.MaxDomains) is int lim)
+            {
+                await using var db = await AdModule.Open(t, ct);
+                await using var c = new NpgsqlCommand("select count(*) from adsuite.domains", db);
+                if ((long)(await c.ExecuteScalarAsync(ct))! >= lim) return LimitResult.Reached(Modules.AdSuite, LicenseLimits.MaxDomains, lim, "AD domains");
+            }
+            return await Save(null, body, u, t, dp, co, rl, a, ct);
+        }), key);
         AdModule.AdminOnly(r.MapPut("/api/adsuite/domains/{id:int}", (int id, JsonElement body, ClaimsPrincipal u, ITenantContext t, IDataProtectionProvider dp, ICompanyDirectory co, IControllerRelay rl, IAuditLog a, CancellationToken ct) => Save(id, body, u, t, dp, co, rl, a, ct)), key);
 
         AdModule.AdminOnly(r.MapDelete("/api/adsuite/domains/{id:int}", async (int id, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
@@ -204,5 +213,18 @@ internal static class DomainsApi
             await audit.WriteAsync("adsuite.delegation.remove", who, ou == "" ? "the whole domain" : ou, null, ct);
             return Results.NoContent();
         }), key);
+    }
+}
+
+/// <summary>AD domains, for the licence page.</summary>
+public sealed class AdLicenseUsage : ILicenseUsage
+{
+    readonly ITenantContext tenant;
+    public AdLicenseUsage(ITenantContext t) { tenant = t; }
+    public async Task<IReadOnlyDictionary<string, long>> UsageAsync(CancellationToken ct = default)
+    {
+        await using var db = await AdModule.Open(tenant, ct);
+        await using var c = new NpgsqlCommand("select count(*) from adsuite.domains", db);
+        return new Dictionary<string, long> { [Modules.AdSuite + ":" + LicenseLimits.MaxDomains] = (long)(await c.ExecuteScalarAsync(ct))! };
     }
 }

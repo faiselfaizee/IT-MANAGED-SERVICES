@@ -45,6 +45,7 @@ export default function Dashboard() {
   };
   return <>
     <header className="dash-head"><h1>Monitoring</h1><p className="muted">{customers.length} customers · {n(all.watched)} of {n(all.devices)} devices watched · {n(all.alertsCritical)} critical and {n(all.alertsWarning)} warning alerts open</p></header>
+    {data?.licence && n(data.licence.over) > 0 && <p className="note" role="status">The licence allows {n(data.licence.allowed)} monitored devices and {n(data.licence.monitored)} are switched on: the {n(data.licence.over)} added last are not watched. Switch monitoring off for devices that do not need it (Assets › All assets), or ask your supplier for a licence with more.</p>}
     <div className="tools">
       <input placeholder="Find a customer" value={q} onChange={(e) => { setQ(e.target.value); setShown(60); }} aria-label="Find a customer" />
       <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} aria-label="Sort customers"><option value="attention">Needs attention first</option><option value="name">By name</option><option value="devices">Most devices first</option></select>

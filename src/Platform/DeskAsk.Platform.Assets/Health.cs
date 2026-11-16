@@ -15,8 +15,8 @@ namespace DeskAsk.Platform.Assets;
 /// </summary>
 public sealed class DeviceHealth : IDeviceHealth
 {
-    readonly ITenantContext tenant; readonly IConfiguration cfg;
-    public DeviceHealth(ITenantContext t, IConfiguration c) { tenant = t; cfg = c; }
+    readonly ITenantContext tenant; readonly IConfiguration cfg; readonly IEntitlements ent;
+    public DeviceHealth(ITenantContext t, IConfiguration c, IEntitlements e) { tenant = t; cfg = c; ent = e; }
     async Task<NpgsqlConnection> Open(CancellationToken ct) { var db = new NpgsqlConnection(tenant.Require().ConnectionString); await db.OpenAsync(ct); return db; }
 
     /// <summary>How often agents send a sample (seconds); 60 unless Monitoring:MetricsSeconds says otherwise.</summary>
@@ -200,8 +200,11 @@ public sealed class DeviceHealth : IDeviceHealth
     public async Task<IReadOnlyList<DeviceState>> SnapshotAsync(IReadOnlyList<int>? companies, long? assetId = null, CancellationToken ct = default)
     {
         await using var db = await Open(ct);
-        var where = "a.status not in ('retired','lost') and a.monitored and (not @sc or a.company_id = any(@scope)) and (@id = 0 or a.id = @id)";
-        void Bind(NpgsqlCommand c) { AssetsAccess.Bind(c, companies); AgentsApi.P(c, "id", assetId ?? 0); }
+        // with a licence limit on monitored devices, the oldest ones up to the limit are watched (adding more never pushes out one already watched)
+        var lim = (await ent.CurrentAsync(ct)).Limit(Modules.Monitoring, LicenseLimits.MaxDevices) ?? 0;
+        var where = "a.status not in ('retired','lost') and a.monitored and (not @sc or a.company_id = any(@scope)) and (@id = 0 or a.id = @id)"
+            + (lim > 0 ? " and a.id in (select x.id from assets.assets x where x.status not in ('retired','lost') and x.monitored order by x.id limit @lim)" : "");
+        void Bind(NpgsqlCommand c) { AssetsAccess.Bind(c, companies); AgentsApi.P(c, "id", assetId ?? 0); if (lim > 0) AgentsApi.P(c, "lim", lim); }
 
         var checks = new Dictionary<long, List<CheckState>>();
         await using (var c = new NpgsqlCommand($@"select s.asset_id, s.id, s.name, s.type, s.last_ok, s.fails, s.last_days, s.last_detail, s.last_at

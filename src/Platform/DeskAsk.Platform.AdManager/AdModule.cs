@@ -29,6 +29,7 @@ public sealed class AdModule : IPlatformModule
     public void AddServices(IServiceCollection s, IConfiguration cfg)
     {
         s.AddSingleton<ITenantSchema, AdSchema>();
+        s.AddScoped<ILicenseUsage, AdLicenseUsage>();
         s.AddSingleton<IJobHandler, AutomationJob>();
         s.AddSingleton(new RecurringJob("adsuite.automation", AutomationJob.JobType, TimeSpan.FromHours(24)));
     }

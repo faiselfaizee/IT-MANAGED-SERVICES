@@ -102,7 +102,7 @@ public static class SsoEndpoints
             return Results.Redirect(url);
         }).AllowAnonymous();
 
-        r.MapGet("/account/sso/microsoft/callback", async (HttpContext http, ISettings st, IDataProtectionProvider dp, IConfiguration cfg, IdentityDb db, IPasswordHasher<UserAccount> hasher, ITenantContext tenant, IAuditLog audit) =>
+        r.MapGet("/account/sso/microsoft/callback", async (HttpContext http, ISettings st, IDataProtectionProvider dp, IConfiguration cfg, IdentityDb db, IPasswordHasher<UserAccount> hasher, ITenantContext tenant, IAuditLog audit, IEntitlements ent) =>
         {
             var q = http.Request.Query; var ct = http.RequestAborted;
             if (q.ContainsKey("error")) return Error("Microsoft did not sign you in: " + (q["error_description"].ToString().Split('\n')[0] is { Length: > 0 } d ? d : q["error"].ToString()));
@@ -142,6 +142,7 @@ public static class SsoEndpoints
                     return Error("There is no DeskAsk account for " + email + ". Ask an administrator to add or import you.", 403);
                 }
                 var role = UsersEndpoints.Roles.Contains(c.DefaultRole) && c.DefaultRole != "admin" ? c.DefaultRole : "customer";
+                if (StaffLimit.IsStaff(role) && await StaffLimit.RefuseAsync(ent, db, 1, ct) != null) return Error("All staff accounts of the licence are in use. Ask an administrator to add you.", 403);
                 var name = Str(claims, "name") is { Length: > 0 } nm ? nm : email;
                 user = new UserAccount { Email = email, Name = name.Length > 200 ? name[..200] : name, Role = role };
                 user.PasswordHash = hasher.HashPassword(user, B64(RandomNumberGenerator.GetBytes(32)));
@@ -218,11 +219,12 @@ public static class SsoEndpoints
             return Results.Ok(new { items, more = next != null });
         });
 
-        g.MapPost("/entra/import", async (JsonElement b, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, CancellationToken ct) =>
+        g.MapPost("/entra/import", async (JsonElement b, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
         {
             var role = (b.TryGetProperty("role", out var rv) && rv.ValueKind == JsonValueKind.String ? rv.GetString()! : "").Trim().ToLowerInvariant();
             if (!UsersEndpoints.Roles.Contains(role)) return Results.BadRequest(new { error = "Choose a role." });
             if (!b.TryGetProperty("users", out var us) || us.ValueKind != JsonValueKind.Array || us.GetArrayLength() is 0 or > 500) return Results.BadRequest(new { error = "Choose 1 to 500 people." });
+            if (await StaffLimit.RefuseImportAsync(ent, db, role, us.EnumerateArray().Select(x => Str(x, "email")), ct) is { } over) return over;
             int created = 0, linked = 0, skipped = 0;
             foreach (var u in us.EnumerateArray())
             {

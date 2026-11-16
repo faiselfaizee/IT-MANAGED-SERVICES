@@ -31,7 +31,7 @@ public static class UsersEndpoints
 
         g.MapGet("/roles", () => Results.Ok(Roles));
 
-        g.MapPost("", async (NewUser b, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, CancellationToken ct) =>
+        g.MapPost("", async (NewUser b, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
         {
             var email = (b.Email ?? "").Trim().ToLowerInvariant();
             if (email.Length > 320 || !System.Net.Mail.MailAddress.TryCreate(email, out _) || !email.Contains('@')) return Results.BadRequest(new { error = "Enter a valid email address." });
@@ -41,6 +41,7 @@ public static class UsersEndpoints
             if (!Roles.Contains(role)) return Results.BadRequest(new { error = "Choose a role: " + string.Join(", ", Roles) + "." });
             if (PasswordProblem(b.Password) is { } pp) return Results.BadRequest(new { error = pp });
             if (await db.Users.AnyAsync(x => x.Email == email, ct)) return Results.Conflict(new { error = "Someone with this email already exists." });
+            if (StaffLimit.IsStaff(role) && await StaffLimit.RefuseAsync(ent, db, 1, ct) is { } over) return over;
             var u = new UserAccount { Email = email, Name = name, Role = role };
             u.PasswordHash = hasher.HashPassword(u, b.Password!);
             db.Users.Add(u);
@@ -49,11 +50,12 @@ public static class UsersEndpoints
             return Results.Created("/api/platform/users/" + u.Id, Row(u));
         });
 
-        g.MapPatch("/{id:guid}", async (Guid id, EditUser b, ClaimsPrincipal me, IdentityDb db, IAuditLog audit, CancellationToken ct) =>
+        g.MapPatch("/{id:guid}", async (Guid id, EditUser b, ClaimsPrincipal me, IdentityDb db, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
         {
             var u = await db.Users.FirstOrDefaultAsync(x => x.Id == id, ct);
             if (u == null) return Results.NotFound();
             var self = me.FindFirstValue(Claims.Subject) == id.ToString();
+            var wasStaff = u.Active && StaffLimit.IsStaff(u.Role);
             var changes = new List<string>();
             if (b.Name != null)
             {
@@ -78,6 +80,8 @@ public static class UsersEndpoints
                 if (!active && u.Role == "admin" && await LastAdmin(db, u, ct)) return Results.BadRequest(new { error = "There must be at least one active administrator." });
                 u.Active = active; changes.Add(active ? "enabled" : "disabled");
             }
+            // becoming an active administrator or engineer takes a staff account of the licence
+            if (!wasStaff && u.Active && StaffLimit.IsStaff(u.Role) && await StaffLimit.RefuseAsync(ent, db, 1, ct) is { } over) return over;
             if (changes.Count > 0)
             {
                 await db.SaveChangesAsync(ct);

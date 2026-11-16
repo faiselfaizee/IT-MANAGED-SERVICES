@@ -148,7 +148,16 @@ public static class MonitoringApi
                 var one = groups.FirstOrDefault(g => company == "none" ? g["companyId"] == null : g["companyId"] is int i && i.ToString() == company);
                 return one == null ? Results.NotFound() : Results.Ok(new { customer = one });
             }
-            return Results.Ok(new { all = Metrics("All customers", null, rows), customers = groups, restricted });
+            // the licence's limit on monitored devices: how many are switched on and how many of them go unwatched
+            object? licence = null;
+            if ((await http.RequestServices.GetRequiredService<IEntitlements>().CurrentAsync(ct)).Limit(Modules.Monitoring, LicenseLimits.MaxDevices) is int allowed)
+            {
+                long monitored = 0;
+                foreach (var u in http.RequestServices.GetServices<ILicenseUsage>())
+                    if ((await u.UsageAsync(ct)).TryGetValue(Modules.Monitoring + ":" + LicenseLimits.MaxDevices, out var m)) monitored = m;
+                licence = new { allowed, monitored, over = Math.Max(0, monitored - allowed) };
+            }
+            return Results.Ok(new { all = Metrics("All customers", null, rows), customers = groups, restricted, licence });
         }));
 
         // devices, filtered by what a ring part means

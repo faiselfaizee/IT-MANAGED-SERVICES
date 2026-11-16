@@ -3,6 +3,11 @@ import { ApiError, api, useLoad, type Rec } from './http';
 import { Badge, Card, Err, Field, Loading, fmtDay } from './ui';
 
 const NAMES: Record<string, string> = { servicedesk: 'Service Desk', assets: 'Asset management', monitoring: 'Monitoring', adsuite: 'AD Manager', vault: 'Vault', backup: 'Backup' };
+/** What each limit counts, by module and limit name (as written in the licence). */
+const LIMITS: Record<string, Record<string, string>> = {
+  assets: { max_assets: 'Assets in service', customer_write: 'Customer administrators may change data' }, monitoring: { max_devices: 'Monitored devices' },
+  servicedesk: { agents: 'Staff accounts (administrators and engineers)' }, adsuite: { max_domains: 'AD domains' }, vault: { max_users: 'Vault users' }, backup: { max_devices: 'Devices with file backup' },
+};
 const STATE: Record<string, [string, 'ok' | 'warn' | 'bad' | undefined]> = {
   valid: ['Valid', 'ok'], grace: ['Expired, in grace period', 'warn'], expired: ['Expired', 'bad'], missing: ['No licence installed', 'bad'], invalid: ['Not valid', 'bad'], notyetvalid: ['Not valid yet', 'warn'],
 };
@@ -10,6 +15,7 @@ const STATE: Record<string, [string, 'ok' | 'warn' | 'bad' | undefined]> = {
 /** Admin page: what the licence covers, and where to paste a new one. */
 export default function Licence() {
   const lic = useLoad<Rec>('/api/platform/license');
+  const usage = useLoad<Record<string, number>>('/api/platform/license/usage');
   const [token, setToken] = useState(''); const [err, setErr] = useState(''); const [ok, setOk] = useState(''); const [busy, setBusy] = useState(false);
   const l = lic.data; const [label, tone] = STATE[l?.state ?? ''] ?? [l?.state ?? '', undefined];
   const mods = (l?.modules ?? []) as Rec[];
@@ -29,9 +35,17 @@ export default function Licence() {
       <p className="muted">Customer id: {l.tenant}</p>
     </Card>}
     {l && <Card title="Included modules">
-      <table><thead><tr><th>Module</th><th>Included</th><th>Limits</th></tr></thead><tbody>
-        {Object.keys(NAMES).map((k) => { const m = mods.find((x) => x.key === k); const lim = m ? Object.entries(m.limits ?? {}).map(([a, b]) => `${a.replace(/_/g, ' ')}: ${b}`).join(', ') : '';
-          return <tr key={k}><td>{NAMES[k]}</td><td>{m ? <Badge tone="ok">Yes</Badge> : <Badge>No</Badge>}</td><td className="muted">{lim || (m ? 'No limits' : '')}</td></tr>; })}
+      <table><thead><tr><th>Module</th><th>Included</th><th>Used / allowed</th></tr></thead><tbody>
+        {Object.keys(NAMES).map((k) => {
+          const m = mods.find((x) => x.key === k); const lims = (m?.limits ?? {}) as Record<string, number>; const used = usage.data ?? {};
+          return <tr key={k}><td>{NAMES[k]}</td><td>{m ? <Badge tone="ok">Yes</Badge> : <Badge>No</Badge>}</td>
+            <td>{!m ? null : Object.keys(LIMITS[k] ?? {}).map((name) => {
+              const allowed = lims[name]; const u = used[`${k}:${name}`];
+              if (name === 'customer_write') return allowed ? <div key={name} className="small">{LIMITS[k][name]}</div> : null;
+              const full = allowed != null && u != null && u >= allowed;
+              return <div key={name} className="small">{LIMITS[k][name]}: {u != null ? <b className={full ? 'err' : ''} style={{ margin: 0 }}>{u}</b> : '–'} / {allowed != null ? allowed : 'no limit'}{full ? ' (limit reached)' : ''}</div>;
+            })}</td></tr>;
+        })}
       </tbody></table>
     </Card>}
     <Card title="Install a new licence">

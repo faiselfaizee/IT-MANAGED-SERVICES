@@ -25,6 +25,7 @@ public sealed class BackupModule : IPlatformModule
         s.AddScoped<IBackupReports, BackupStore>();
         s.AddScoped<IInboundMailFilter, BackupMailFilter>();
         s.AddScoped<IBackupAgent, BackupAgentHandler>();
+        s.AddScoped<ILicenseUsage, BackupLicenseUsage>();
         s.AddSingleton<IJobHandler, BackupCheckJob>();
         s.AddSingleton(new RecurringJob("backup.check", BackupCheckJob.JobType, TimeSpan.FromMinutes(5)));
     }
@@ -153,5 +154,18 @@ public sealed class BackupSettings
         var all = Split(Recipients);
         if (companyId is int c && Companies.TryGetValue(c.ToString(), out var own)) all.AddRange(Split(own));
         return all.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+}
+
+/// <summary>Devices with a file backup plan, for the licence page.</summary>
+public sealed class BackupLicenseUsage : ILicenseUsage
+{
+    readonly ITenantContext tenant;
+    public BackupLicenseUsage(ITenantContext t) { tenant = t; }
+    public async Task<IReadOnlyDictionary<string, long>> UsageAsync(CancellationToken ct = default)
+    {
+        await using var db = await BackupModule.Open(tenant, ct);
+        await using var c = new NpgsqlCommand("select count(distinct asset_id) from backup.plans", db);
+        return new Dictionary<string, long> { [Modules.Backup + ":" + LicenseLimits.MaxDevices] = (long)(await c.ExecuteScalarAsync(ct))! };
     }
 }

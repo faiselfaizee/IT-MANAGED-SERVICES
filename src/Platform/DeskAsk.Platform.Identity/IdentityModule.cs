@@ -57,6 +57,7 @@ public sealed class IdentityModule : IPlatformModule
         s.AddSingleton<ILdapClient, LdapClient>();
         s.AddScoped<TwoStepService>();
         s.AddScoped<IUserDirectory, UserDirectory>();
+        s.AddScoped<ILicenseUsage, IdentityLicenseUsage>();
         s.AddSingleton<IJobHandler, IdentityPruneJob>();
         s.AddSingleton(new RecurringJob("identity.prune", IdentityPruneJob.JobType, TimeSpan.FromHours(24)));
         s.AddAntiforgery(o => { o.Cookie.Name = "dk.csrf"; o.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest; });

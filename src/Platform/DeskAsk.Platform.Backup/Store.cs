@@ -75,15 +75,17 @@ public sealed class BackupStore : IBackupReports
 
     public async Task<int> FromAgentAsync(long assetId, IReadOnlyList<string> tools, IReadOnlyList<BackupReport> reports, CancellationToken ct = default)
     {
-        var dev = (await sp.GetRequiredService<IDeviceHealth>().SnapshotAsync(null, assetId, ct)).FirstOrDefault();
+        // the asset directory, not Monitoring's list: an asset that is not monitored still has its backups
+        var dev = await sp.GetRequiredService<IAssetDirectory>().GetAsync(assetId, ct);
         if (dev == null) return 0;
+        var companyName = dev.CompanyId is int ci ? (await sp.GetRequiredService<ICompanyDirectory>().GetAsync(ci, ct))?.Name ?? "" : "";
         await using var db = await BackupModule.Open(tenant, ct);
         foreach (var t in tools.Select(BackupModule.Tool).Distinct())
         {
             await using var c = new NpgsqlCommand("insert into backup.tools (asset_id, tool) values (@a, @t) on conflict (asset_id, tool) do update set seen_at = now()", db);
             BackupModule.P(c, "a", assetId); BackupModule.P(c, "t", t); await c.ExecuteNonQueryAsync(ct);
         }
-        var origin = new RunOrigin(dev.CompanyId, dev.Company, dev.Id, dev.Name, "agent");
+        var origin = new RunOrigin(dev.CompanyId, companyName, dev.Id, dev.Name, "agent");
         var n = 0;
         foreach (var r in reports) if ((await BackupRecorder.RecordAsync(db, origin, r, ct)).New) n++;
         if (n > 0) await BackupChecker.RunAsync(sp, ct);

@@ -195,9 +195,15 @@ public static class PlansApi
             Plan? old = null;
             if (id is long pid) { old = await One(http, db, pid, Acts.Read, ct); if (old == null) return Results.NotFound(); }
             var assetId = old?.AssetId ?? (b.TryGetProperty("assetId", out var av) && av.ValueKind == JsonValueKind.Number ? av.GetInt64() : 0);
-            var dev = assetId == 0 ? null : (await http.RequestServices.GetRequiredService<IDeviceHealth>().SnapshotAsync(null, assetId, ct)).FirstOrDefault();
+            var dev = assetId == 0 ? null : await http.RequestServices.GetRequiredService<IAssetDirectory>().GetAsync(assetId, ct);
             if (dev == null) return BackupModule.Bad("bad_input", "Choose the device to back up.");
-            if (!dev.HasAgent) return BackupModule.Bad("no_agent", "The device has no DeskAsk agent; file backups are made by the agent.");
+            if (old == null && (await http.RequestServices.GetRequiredService<IEntitlements>().CurrentAsync(ct)).Limit(Modules.Backup, LicenseLimits.MaxDevices) is int lim)
+            {   // a device's second plan does not count again
+                await using var c = new NpgsqlCommand("select count(distinct asset_id), bool_or(asset_id = @a) from backup.plans", db); BackupModule.P(c, "a", dev.Id);
+                await using var rd = await c.ExecuteReaderAsync(ct); await rd.ReadAsync(ct);
+                var used = rd.GetInt64(0); var already = !rd.IsDBNull(1) && rd.GetBoolean(1);
+                if (!already && used >= lim) return LimitResult.Reached(Modules.Backup, LicenseLimits.MaxDevices, lim, "devices with file backup");
+            }
             JsonObject? oldStorage = old == null ? null : JsonNode.Parse(protector.Unprotect(old.StorageSealed)) as JsonObject;
             var (storage, err) = ReadStorage(b, oldStorage); if (storage == null) return BackupModule.Bad("bad_input", err);
             var useVss = Bool(b, "useVss", true); var enabled = Bool(b, "enabled", true);

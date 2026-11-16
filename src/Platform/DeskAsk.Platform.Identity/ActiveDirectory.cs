@@ -201,11 +201,12 @@ public static class AdEndpoints
             var have = (await db.Users.AsNoTracking().Select(x => x.Email).ToListAsync(ct)).ToHashSet();
             return Results.Ok(new { items = users.Where(u => u.Email.Contains('@')).Select(u => new { id = u.Guid, name = u.Name, email = u.Email, enabled = u.Enabled, guest = false, exists = have.Contains(u.Email) }) });
         });
-        g.MapPost("/import", async (JsonElement b, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, CancellationToken ct) =>
+        g.MapPost("/import", async (JsonElement b, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
         {
             var role = Str(b, "role").Trim().ToLowerInvariant();
             if (!UsersEndpoints.Roles.Contains(role)) return Results.BadRequest(new { error = "Choose a role." });
             if (!b.TryGetProperty("users", out var us) || us.ValueKind != JsonValueKind.Array || us.GetArrayLength() is 0 or > 500) return Results.BadRequest(new { error = "Choose 1 to 500 people." });
+            if (await StaffLimit.RefuseImportAsync(ent, db, role, us.EnumerateArray().Select(x => Str(x, "email")), ct) is { } over) return over;
             int created = 0, linked = 0, skipped = 0;
             foreach (var u in us.EnumerateArray())
             {

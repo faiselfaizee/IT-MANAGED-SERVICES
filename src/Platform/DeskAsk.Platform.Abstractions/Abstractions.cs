@@ -88,6 +88,38 @@ public sealed record License(LicenseState State, LicensePayload? Payload, string
         Has(module) && Payload!.Modules[module].Limits is { } l && l.TryGetValue(name, out var v) ? v : null;
 }
 
+/// <summary>
+/// The size limits a licence can set, as module:limit in the licence tool (assets:max_assets=200,monitoring:max_devices=150).
+/// A limit that is not in the licence means no limit.
+/// </summary>
+public static class LicenseLimits
+{
+    public const string MaxAssets = "max_assets";          // assets: assets in service
+    public const string MaxDevices = "max_devices";        // monitoring: monitored devices; backup: devices with a file backup plan
+    public const string Agents = "agents";                 // servicedesk: active staff accounts (administrators and engineers)
+    public const string MaxDomains = "max_domains";        // adsuite: AD domains
+    public const string MaxUsers = "max_users";            // vault: people who have set up the Vault
+    /// <summary>Every limit the licence tool accepts, by module.</summary>
+    public static readonly Dictionary<string, string[]> Known = new()
+    {
+        [Modules.Assets] = new[] { MaxAssets, "customer_write" }, [Modules.Monitoring] = new[] { MaxDevices }, [Modules.ServiceDesk] = new[] { Agents },
+        [Modules.AdSuite] = new[] { MaxDomains }, [Modules.Vault] = new[] { MaxUsers }, [Modules.Backup] = new[] { MaxDevices },
+    };
+}
+
+/// <summary>How much of a licence limit is used, for the licence page ("module:limit" -> count). Each module reports its own.</summary>
+public interface ILicenseUsage
+{
+    Task<IReadOnlyDictionary<string, long>> UsageAsync(CancellationToken ct = default);
+}
+
+/// <summary>The answer when a licence limit stops something: HTTP 402 with the limit, what is allowed and a sentence.</summary>
+public static class LimitResult
+{
+    public static IResult Reached(string module, string limit, int allowed, string what) =>
+        Results.Json(new { error = "limit_reached", module, limit, allowed, detail = $"The licence allows {allowed} {what}. Ask your supplier for a licence with more." }, statusCode: 402);
+}
+
 /// <summary>The licence of the current customer. Modules ask this; they never read licence files themselves.</summary>
 public interface IEntitlements
 {

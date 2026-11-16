@@ -109,7 +109,7 @@ public static class CoverageApi
         }).RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Modify);
 
         // choose which assets monitoring watches
-        r.MapPost("/api/assets/bulk-monitor", async (JsonElement b, HttpContext http, ClaimsPrincipal u, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        r.MapPost("/api/assets/bulk-monitor", async (JsonElement b, HttpContext http, ClaimsPrincipal u, ITenantContext t, IEntitlements ent, IAuditLog audit, CancellationToken ct) =>
         {
             if (b.ValueKind != JsonValueKind.Object || !b.TryGetProperty("ids", out var ia) || ia.ValueKind != JsonValueKind.Array || !b.TryGetProperty("monitored", out var mv) || mv.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
                 return Bad("ids and monitored are needed");
@@ -117,11 +117,47 @@ public static class CoverageApi
             if (ids.Length == 0) return Bad("choose at least one asset");
             var scope = await AssetsAccess.ScopeAsync(http, Acts.Modify);
             await using var db = await Open(t, ct);
+            if (mv.GetBoolean() && await MonitorLimit.RefuseAsync(db, ent, ids, ct) is { } refused) return refused;
             await using var c = new NpgsqlCommand("update assets.assets set monitored = @m, updated_at = now() where id = any(@ids) and (not @sc or company_id = any(@scope)) and monitored <> @m", db).Scoped(scope);
             P(c, "m", mv.GetBoolean()); P(c, "ids", ids);
             var n = await c.ExecuteNonQueryAsync(ct);
             await audit.WriteAsync("assets.monitoring_set", "", $"{(mv.GetBoolean() ? "on" : "off")} for {n}", ct: ct);
             return Results.Ok(new { ok = true, changed = n });
         }).RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Modify);
+    }
+}
+
+/// <summary>The licence limit on monitored devices (monitoring:max_devices).</summary>
+public static class MonitorLimit
+{
+    public static async Task<long> CountAsync(NpgsqlConnection db, CancellationToken ct)
+    {
+        await using var c = new NpgsqlCommand("select count(*) from assets.assets where status not in ('retired','lost') and monitored", db);
+        return (long)(await c.ExecuteScalarAsync(ct))!;
+    }
+
+    /// <summary>A 402 answer when switching monitoring on for these assets would go over the limit; null when it fits.</summary>
+    public static async Task<IResult?> RefuseAsync(NpgsqlConnection db, IEntitlements ent, long[] ids, CancellationToken ct)
+    {
+        var lim = (await ent.CurrentAsync(ct)).Limit(Modules.Monitoring, LicenseLimits.MaxDevices);
+        if (lim == null) return null;
+        await using var c = new NpgsqlCommand("select count(*) from assets.assets where id = any(@i) and not monitored and status not in ('retired','lost')", db);
+        c.Parameters.AddWithValue("i", ids);
+        var adding = (long)(await c.ExecuteScalarAsync(ct))!;
+        return adding > 0 && await CountAsync(db, ct) + adding > lim ? LimitResult.Reached(Modules.Monitoring, LicenseLimits.MaxDevices, lim.Value, "monitored devices") : null;
+    }
+}
+
+/// <summary>Assets in service and monitored devices, for the licence page.</summary>
+public sealed class AssetsLicenseUsage : ILicenseUsage
+{
+    readonly ITenantContext tenant;
+    public AssetsLicenseUsage(ITenantContext t) { tenant = t; }
+    public async Task<IReadOnlyDictionary<string, long>> UsageAsync(CancellationToken ct = default)
+    {
+        await using var db = new NpgsqlConnection(tenant.Require().ConnectionString); await db.OpenAsync(ct);
+        await using var c = new NpgsqlCommand("select count(*) filter (where status not in ('retired','lost')), count(*) filter (where status not in ('retired','lost') and monitored) from assets.assets", db);
+        await using var rd = await c.ExecuteReaderAsync(ct); await rd.ReadAsync(ct);
+        return new Dictionary<string, long> { [Modules.Assets + ":" + LicenseLimits.MaxAssets] = rd.GetInt64(0), [Modules.Monitoring + ":" + LicenseLimits.MaxDevices] = rd.GetInt64(1) };
     }
 }

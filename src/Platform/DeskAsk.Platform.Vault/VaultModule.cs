@@ -28,6 +28,7 @@ public sealed class VaultModule : IPlatformModule
     public void AddServices(IServiceCollection s, IConfiguration cfg)
     {
         s.AddSingleton<ITenantSchema, VaultSchema>();
+        s.AddScoped<ILicenseUsage, VaultLicenseUsage>();
         s.AddSingleton<IJobHandler, VaultJob>();
         s.AddSingleton(new RecurringJob("vault.tick", VaultJob.JobType, TimeSpan.FromMinutes(1)));
     }

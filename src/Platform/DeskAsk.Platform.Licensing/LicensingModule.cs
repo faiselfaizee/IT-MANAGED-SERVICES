@@ -103,6 +103,15 @@ public sealed class LicensingModule : IPlatformModule
     {
         r.MapGet("/api/platform/license", async (IEntitlements e, ITenantContext t, CancellationToken ct) => Results.Ok(Summary(await e.CurrentAsync(ct), t))).RequireAuthorization();
 
+        // how much of each licence limit is used ("module:limit" -> count), from every module that counts
+        r.MapGet("/api/platform/license/usage", async (HttpContext http, CancellationToken ct) =>
+        {
+            var o = new Dictionary<string, long>();
+            foreach (var u in http.RequestServices.GetServices<ILicenseUsage>())
+                foreach (var kv in await u.UsageAsync(ct)) o[kv.Key] = kv.Value;
+            return Results.Ok(o);
+        }).RequireAuthorization(p => p.RequireRole("admin"));
+
         r.MapGet("/api/platform/modules", async (IEntitlements e, CancellationToken ct) =>
         {
             var l = await e.CurrentAsync(ct);
