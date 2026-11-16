@@ -25,8 +25,22 @@ const MonitoringApp = lazy(() => import('./monitoring/MonitoringApp'));
 const VaultApp = lazy(() => import('./vault/VaultApp'));
 const AdApp = lazy(() => import('./admanager/AdApp'));
 
+/** Users, security groups and module permissions on one page. */
+function UsersArea({ meId, tab }: { meId?: string; tab: string }) {
+  const t = tab === 'groups' || tab === 'permissions' ? tab : 'people';
+  return <>
+    <h1>Users</h1>
+    <nav className="sub" aria-label="Users">
+      <a href="#/users" className={t === 'people' ? 'on' : ''}>Users</a>
+      <a href="#/users/groups" className={t === 'groups' ? 'on' : ''}>Groups</a>
+      <a href="#/users/permissions" className={t === 'permissions' ? 'on' : ''}>Permissions</a>
+    </nav>
+    {t === 'people' ? <Users meId={meId} embedded /> : <Access tab={t} />}
+  </>;
+}
+
 const SECTION: Record<string, string> = { '': 'Home', servicedesk: 'Service Desk', assets: 'Assets', monitoring: 'Monitoring', admanager: 'AD Manager', vault: 'Vault',
-  users: 'Administration › Users', access: 'Administration › Access', mail: 'Administration › Mail', updates: 'Administration › Updates', licence: 'Administration › Licence' };
+  users: 'Administration › Users', access: 'Administration › Users', mail: 'Administration › Mail', updates: 'Administration › Updates', licence: 'Administration › Licence' };
 const ROLE: Record<string, string> = { admin: 'Administrator', engineer: 'Engineer', viewer: 'Viewer', cadmin: 'Customer administrator', customer: 'Customer' };
 
 /** The signed-in person: name and role, appearance, two-step sign-in and signing out. */
@@ -160,8 +174,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const inVault = parts[0] === 'vault' && canVault;
   const canAd = !fetcher && !!me.data && me.data.role !== 'customer' && !!(Array.isArray(mods.data) && mods.data.find((m) => m.key === 'adsuite')?.licensed);
   const inAd = parts[0] === 'admanager' && canAd;
-  const inUsers = parts[0] === 'users' && isAdmin;
-  const inAccess = parts[0] === 'access' && isAdmin;
+  const inUsers = (parts[0] === 'users' || parts[0] === 'access') && isAdmin;
   const inLicence = parts[0] === 'licence' && isAdmin;
   const inMail = parts[0] === 'mail' && isAdmin;
   const inUpdates = parts[0] === 'updates' && isAdmin;
@@ -170,7 +183,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
       <nav aria-label="Modules" className="side">
         <a className="brand" href="#/" aria-label="DeskAsk Platform home"><Logo size={30} /><strong>DeskAsk</strong></a>
         <div className="side-group">
-          <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inUsers && !inAccess && !inLicence && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
+          <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inUsers && !inLicence && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
           {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
             ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
             : m === 'Service Desk'
@@ -185,7 +198,6 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
         </div>
         {isAdmin ? <div className="side-group"><h4>Administration</h4>
           <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a>
-          <a href="#/access" className={inAccess ? 'on' : ''}><Icon name="access" />Access</a>
           <a href="#/mail" className={inMail ? 'on' : ''}><Icon name="mail" />Mail</a>
           <a href="#/updates" className={inUpdates ? 'on' : ''}><Icon name="updates" />Updates</a>
           <a href="#/licence" className={inLicence ? 'on' : ''}><Icon name="licence" />Licence</a>
@@ -207,8 +219,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           : inUpdates ? <Suspense fallback={<p className="muted">Loading…</p>}><Updates /></Suspense>
           : inMail ? <Suspense fallback={<p className="muted">Loading…</p>}><Mail /></Suspense>
           : inLicence ? <Suspense fallback={<p className="muted">Loading…</p>}><Licence /></Suspense>
-          : inAccess ? <Suspense fallback={<p className="muted">Loading…</p>}><Access /></Suspense>
-          : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><Users meId={me.data?.sub} /></Suspense>
+          : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><UsersArea meId={me.data?.sub} tab={parts[0] === 'access' ? 'groups' : (parts[1] ?? '')} /></Suspense>
           : !err ? <Home who={who} live={!fetcher} assets={canAssets} monitoring={canMon && !fetcher} vault={canVault} adm={canAd} /> : null}
       </main>
     </div>

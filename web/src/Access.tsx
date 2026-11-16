@@ -8,8 +8,10 @@ const modName = (m: string) => MODULES.find(([k]) => k === m)?.[1] ?? m;
 const actName = (a: string) => ACTIONS.find(([k]) => k === a)?.[1] ?? a;
 
 /** Delegation: security groups, and who may view, add, change or delete in each module. */
-export default function Access() {
-  const [tab, setTab] = useState<'groups' | 'permissions'>('groups');
+export default function Access({ tab: fixed }: { tab?: 'groups' | 'permissions' } = {}) {
+  const [own, setTab] = useState<'groups' | 'permissions'>('groups');
+  if (fixed) return fixed === 'groups' ? <Groups /> : <Permissions />; // shown inside the Users page, which has the tabs
+  const tab = own;
   return <>
     <h1>Access</h1>
     <nav className="sub" aria-label="Access">

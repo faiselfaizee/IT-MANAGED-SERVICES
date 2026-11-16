@@ -8,12 +8,12 @@ const ROLES: [string, string][] = [
 ];
 const roleName = (r: string) => ROLES.find(([k]) => k === r)?.[1] ?? r;
 
-export default function Users({ meId }: { meId?: string }) {
+export default function Users({ meId, embedded = false }: { meId?: string; embedded?: boolean }) {
   const { data, error, loading, reload } = useLoad<Rec[]>('/api/platform/users');
   const [form, setForm] = useState<Rec | null>(null); const [pw, setPw] = useState<Rec | null>(null); const [sso, setSso] = useState<'' | 'settings' | 'import' | 'adsettings' | 'adimport'>('');
   const list = Array.isArray(data) ? data : [];
   return <>
-    <h1>Users</h1>
+    {embedded ? null : <h1>Users</h1>}
     <div className="tools"><button className="primary" onClick={() => setForm({ email: '', name: '', role: 'engineer', password: '' })}>Add user</button>
       <button onClick={() => setSso('import')}>Import from Microsoft</button><button onClick={() => setSso('settings')}>Microsoft sign-in…</button>
       <button onClick={() => setSso('adimport')}>Import from Active Directory</button><button onClick={() => setSso('adsettings')}>Active Directory…</button>
