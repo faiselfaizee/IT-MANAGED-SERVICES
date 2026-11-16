@@ -25,6 +25,25 @@ const MonitoringApp = lazy(() => import('./monitoring/MonitoringApp'));
 const VaultApp = lazy(() => import('./vault/VaultApp'));
 const AdApp = lazy(() => import('./admanager/AdApp'));
 
+const SECTION: Record<string, string> = { '': 'Home', servicedesk: 'Service Desk', assets: 'Assets', monitoring: 'Monitoring', admanager: 'AD Manager', vault: 'Vault',
+  users: 'Administration › Users', access: 'Administration › Access', mail: 'Administration › Mail', updates: 'Administration › Updates', licence: 'Administration › Licence' };
+const ROLE: Record<string, string> = { admin: 'Administrator', engineer: 'Engineer', viewer: 'Viewer', cadmin: 'Customer administrator', customer: 'Customer' };
+
+/** The signed-in person: name and role, appearance, two-step sign-in and signing out. */
+function UserMenu({ name, role, look, onLook, live }: { name: string; role: string; look: string; onLook: (v: string) => void; live: boolean }) {
+  const [open, setOpen] = useState(false);
+  const initials = name.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((x) => x[0]?.toUpperCase()).join('') || '?';
+  return <div className="usermenu" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpen(false); }}>
+    <button className="userbtn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <span className="avatar" aria-hidden>{initials}</span><span className="who"><strong>{name || 'Signed in'}</strong><small>{ROLE[role] ?? role}</small></span><i aria-hidden>▾</i></button>
+    <div className={'menu' + (open ? ' open' : '')} role="menu">
+      <label className="look-pick">Appearance<select value={look} onChange={(e) => onLook(e.target.value)}>{LOOKS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></label>
+      {live ? <a role="menuitem" href="/account/security?returnUrl=%2F"><Icon name="access" />Two-step sign-in</a> : null}
+      {live ? <a role="menuitem" className="out" href="#/" onClick={(e) => { e.preventDefault(); signOut(); }}><Icon name="signout" />Sign out</a> : null}
+    </div>
+  </div>;
+}
+
 export function Home({ who, live, assets, monitoring = false, vault = false, adm = false }: { who: WhoAmI | null; live: boolean; assets: boolean; monitoring?: boolean; vault?: boolean; adm?: boolean }) {
   const mon = useLoad<Rec>(live && monitoring ? '/api/monitoring/dashboard' : null);
   const mo = (mon.data?.all ?? null) as Rec | null;
@@ -100,12 +119,12 @@ export function Home({ who, live, assets, monitoring = false, vault = false, adm
             { key: 'c', label: 'Under 10% free', value: n(mo.diskCritical), tone: 'bad', href: '#/monitoring/devices?disk=critical' }]} />
         </div>}
       </section>}
-      {vault && <section className="tile" aria-labelledby="t-vault">
+      {vault && <section className="tile tile-wide" aria-labelledby="t-vault">
         <div className="tile-head"><span className="chip"><Icon name="Vault" size={22} /></span>
           <div><h2 id="t-vault"><a href="#/vault">Vault</a></h2><p className="muted">Customer passwords, encrypted on your computer before they are saved</p></div>
           <a className="open" href="#/vault">Open the Vault</a></div>
       </section>}
-      {adm && <section className="tile" aria-labelledby="t-ad">
+      {adm && <section className="tile tile-wide" aria-labelledby="t-ad">
         <div className="tile-head"><span className="chip"><Icon name="AD Manager" size={22} /></span>
           <div><h2 id="t-ad"><a href="#/admanager">AD Manager</a></h2><p className="muted">Look up and manage your customers' Active Directory accounts and groups</p></div>
           <a className="open" href="#/admanager">Open AD Manager</a></div>
@@ -149,28 +168,33 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   return (
     <div className="shell">
       <nav aria-label="Modules" className="side">
-        <a className="brand" href="#/" aria-label="DeskAsk Platform home"><Logo /><strong>DeskAsk</strong></a>
-        <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inUsers && !inAccess && !inLicence && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
-        {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
-          ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
-          : m === 'Service Desk'
-            ? <a key={m} href="#/servicedesk" className={inDesk ? 'on' : ''}><Icon name={m} />{m}</a>
-          : m === 'Monitoring' && canMon
-            ? <a key={m} href="#/monitoring" className={inMon ? 'on' : ''}><Icon name={m} />{m}</a>
-          : m === 'AD Manager' && canAd
-            ? <a key={m} href="#/admanager" className={inAd ? 'on' : ''}><Icon name={m} />{m}</a>
-          : m === 'Vault' && canVault
-            ? <a key={m} href="#/vault" className={inVault ? 'on' : ''}><Icon name={m} />{m}</a>
-            : <span key={m} title="Not built yet"><Icon name={m} />{m}<em>Soon</em></span>)}
-        {isAdmin ? <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a> : null}
-        {isAdmin ? <a href="#/access" className={inAccess ? 'on' : ''}><Icon name="access" />Access</a> : null}
-        {isAdmin ? <a href="#/mail" className={inMail ? 'on' : ''}><Icon name="mail" />Mail</a> : null}
-        {isAdmin ? <a href="#/updates" className={inUpdates ? 'on' : ''}><Icon name="access" />Updates</a> : null}
-        {isAdmin ? <a href="#/licence" className={inLicence ? 'on' : ''}><Icon name="access" />Licence</a> : null}
-        <label className="look-pick">Appearance<select value={look} onChange={(e) => { setLook(e.target.value); setLookState(e.target.value); }}>{LOOKS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></label>
-        {fetcher ? null : <a href="/account/security?returnUrl=%2F"><Icon name="access" />Two-step sign-in</a>}
-        {fetcher ? null : <a className="out" href="#/" onClick={(e) => { e.preventDefault(); signOut(); }}><Icon name="signout" />Sign out</a>}
+        <a className="brand" href="#/" aria-label="DeskAsk Platform home"><Logo size={30} /><strong>DeskAsk</strong></a>
+        <div className="side-group">
+          <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inUsers && !inAccess && !inLicence && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
+          {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
+            ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
+            : m === 'Service Desk'
+              ? <a key={m} href="#/servicedesk" className={inDesk ? 'on' : ''}><Icon name={m} />{m}</a>
+            : m === 'Monitoring' && canMon
+              ? <a key={m} href="#/monitoring" className={inMon ? 'on' : ''}><Icon name={m} />{m}</a>
+            : m === 'AD Manager' && canAd
+              ? <a key={m} href="#/admanager" className={inAd ? 'on' : ''}><Icon name={m} />{m}</a>
+            : m === 'Vault' && canVault
+              ? <a key={m} href="#/vault" className={inVault ? 'on' : ''}><Icon name={m} />{m}</a>
+              : <span key={m} title="Not built yet"><Icon name={m} />{m}<em>Soon</em></span>)}
+        </div>
+        {isAdmin ? <div className="side-group"><h4>Administration</h4>
+          <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a>
+          <a href="#/access" className={inAccess ? 'on' : ''}><Icon name="access" />Access</a>
+          <a href="#/mail" className={inMail ? 'on' : ''}><Icon name="mail" />Mail</a>
+          <a href="#/updates" className={inUpdates ? 'on' : ''}><Icon name="updates" />Updates</a>
+          <a href="#/licence" className={inLicence ? 'on' : ''}><Icon name="licence" />Licence</a>
+        </div> : null}
       </nav>
+      <header className="topbar">
+        <div className="crumb">{SECTION[parts[0] ?? ''] ?? 'Home'}</div>
+        <UserMenu name={String(me.data?.name ?? who?.name ?? '')} role={String(me.data?.role ?? '')} look={look} onLook={(v) => { setLook(v); setLookState(v); }} live={!fetcher} />
+      </header>
       <main className="main">
         {err ? <p role="alert" className="err">{err}</p> : null}
         {isAdmin && Math.abs(skewMin) >= 3 ? <p role="alert" className="err">The server's clock is about {Math.floor(Math.abs(skewMin) / 60)} h {Math.abs(skewMin) % 60} min {skewMin > 0 ? 'ahead of' : 'behind'} this computer, so times shown here and written to logs are wrong. On the server, set the correct time zone first (Windows: <code>Set-TimeZone -Id "India Standard Time"</code> for India), then correct the time (<code>w32tm /resync</code>).</p> : null}
