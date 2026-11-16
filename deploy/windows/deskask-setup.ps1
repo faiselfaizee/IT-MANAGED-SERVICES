@@ -140,6 +140,12 @@ function Setup-Iis($s) {
           <serverVariables><set name="HTTP_X_FORWARDED_PROTO" value="https" /><set name="HTTP_X_FORWARDED_HOST" value="{HTTP_HOST}" /></serverVariables>
           <action type="Rewrite" url="$target/{R:1}" appendQueryString="true" />
         </rule>
+        <rule name="DeskAsk behind https proxy" stopProcessing="true">
+          <match url="(.*)" />
+          <conditions><add input="{HTTP_X_FORWARDED_PROTO}" pattern="^https$" /></conditions>
+          <serverVariables><set name="HTTP_X_FORWARDED_PROTO" value="https" /><set name="HTTP_X_FORWARDED_HOST" value="{HTTP_HOST}" /></serverVariables>
+          <action type="Rewrite" url="$target/{R:1}" appendQueryString="true" />
+        </rule>
         <rule name="DeskAsk http" stopProcessing="true">
           <match url="(.*)" />
           <serverVariables><set name="HTTP_X_FORWARDED_PROTO" value="http" /><set name="HTTP_X_FORWARDED_HOST" value="{HTTP_HOST}" /></serverVariables>
