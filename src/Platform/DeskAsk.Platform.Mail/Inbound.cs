@@ -219,7 +219,19 @@ public sealed class MailFetchJob : IJobHandler
                 if (await c.ExecuteScalarAsync(ct) is not long got) return true;   // seen before
                 id = got;
             }
-            if (ignore || handler == null) return true;
+            if (ignore) return true;
+            // backup reports and similar automatic mail from known senders are kept by their module and never become tickets
+            foreach (var f in sp.GetServices<IInboundMailFilter>())
+            {
+                string? took = null;
+                try { took = await f.TakeAsync(m, ct); }
+                catch (Exception e) when (e is not OperationCanceledException) { try { await sp.GetRequiredService<IAuditLog>().WriteAsync("mail.filter_error", m.MessageId, e.Message.Length > 300 ? e.Message[..300] : e.Message, "system", ct); } catch { } }
+                if (took == null) continue;
+                await using var u = new NpgsqlCommand("update mail.inbox set status = 'converted', ticket_number = @n where id = @i", db);
+                u.Parameters.AddWithValue("n", took); u.Parameters.AddWithValue("i", id); await u.ExecuteNonQueryAsync(ct);
+                return true;
+            }
+            if (handler == null) return true;
             // files wait with the message until a person decides, or go to the ticket at once
             foreach (var f in m.Files ?? Array.Empty<InboundFile>())
             {

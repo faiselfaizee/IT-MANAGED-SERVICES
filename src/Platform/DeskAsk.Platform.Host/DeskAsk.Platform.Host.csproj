@@ -7,6 +7,7 @@
     <ProjectReference Include="..\DeskAsk.Platform.Mail\DeskAsk.Platform.Mail.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.ServiceDesk\DeskAsk.Platform.ServiceDesk.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.Monitoring\DeskAsk.Platform.Monitoring.csproj" />
+    <ProjectReference Include="..\DeskAsk.Platform.Backup\DeskAsk.Platform.Backup.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.Vault\DeskAsk.Platform.Vault.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.AdManager\DeskAsk.Platform.AdManager.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.Jobs\DeskAsk.Platform.Jobs.csproj" />

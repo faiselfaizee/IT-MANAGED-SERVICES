@@ -22,6 +22,7 @@ public static class MailTemplates
     static readonly string[] VaultRot = { "account", "device", "vault", "error", "link", "site" };
     static readonly string[] Approval = { "number", "subject", "requester", "company", "item", "details", "link", "site" };
     static readonly string[] ChangeAp = { "number", "title", "type", "risk", "owner", "start", "link", "site" };
+    static readonly string[] BackupAl = { "result", "job", "tool", "device", "company", "message", "last_success", "ticket", "link", "site" };
     static readonly string[] Report = { "company", "month", "availability", "devices", "outages", "alerts", "link", "site" };
 
     public static readonly TemplateDef[] All =
@@ -59,6 +60,12 @@ public static class MailTemplates
         new("monitoring_resolved", "Monitoring alert cleared", "Sent to the alert recipients when an alert clears, if that is switched on in Monitoring settings.", Alert,
             "[Cleared] {{company}}: {{device}} - {{rule}}",
             "The alert for {{device}} ({{tag}}, {{company}}) has cleared after {{duration}}.\n\n{{message}}\n\nOpen the device:\n{{link}}\n\n{{site}}"),
+        new("backup_alert", "Backup failed or missed", "Sent to the backup recipients when a backup job fails (after the number of failures set in Backup settings), finishes with a warning (if that alerts) or sends nothing in time.", BackupAl,
+            "[Backup {{result}}] {{company}}: {{job}}",
+            "Backup {{result}}: {{job}}\n\nSoftware: {{tool}}\nDevice: {{device}}\nCustomer: {{company}}\n\n{{message}}\n\nLast good backup: {{last_success}}\n{{ticket}}\nOpen the job:\n{{link}}\n\n{{site}}"),
+        new("backup_resolved", "Backup back to normal", "Sent to the backup recipients when a job that alerted runs well again, if that is switched on in Backup settings.", BackupAl,
+            "[Backup OK] {{company}}: {{job}}",
+            "{{job}} ({{tool}}, {{device}}, {{company}}) is back to normal.\n\n{{message}}\n\nOpen the job:\n{{link}}\n\n{{site}}"),
         new("asset_renewal", "Warranty or AMC ending", "Sent to your team, the customer's contact and the asset's user one month and 15 days (Assets › Renewals settings) before a warranty or AMC contract ends.", Renew,
             "{{count}} renewal(s) due: {{first}}",
             "Hello {{name}},\n\nThese warranties and AMC contracts end soon:\n\n{{items}}\n\nPlease arrange the renewal in good time.\n\nOpen the renewals:\n{{link}}\n\n{{site}}"),
@@ -146,6 +153,7 @@ public static class MailTemplates
         ["name"] = "Pat Morgan", ["vendor"] = "Acme Systems Pvt Ltd", ["count"] = "2", ["first"] = "Warranty of LAP-0042 (Dell Latitude 5440)", ["days"] = "30", ["reply_to"] = "renewals@yourcompany.example",
         ["item"] = "New laptop", ["details"] = "Model: Standard laptop\nNeeded by: 2026-12-01", ["title"] = "Patch the file server", ["type"] = "normal", ["risk"] = "medium", ["owner"] = "Sam Rivers", ["start"] = "20 Dec 2026 22:00 UTC",
         ["items"] = "- Warranty: LAP-0042 Dell Latitude 5440, serial 8HX2LQ3 (Acme Ltd, Bengaluru HQ) ends 14 December 2026, bought 15 December 2023, PO 4500012\n- AMC contract: Server room AMC, contract AMC-2025-118 (Acme Ltd) ends 20 December 2026",
+        ["result"] = "Failed", ["job"] = "Nightly file server backup", ["tool"] = "Veeam", ["device"] = "FS01", ["last_success"] = "2026-11-14 23:10 UTC", ["ticket"] = "Ticket: INC-0124",
     };
 }
 

@@ -24,6 +24,10 @@ public sealed class AccessService : IAccess
         if (module == Modules.Monitoring && action == Acts.Read)
             return role switch { "engineer" or "viewer" => (true, false), "cadmin" => (false, true), _ => (false, false) };
         if (module == Modules.Monitoring && action == Acts.Modify && role == "engineer") return (true, false);
+        // backup: the same as monitoring (staff see every customer, engineers change job schedules; customer administrators see their own)
+        if (module == Modules.Backup && action == Acts.Read)
+            return role switch { "engineer" or "viewer" => (true, false), "cadmin" => (false, true), _ => (false, false) };
+        if (module == Modules.Backup && action == Acts.Modify && role == "engineer") return (true, false);
         return (false, false);
     }
 

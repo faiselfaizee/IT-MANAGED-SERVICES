@@ -24,6 +24,29 @@ public sealed class DeviceHealth : IDeviceHealth
 
     public static void Map(IEndpointRouteBuilder r, string key)
     {
+        // backup results the agent read from the backup software on the device (Veeam, Windows Server Backup, Azure Backup); kept by the Backup module
+        r.MapPost("/agent/v1/backup", async (JsonElement b, HttpContext http, ITenantContext t, IEntitlements ent, CancellationToken ct) =>
+        {
+            await using var db = await AgentsApi.Open(t, ct);
+            var ag = await AgentsApi.AuthAgent(http, db, ct); if (ag == null) return Results.Json(new { error = "agent_auth" }, statusCode: 401);
+            var sink = http.RequestServices.GetService<IBackupReports>();
+            if (ag.Value.AssetId == 0 || sink == null || !(await ent.CurrentAsync(ct)).Has(Modules.Backup)) return Results.Ok(new { stored = 0, every = 900 });
+            var tools = new List<string>(); var reports = new List<BackupReport>();
+            if (b.ValueKind == JsonValueKind.Object && b.TryGetProperty("tools", out var tv) && tv.ValueKind == JsonValueKind.Array)
+                foreach (var x in tv.EnumerateArray().Take(20)) if (x.ValueKind == JsonValueKind.String) tools.Add(AgentsApi.Clip(x.GetString(), 20));
+            if (b.ValueKind == JsonValueKind.Object && b.TryGetProperty("reports", out var rv) && rv.ValueKind == JsonValueKind.Array)
+                foreach (var x in rv.EnumerateArray().Take(500))
+                {
+                    if (x.ValueKind != JsonValueKind.Object) continue;
+                    var res = AgentsApi.Str(x, "result") ?? ""; if (res is not ("success" or "warning" or "failed")) continue;
+                    var job = AgentsApi.Clip(AgentsApi.Str(x, "job")?.Trim(), 200); if (job == "") continue;
+                    long bytes = x.TryGetProperty("bytes", out var bv) && bv.ValueKind == JsonValueKind.Number && bv.TryGetInt64(out var bl) ? Math.Max(0, bl) : 0;
+                    reports.Add(new BackupReport(AgentsApi.Clip(AgentsApi.Str(x, "tool"), 20), job, When(x, "started"), When(x, "ended"), res,
+                        AgentsApi.Clip(AgentsApi.Str(x, "message"), 2000), bytes, AgentsApi.Clip(AgentsApi.Str(x, "key"), 200)));
+                }
+            var stored = await sink.FromAgentAsync(ag.Value.AssetId, tools, reports, ct);
+            return Results.Ok(new { stored, every = 900 });
+        });
         r.MapPost("/agent/v1/metrics", async (JsonElement b, HttpContext http, ITenantContext t, IConfiguration cfg, CancellationToken ct) =>
         {
             await using var db = await AgentsApi.Open(t, ct);
@@ -343,6 +366,16 @@ public sealed class DeviceHealth : IDeviceHealth
         var o = new List<DeviceEvent>(); long total = 0; await using var rd = await c.ExecuteReaderAsync(ct);
         while (await rd.ReadAsync(ct)) { o.Add(Ev(rd)); total = rd.GetInt64(8); }
         return (total, o);
+    }
+
+    public async Task<IReadOnlyList<DeviceEvent>> EventsAfterAsync(long afterId, string kind, int max, CancellationToken ct = default)
+    {
+        await using var db = await Open(ct);
+        await using var c = new NpgsqlCommand("select id, asset_id, at, kind, severity, source, event_id, text from assets.events where id > @a and (@k = '' or kind = @k) order by id limit @m", db);
+        AgentsApi.P(c, "a", afterId); AgentsApi.P(c, "k", kind); AgentsApi.P(c, "m", Math.Clamp(max, 1, 5000));
+        var o = new List<DeviceEvent>(); await using var rd = await c.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct)) o.Add(Ev(rd));
+        return o;
     }
 
     public async Task<IReadOnlyDictionary<long, DeviceAverages>> AveragesAsync(DateTime from, DateTime to, CancellationToken ct = default)

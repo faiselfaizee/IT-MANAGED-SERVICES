@@ -321,8 +321,33 @@ public interface IDeviceHealth
     Task<IReadOnlyList<DeviceEvent>> RecentEventsAsync(int minutes, int maxSeverity, int max, CancellationToken ct = default);
     /// <summary>Events for the events page: limited to companies (null = all), optionally one device, one kind, a severity and a text.</summary>
     Task<(long Total, IReadOnlyList<DeviceEvent> Items)> ListEventsAsync(IReadOnlyList<int>? companies, long? assetId, string kind, int maxSeverity, string search, int skip, int take, CancellationToken ct = default);
+    /// <summary>Events stored after this id (oldest first, at most max), of one kind or every kind (""); for modules that read new messages as they arrive.</summary>
+    Task<IReadOnlyList<DeviceEvent>> EventsAfterAsync(long afterId, string kind, int max, CancellationToken ct = default);
     /// <summary>Per device, processor, memory and disk figures over a period (from the hourly figures).</summary>
     Task<IReadOnlyDictionary<long, DeviceAverages>> AveragesAsync(DateTime from, DateTime to, CancellationToken ct = default);
+}
+
+/// <summary>
+/// One finished run of a backup job as a device reports it. Tool is veeam, wsb (Windows Server Backup), mars (Azure Recovery Services agent),
+/// mabs (Azure Backup Server / DPM), synology, qnap, acronis or other. Result is success, warning or failed. Key identifies the run at its source,
+/// so the same run sent twice is stored once.
+/// </summary>
+public sealed record BackupReport(string Tool, string Job, DateTime? Started, DateTime? Ended, string Result, string Message, long Bytes, string Key);
+
+/// <summary>Backup results from agents. Implemented by the Backup module; the Assets module (which owns the agents) passes them on.</summary>
+public interface IBackupReports
+{
+    /// <summary>Stores what an agent found: the backup tools installed and their finished runs. Returns how many runs were new.</summary>
+    Task<int> FromAgentAsync(long assetId, IReadOnlyList<string> tools, IReadOnlyList<BackupReport> reports, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Looks at an inbound mail before the Service Desk does. A filter that recognises the mail (for example a backup report from a known sender)
+/// keeps it and returns a short label for the mail inbox ("backup"); otherwise null, and the mail goes on to the Service Desk.
+/// </summary>
+public interface IInboundMailFilter
+{
+    Task<string?> TakeAsync(InboundMail m, CancellationToken ct = default);
 }
 
 /// <summary>What another module asks the Service Desk to open.</summary>

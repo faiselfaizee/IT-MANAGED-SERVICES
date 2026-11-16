@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/deskask/platform/agent/internal/backup"
 	"github.com/deskask/platform/agent/internal/client"
 	"github.com/deskask/platform/agent/internal/config"
 	"github.com/deskask/platform/agent/internal/inventory"
@@ -121,6 +122,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}()
 	go r.inventoryLoop(ctx)
 	go r.metricsLoop(ctx)
+	go r.backupLoop(ctx)
 	failures := 0
 	for ctx.Err() == nil {
 		var out struct {
@@ -324,6 +326,46 @@ func (r *Runner) metricsLoop(ctx context.Context) {
 			every = time.Hour
 		default:
 			every = MetricsEvery
+		}
+	}
+}
+
+// BackupEvery is how often the results of the computer's backup software are read and sent; the platform may ask for another interval.
+var BackupEvery = 15 * time.Minute
+
+// backupLoop reads the backup software's results (Veeam, Windows Server Backup, Azure Backup) a little after start and then every
+// quarter of an hour, and sends them when there is anything to send. A platform without the Backup module answers 404: try again in six hours.
+func (r *Runner) backupLoop(ctx context.Context) {
+	wait := 2 * time.Minute
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		wait = BackupEvery
+		found, err := backup.Collect(ctx)
+		if err != nil {
+			log.Printf("backup results not read: %v", err)
+			continue
+		}
+		if len(found.Tools) == 0 && len(found.Reports) == 0 {
+			continue
+		}
+		var out struct {
+			Every int `json:"every"`
+		}
+		err = r.cl.Do(ctx, "POST", "/agent/v1/backup", found, &out)
+		var he *client.Error
+		switch {
+		case err == nil:
+			if out.Every >= 300 && out.Every <= 86400 {
+				wait = time.Duration(out.Every) * time.Second
+			}
+		case errors.As(err, &he) && he.Status == 404:
+			wait = 6 * time.Hour
+		default:
+			log.Printf("backup results not sent: %v", err)
 		}
 	}
 }
