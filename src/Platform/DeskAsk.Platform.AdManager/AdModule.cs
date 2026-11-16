@@ -29,6 +29,8 @@ public sealed class AdModule : IPlatformModule
     public void AddServices(IServiceCollection s, IConfiguration cfg)
     {
         s.AddSingleton<ITenantSchema, AdSchema>();
+        s.AddSingleton<IJobHandler, AutomationJob>();
+        s.AddSingleton(new RecurringJob("adsuite.automation", AutomationJob.JobType, TimeSpan.FromHours(24)));
     }
 
     public void MapEndpoints(IEndpointRouteBuilder r)
@@ -37,6 +39,7 @@ public sealed class AdModule : IPlatformModule
         BrowseApi.Map(r, Key);
         ReportsApi.Map(r, Key);
         RequestsApi.Map(r, Key);
+        ManageApi.Map(r, Key);
     }
 
     // ---- shared helpers
@@ -100,6 +103,17 @@ public sealed class AdSchema : ITenantSchema
               decision_note text not null default '', error text not null default '', created_at timestamptz not null default now())"),
         new(2, "a trusted LDAPS certificate per domain", @"
             alter table adsuite.domains add column if not exists cert_sha256 text not null default '';"),
+        new(3, "user templates and automation policies", @"
+            create table if not exists adsuite.templates (
+              id serial primary key, domain_id int not null references adsuite.domains(id) on delete cascade,
+              name text not null, description text not null default '', ou text not null default '', groups text[] not null default '{}',
+              attrs jsonb not null default '{}', naming jsonb not null default '{}', options jsonb not null default '{}',
+              created_by text not null default '', created_at timestamptz not null default now(), unique (domain_id, name));
+            create table if not exists adsuite.policies (
+              id serial primary key, domain_id int not null references adsuite.domains(id) on delete cascade,
+              name text not null, kind text not null check (kind in ('disable-inactive-users','disable-stale-computers','move-disabled-users')),
+              days int not null default 90, ou text not null default '', move_to text not null default '', enabled boolean not null default false,
+              last_run timestamptz, last_result text not null default '', created_by text not null default '', created_at timestamptz not null default now());"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
         await SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);

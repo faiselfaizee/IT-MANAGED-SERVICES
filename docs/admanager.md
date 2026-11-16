@@ -24,3 +24,17 @@ Setting a password needs LDAPS (Active Directory refuses it otherwise). The serv
 - Built-in objects (RID below 1000), the `krbtgt` account and DeskAsk's own service account cannot be deleted or moved; the last two cannot be disabled or have their password reset.
 - Every change and every export is written to the audit log. The controller stops at the first failing step of a job, and a refused sign-in is never retried, so a wrong password cannot lock the service account.
 - A job waiting for the controller is sealed in the database, wiped the moment the controller takes it, and failed after two minutes if no controller picks it up.
+
+## v4.2.0: easier to use (ManageEngine ADManager as the reference)
+- **Layout:** the module has its own sidebar: Overview (rings for accounts, sign-in activity and computers), Management (Users, Groups, Computers, OUs), Create (new user, new group or OU, users from a file, change from a file), Reports, Workflow (account requests, approvals) and Settings (automation, user templates, domains and delegation). Lists open a detail pane beside them.
+- **Pickers:** OUs are chosen from a tree that opens one level at a time; groups, managers and members are found by typing two letters. No distinguished names to type.
+- **New user:** every field in tabs as in Active Directory Users and Computers (account, member of, general, organisation, phones, address, profile, custom attributes); UPN suffixes from the domain; the domain's password rules shown; display and sign-in names built from the name by the template's rules; generated or typed password; must change, never expires, leave disabled, expiry date.
+- **User templates** (administrators): OU, groups, default fields, naming rules (`{first}`, `{last}`, `{initials}`, `{f}`, `{l}`), UPN suffix, account options, expiry after n days.
+- **Bulk:** select several objects in a list to enable, disable, unlock, reset passwords, move, add to groups or delete (one at a time with a progress window and a result per object). Users from a CSV file (with a template, checked against the directory before anything is created, results with generated passwords downloadable once). Change users from a CSV file by sign-in name (`-` clears a value).
+- **Offboarding** in one step: disable, replace the password, remove from every group, clear the manager, note in the description, move to an OU. A privileged account waits for approval.
+- **Password flags:** password never expires, must change at next sign-in.
+- **Reports:** 17, adding passwords expiring soon, expired passwords, recently created, recently changed, users without a manager, all enabled users and all computers.
+- **Automation** (administrators): daily policies to disable inactive users, disable stale computers, or move disabled users, with a preview first and Run now. Built-in, privileged and DeskAsk's own accounts are never touched; at most 200 objects per run; each run is audited and its result shown.
+
+## LDAPS (v4.1.1)
+Test names the reason when LDAPS fails: no certificate on the domain controller, the certificate is for another name, issued by a CA the controller does not trust, expired, changed since you trusted it, or an old TLS version. For an untrusted or mismatched certificate it shows the certificate (names, issuer, expiry, SHA-256) and offers **Trust this certificate**: the controller then accepts exactly that certificate. Without LDAPS, a site controller on Windows sets passwords through ADSI with Kerberos/NTLM signing and sealing (give the service account as user@domain or DOMAIN\user).

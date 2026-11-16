@@ -19,7 +19,7 @@ internal static class BrowseApi
         "givenName", "sn", "initials", "telephoneNumber", "mobile", "physicalDeliveryOfficeName", "company", "manager", "streetAddress", "l", "st", "postalCode", "co",
         "homeDirectory", "homeDrive", "scriptPath", "profilePath", "pwdLastSet", "badPwdCount", "lastLogon", "logonCount", "memberOf", "member", "adminCount", "objectGUID", "objectSid",
         "msDS-UserPasswordExpiryTimeComputed", "info", "employeeID", "employeeType", "division", "wWWHomePage", "groupType", "managedBy", "whenChanged", "primaryGroupID", "userWorkstations"
-    }).Distinct().ToArray();
+    }).Concat(Actions.EditableAttrs).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
     static string KindFilter(string kind) => kind switch
     {
@@ -137,6 +137,7 @@ internal static class BrowseApi
                 return Results.Ok(new
                 {
                     obj = o, dn = e.Dn, guid = e.S("objectGUID"), sid, groupType = e.S("groupType"), fields,
+                    values = Actions.EditableAttrs.ToDictionary(k => k, k => e.S(k)),   // every editable field, empty ones too, for the edit form
                     manager = manager == "" ? null : new { dn = manager, name = Dir.RdnValue(manager) },
                     memberOf,
                     members = o.Kind == "group" ? members.Take(500).Select(x => new { dn = x, name = Dir.RdnValue(x) }).OrderBy(x => x.name, StringComparer.OrdinalIgnoreCase).ToList() : null,

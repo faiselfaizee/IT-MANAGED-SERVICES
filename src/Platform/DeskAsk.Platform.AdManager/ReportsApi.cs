@@ -28,7 +28,16 @@ internal static class ReportsApi
         new("empty-groups", "Empty groups", "Groups with no members.", "group", false, 0),
         new("stale-computers", "Stale computers", "Enabled computers that have not signed in to the domain for a number of days.", "computer", true, 90),
         new("disabled-computers", "Disabled computers", "Computer accounts that are switched off.", "computer", false, 0),
+        new("password-expiring", "Passwords expiring soon", "Enabled accounts whose password expires within a number of days.", "user", true, 14),
+        new("password-expired", "Expired passwords", "Enabled accounts whose password has expired (they must change it to sign in).", "user", false, 0),
+        new("recently-created", "Recently created users", "Accounts created in the last number of days.", "user", true, 7),
+        new("recently-modified", "Recently changed users", "Accounts changed in the last number of days.", "user", true, 7),
+        new("no-manager", "Users without a manager", "Enabled accounts with no manager set.", "user", false, 0),
+        new("all-users", "All enabled users", "Every enabled account, with title, department and last sign-in.", "user", false, 0),
+        new("all-computers", "All computers", "Every computer account, with its operating system.", "computer", false, 0),
     };
+
+    static string Gt(int days) => DateTime.UtcNow.AddDays(-days).ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture) + ".0Z";
 
     static string Filter(string key, int days)
     {
@@ -46,6 +55,12 @@ internal static class ReportsApi
             "empty-groups" => "(&(objectClass=group)(!(member=*)))",
             "stale-computers" => $"(&(objectClass=computer)(!(userAccountControl:{Uac}:=2))(lastLogonTimestamp<={cutoff}))",
             "disabled-computers" => $"(&(objectClass=computer)(userAccountControl:{Uac}:=2))",
+            "password-expiring" or "password-expired" => $"(&{user}(!(userAccountControl:{Uac}:=2))(!(userAccountControl:{Uac}:=65536))(pwdLastSet>=1))",
+            "recently-created" => $"(&{user}(whenCreated>={Gt(days)}))",
+            "recently-modified" => $"(&{user}(whenChanged>={Gt(days)}))",
+            "no-manager" => $"(&{user}(!(userAccountControl:{Uac}:=2))(!(manager=*)))",
+            "all-users" => $"(&{user}(!(userAccountControl:{Uac}:=2)))",
+            "all-computers" => "(objectClass=computer)",
             _ => ""
         };
     }
@@ -75,9 +90,26 @@ internal static class ReportsApi
             var filter = Filter(def.Key, n);
             try
             {
-                var res = await Dir.RunAsync(relay, d, (scope ?? new List<string> { d.BaseDn }).Select(b => Dir.Search(b, filter, Shape.ListAttrs, "sub", Limit + 1)), ct, 90);
+                const string Expiry = "msDS-UserPasswordExpiryTimeComputed";
+                var attrs = def.Key is "password-expiring" ? Shape.ListAttrs.Append(Expiry).ToArray() : Shape.ListAttrs;
+                var res = await Dir.RunAsync(relay, d, (scope ?? new List<string> { d.BaseDn }).Select(b => Dir.Search(b, filter, attrs, "sub", Limit + 1)), ct, 90);
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var rows = new List<Obj>(); var cut = false;
-                foreach (var one in res) { cut |= Dir.Truncated(one); foreach (var e in Dir.Entries(one)) if (seen.Add(e.Dn)) rows.Add(Shape.ToObj(e)); }
+                var soon = DateTime.UtcNow.AddDays(n);
+                foreach (var one in res)
+                {
+                    cut |= Dir.Truncated(one);
+                    foreach (var e in Dir.Entries(one))
+                    {
+                        if (!seen.Add(e.Dn)) continue;
+                        if (def.Key == "password-expiring")
+                        {
+                            var at = Dir.FileTime(e.Num(Expiry));
+                            if (at == null || at < DateTime.UtcNow || at > soon) continue;   // never, already expired, or later than asked
+                        }
+                        rows.Add(Shape.ToObj(e));
+                    }
+                }
+                if (def.Key == "password-expired") rows = rows.Where(x => x.PwdExpired).ToList();
                 if (def.Key == "locked-users") rows = rows.Where(x => x.Locked).ToList();
                 rows = rows.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList();
                 if (rows.Count > Limit) { rows = rows.Take(Limit).ToList(); cut = true; }

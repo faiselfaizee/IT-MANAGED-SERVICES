@@ -156,9 +156,16 @@ public sealed class FakeController : IControllerRelay
             if (f.Contains("(adminCount=1)")) c = c.Where(x => x.Value.GetValueOrDefault("adminCount")?.FirstOrDefault() == "1");
             if (f.Contains("(!(member=*))")) c = c.Where(x => !x.Value.ContainsKey("member") || x.Value["member"].Count == 0);
             if (f.Contains("(lockoutTime>=1)")) c = c.Where(x => x.Value.ContainsKey("lockoutTime"));
+            var sams = Regex.Matches(f, @"\(sAMAccountName=([^)*]+)\)").Select(x => x.Groups[1].Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (sams.Count > 0) c = c.Where(x => sams.Contains(x.Value.GetValueOrDefault("sAMAccountName")?.FirstOrDefault() ?? ""));
             var le = Regex.Match(f, @"\(lastLogonTimestamp<=(\d+)\)");
-            if (le.Success) c = c.Where(x => x.Value.ContainsKey("lastLogonTimestamp") && long.Parse(x.Value["lastLogonTimestamp"][0]) <= long.Parse(le.Groups[1].Value));
-            if (f.Contains("(!(lastLogonTimestamp=*))")) c = c.Where(x => !x.Value.ContainsKey("lastLogonTimestamp") && Class(x, "user"));
+            if (f.Contains("(|(lastLogonTimestamp<="))   // inactive, or never signed in (the fake ignores whenCreated)
+                c = c.Where(x => !x.Value.ContainsKey("lastLogonTimestamp") || long.Parse(x.Value["lastLogonTimestamp"][0]) <= long.Parse(le.Groups[1].Value));
+            else
+            {
+                if (le.Success) c = c.Where(x => x.Value.ContainsKey("lastLogonTimestamp") && long.Parse(x.Value["lastLogonTimestamp"][0]) <= long.Parse(le.Groups[1].Value));
+                if (f.Contains("(!(lastLogonTimestamp=*))")) c = c.Where(x => !x.Value.ContainsKey("lastLogonTimestamp") && Class(x, "user"));
+            }
         }
         return c.Take(max).Select(x => (object)new { dn = x.Key, attrs = x.Value.ToDictionary(a => a.Key, a => a.Value.ToArray()) }).ToList();
     }
@@ -477,5 +484,91 @@ public class AdManagerTests : IClassFixture<WebApplicationFactory<Program>>
         // an unreachable controller is reported as such
         Fake.Down = true;
         Assert.Equal((HttpStatusCode)503, (await Act(admin, dom, new { action = "unlock", dn = Ana })).StatusCode);
+    }
+
+    [PgFact]
+    public async Task AccountsAreCreatedInFullFromTemplatesCheckedInBulkOffboardedAndTidiedByPolicy()
+    {
+        var (admin, dom, eve, eveId, _) = await Start();
+        const string Servers = "OU=Servers," + Base;
+
+        // the overview counts
+        var ov = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/overview"));
+        Assert.Equal(1, ov.GetProperty("users").GetProperty("disabled").GetInt32()); Assert.Equal(1, ov.GetProperty("users").GetProperty("locked").GetInt32());
+        Assert.Equal(1, ov.GetProperty("computers").GetProperty("stale").GetInt32()); Assert.Equal(1, ov.GetProperty("users").GetProperty("privileged").GetInt32());
+
+        // the form's facts about the domain
+        var info = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/info"));
+        Assert.Contains("acme.test", info.GetProperty("upnSuffixes").EnumerateArray().Select(x => x.GetString()));
+
+        // templates: administrators make them; someone without the create right sees none
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync($"/api/adsuite/domains/{dom}/templates", Json(new { name = "Bad", attrs = new { manager = Ana } }))).StatusCode);
+        var tpl = await admin.PostAsync($"/api/adsuite/domains/{dom}/templates", Json(new { name = "Sales staff", ou = Sales, groups = new[] { Team }, attrs = new { department = "Sales", company = "Acme" }, naming = new { display = "{first} {last}", sam = "{first}.{last}" } }));
+        Assert.Equal(HttpStatusCode.OK, tpl.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync($"/api/adsuite/domains/{dom}/templates", Json(new { name = "Sales staff" }))).StatusCode);
+        var tl = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/templates"));
+        Assert.Equal("Sales", tl[0].GetProperty("attrs").GetProperty("department").GetString()); Assert.Equal(Team, tl[0].GetProperty("groups")[0].GetString());
+        Assert.Equal(0, (await J(await eve.GetAsync($"/api/adsuite/domains/{dom}/templates"))).GetArrayLength());
+        Assert.Equal(HttpStatusCode.Forbidden, (await eve.PostAsync($"/api/adsuite/domains/{dom}/templates", Json(new { name = "Mine" }))).StatusCode);
+
+        // a new account with every field, its groups, and a password that never expires (so it need not be changed at first sign-in)
+        Assert.Equal(HttpStatusCode.BadRequest, (await Act(admin, dom, new { action = "create-user", ou = Sales, first = "Nia", last = "Ray", sam = "nia.ray", attrs = new { objectSid = "x" } })).StatusCode);
+        var made = await J(await Act(admin, dom, new { action = "create-user", ou = Sales, first = "Nia", last = "Ray", sam = "nia.ray", password = "Typed-Pw-123", pwdNeverExpires = true, mustChange = true,
+            groups = new[] { Team }, attrs = new { telephoneNumber = "+91 44 1234", l = "Chennai", homeDirectory = @"\\fs01\home\nia.ray", homeDrive = "H:", department = "Sales" } }));
+        var nia = made.GetProperty("dn").GetString()!;
+        var n = Fake.Dir[nia];
+        Assert.Equal("Chennai", n["l"][0]); Assert.Equal("H:", n["homeDrive"][0]); Assert.Equal("66048", n["userAccountControl"][0]);
+        Assert.False(n.ContainsKey("pwdLastSet"));   // "never expires" wins over "must change"
+        Assert.Contains(nia, Fake.Dir[Team]["member"]); Assert.Equal("Typed-Pw-123", Fake.Passwords[nia]);
+        var obj = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/object?dn={Uri.EscapeDataString(nia)}"));
+        Assert.Equal("Chennai", obj.GetProperty("values").GetProperty("l").GetString()); Assert.Equal("", obj.GetProperty("values").GetProperty("pager").GetString());
+
+        // password flags on their own
+        Assert.Equal(HttpStatusCode.OK, (await Act(admin, dom, new { action = "set-flags", dn = Bo, mustChange = true })).StatusCode);
+        Assert.Equal("0", Fake.Dir[Bo]["pwdLastSet"][0]);
+        Assert.Equal(HttpStatusCode.OK, (await Act(admin, dom, new { action = "set-flags", dn = Bo, pwdNeverExpires = true })).StatusCode);
+        Assert.Equal("66050", Fake.Dir[Bo]["userAccountControl"][0]);   // 514 | 65536
+
+        // a bulk file is checked before anything changes
+        var chk = await J(await admin.PostAsync($"/api/adsuite/domains/{dom}/bulk/check", Json(new { mode = "create", rows = new object[] {
+            new { sam = "ana", ou = Sales, first = "A" }, new { sam = "new.one", ou = Sales, first = "N" }, new { sam = "new.one", ou = Sales, first = "N" },
+            new { sam = "bad name!", ou = Sales, first = "B" }, new { sam = "x2", ou = "OU=Else,DC=other,DC=test", first = "X" }, new { sam = "x3", ou = Sales } } })));
+        Assert.Equal(1, chk.GetProperty("ok").GetInt32());
+        var probs = chk.GetProperty("rows").EnumerateArray().Select(x => string.Join("; ", x.GetProperty("problems").EnumerateArray().Select(p => p.GetString()))).ToList();
+        Assert.Contains("already exists", probs[0]); Assert.Equal("", probs[1]); Assert.Contains("twice", probs[2]); Assert.Contains("sign-in name", probs[3]); Assert.Contains("not inside", probs[4]); Assert.Contains("first name", probs[5]);
+        var mod = await J(await admin.PostAsync($"/api/adsuite/domains/{dom}/bulk/check", Json(new { mode = "modify", rows = new object[] { new { sam = "bo", attrs = new { title = "Lead" } }, new { sam = "nobody" }, new { sam = "cy", attrs = new { objectSid = "1" } } } })));
+        var mr = mod.GetProperty("rows");
+        Assert.Equal(Bo, mr[0].GetProperty("dn").GetString()); Assert.True(mr[0].GetProperty("ok").GetBoolean());
+        Assert.Contains("no account", mr[1].GetProperty("problems")[0].GetString()); Assert.Contains("cannot be set", mr[2].GetProperty("problems")[0].GetString());
+
+        // offboarding: switched off, a new unknown password, out of every group, a note, then moved
+        var off = await J(await Act(admin, dom, new { action = "offboard", dn = Ana, newParent = Servers, note = "last day 15 Nov" }));
+        var gone = "CN=Ana Lee," + Servers;
+        Assert.Equal(gone, off.GetProperty("dn").GetString());
+        Assert.True((int.Parse(Fake.Dir[gone]["userAccountControl"][0]) & 2) != 0);
+        Assert.DoesNotContain(Ana, Fake.Dir[Team]["member"]); Assert.True(Fake.Passwords.ContainsKey(Ana));
+        Assert.StartsWith("Left ", Fake.Dir[gone]["description"][0]); Assert.Contains("last day 15 Nov", Fake.Dir[gone]["description"][0]);
+        // a privileged account waits for a second person; built-in accounts are left alone
+        await Delegate(admin, dom, eveId, Base, "read", "enable", "reset", "members");
+        Assert.Equal(HttpStatusCode.Accepted, (await Act(eve, dom, new { action = "offboard", dn = "CN=Dee Admin,CN=Users," + Base })).StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await Act(admin, dom, new { action = "offboard", dn = "CN=Administrator,CN=Users," + Base })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Act(eve, dom, new { action = "offboard", dn = Bo, newParent = Servers })).StatusCode);   // no move right
+
+        // automation: a preview first, then a run; privileged, built-in and DeskAsk's own account are never touched
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync($"/api/adsuite/domains/{dom}/policies", Json(new { name = "Too soon", kind = "disable-inactive-users", days = 10 }))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await eve.PostAsync($"/api/adsuite/domains/{dom}/policies", Json(new { name = "Mine", kind = "disable-inactive-users", days = 90 }))).StatusCode);
+        var pid = (await J(await admin.PostAsync($"/api/adsuite/domains/{dom}/policies", Json(new { name = "Inactive 90", kind = "disable-inactive-users", days = 90, enabled = false })))).GetProperty("id").GetInt32();
+        var pv = await J(await admin.PostAsync($"/api/adsuite/policies/{pid}/preview", Json(new { })));
+        var would = pv.GetProperty("would").EnumerateArray().Select(x => x.GetProperty("dn").GetString()).ToList();
+        var skipped = pv.GetProperty("skipped").EnumerateArray().ToDictionary(x => x.GetProperty("name").GetString()!, x => x.GetProperty("why").GetString());
+        Assert.Contains(Cy, would); Assert.DoesNotContain(Bo, would);   // Bo is already off
+        Assert.Equal("privileged", skipped["Dee Admin"]); Assert.Equal("built in", skipped["Administrator"]); Assert.Equal("DeskAsk's service account", skipped["svc-deskask"]);
+        Assert.Equal(HttpStatusCode.Accepted, (await admin.PostAsync($"/api/adsuite/policies/{pid}/run", Json(new { }))).StatusCode);
+        var tenant = (await factory.Services.GetRequiredService<ITenantCatalog>().ListActiveAsync()).First();
+        await factory.Services.GetRequiredService<DeskAsk.Platform.Jobs.JobRunner>().RunDueAsync(tenant, default);
+        Assert.True((int.Parse(Fake.Dir[Cy]["userAccountControl"][0]) & 2) != 0); Assert.Contains("automation", Fake.Dir[Cy]["description"][0]);
+        Assert.Equal(0, int.Parse(Fake.Dir["CN=Dee Admin,CN=Users," + Base]["userAccountControl"][0]) & 2);
+        var pl = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/policies"));
+        Assert.Contains("changed", pl[0].GetProperty("lastResult").GetString());
     }
 }

@@ -19,8 +19,12 @@ internal static class Actions
     static readonly string[] Editable =
     {
         "displayName", "givenName", "sn", "initials", "description", "mail", "telephoneNumber", "mobile", "title", "department", "company", "physicalDeliveryOfficeName",
-        "streetAddress", "l", "st", "postalCode", "co", "manager", "employeeID", "employeeType", "wWWHomePage", "info", "division"
+        "streetAddress", "l", "st", "postalCode", "co", "manager", "employeeID", "employeeType", "wWWHomePage", "info", "division",
+        "homePhone", "ipPhone", "facsimileTelephoneNumber", "pager", "postOfficeBox", "profilePath", "scriptPath", "homeDrive", "homeDirectory", "employeeNumber", "extensionAttribute1",
+        "extensionAttribute2", "extensionAttribute3", "extensionAttribute4", "extensionAttribute5"
     };
+    /// <summary>The attributes a new account may be given beyond the ones the form names (the same list as editing, minus the name ones set apart).</summary>
+    internal static IReadOnlyList<string> EditableAttrs => Editable;
     static readonly string[] LookupAttrs = Shape.ListAttrs.Concat(new[] { "objectSid", "adminCount", "memberOf", "groupType" }).ToArray();
     static readonly Regex Mail = new(@"^[^@\s]{1,64}@[^@\s]{1,255}\z", RegexOptions.Compiled);
 
@@ -31,7 +35,8 @@ internal static class Actions
     static string Action(string a) => a switch
     {
         "unlock" => "unlock", "reset-password" => "reset", "enable" or "disable" => "enable", "update" or "set-expiry" => "modify",
-        "member-add" or "member-remove" => "members", "move" => "move", "delete" => "delete", "create-user" or "create-group" or "create-ou" => "create", _ => ""
+        "member-add" or "member-remove" => "members", "move" => "move", "delete" => "delete", "create-user" or "create-group" or "create-ou" => "create",
+        "set-flags" => "modify", "offboard" => "enable", _ => ""
     };
 
     public static async Task<Outcome> RunAsync(JsonElement body, Domain d, ClaimsPrincipal who, NpgsqlConnection db, IAccess access, IControllerRelay relay, IAuditLog audit, bool approved, CancellationToken ct)
@@ -47,7 +52,13 @@ internal static class Actions
         // the right: the person's own, or (for an approved request) the approve right of whoever agreed
         if (!await Perms.CanAsync(db, access, who, d.Id, target, approved ? "approve" : right, ct))
             return Forbidden(approved ? "You may not approve changes here." : "You may not do this to " + target + ".");
-        if (action == "move")
+        if (action == "offboard" && !approved)
+        {
+            // each step needs its own right: removing groups (members on each group is checked when it runs), a new password, a move
+            if (AdModule.Bool(body, "resetPassword", true) && !await Perms.CanAsync(db, access, who, d.Id, target, "reset", ct)) return Forbidden("You may not reset passwords here.");
+            if (AdModule.Bool(body, "removeGroups", true) && !await Perms.CanAsync(db, access, who, d.Id, target, "members", ct)) return Forbidden("You may not change group members here.");
+        }
+        if (action == "move" || (action == "offboard" && (AdModule.Str(body, "newParent") ?? "").Trim() != ""))
         {
             var np = (AdModule.Str(body, "newParent") ?? "").Trim();
             if (!Dir.ValidDn(np) || !Dir.IsUnder(np, d.BaseDn)) return Fail(400, "bad_input", "Choose where to move it, inside this domain.");
@@ -72,11 +83,12 @@ internal static class Actions
 
             if (action is "delete" or "move" && (rid is > 0 and < 1000 || isBind)) return Fail(422, "protected", "This object is built into the directory (or is the service account DeskAsk uses) and is left alone.");
             if (action is "disable" or "reset-password" && (rid == 502 || isBind)) return Fail(422, "protected", rid == 502 ? "The krbtgt account is left alone." : "That is the service account DeskAsk signs in with.");
-            if (action is "unlock" or "reset-password" or "set-expiry" && kind != "user") return Fail(400, "bad_input", "That works on user accounts.");
+            if (action is "offboard" && (rid is > 0 and < 1000 || isBind)) return Fail(422, "protected", "This account is built into the directory (or is the service account DeskAsk uses) and is left alone.");
+            if (action is "unlock" or "reset-password" or "set-expiry" or "set-flags" or "offboard" && kind != "user") return Fail(400, "bad_input", "That works on user accounts.");
             if (action is "enable" or "disable" && kind is not ("user" or "computer")) return Fail(400, "bad_input", "That works on user and computer accounts.");
             if (action is "member-add" or "member-remove" && kind != "group") return Fail(400, "bad_input", "Members are changed on a group.");
 
-            var risky = action == "delete" || (action is "reset-password" or "disable" && privAccount) || (action is "member-add" or "member-remove" && privGroup);
+            var risky = action == "delete" || (action is "reset-password" or "disable" or "offboard" && privAccount) || (action is "member-add" or "member-remove" && privGroup);
             if (risky && !approved && !await Perms.CanAsync(db, access, who, d.Id, target, "approve", ct))
                 return new Outcome(false, 202, new { }, "", true, target);
 
@@ -166,6 +178,46 @@ internal static class Actions
                 await audit.WriteAsync("adsuite.move", label, $"{Dir.Parent(dn)} -> {np}", actor, ct);
                 return Done(new { ok = true, dn = Dir.Rdns(dn)[0] + "," + np });
             }
+            case "set-flags":
+            {
+                var changes = new List<(string, string, string[])>(); var said = new List<string>();
+                if (body.TryGetProperty("pwdNeverExpires", out var ne) && ne.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                {
+                    var next = ne.ValueKind == JsonValueKind.True ? uac | Dir.UacDontExpire : uac & ~Dir.UacDontExpire;
+                    if (next != uac) { changes.Add(("replace", "userAccountControl", new[] { next.ToString(CultureInfo.InvariantCulture) })); said.Add(ne.ValueKind == JsonValueKind.True ? "password never expires" : "password expires"); }
+                }
+                if (body.TryGetProperty("mustChange", out var mc) && mc.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                {
+                    changes.Add(("replace", "pwdLastSet", new[] { mc.ValueKind == JsonValueKind.True ? "0" : "-1" })); said.Add(mc.ValueKind == JsonValueKind.True ? "must change password at next sign-in" : "need not change password");
+                }
+                if (changes.Count == 0) return Done(new { ok = true, unchanged = true });
+                await Dir.RunAsync(relay, d, changes.Select(c => Dir.Modify(dn, c)).ToArray(), ct);
+                await audit.WriteAsync("adsuite.set-flags", label, string.Join(", ", said), actor, ct);
+                return Done(new { ok = true });
+            }
+            case "offboard":
+            {
+                // one job, in this order: switch off, new unknown password, out of every group, note, then the move (the name changes last)
+                var ops = new List<object>();
+                var steps = new List<string>();
+                ops.Add(Dir.Modify(dn, ("replace", "userAccountControl", new[] { (uac | Dir.UacDisabled).ToString(CultureInfo.InvariantCulture) }))); steps.Add("disabled");
+                if (AdModule.Bool(body, "resetPassword", true)) { ops.Add(new { op = "setpw", dn, password = Dir.GeneratePassword(), mustChange = false }); steps.Add("password replaced"); }
+                var groups = e.L("memberOf").Where(g => Dir.IsUnder(g, d.BaseDn)).ToList();
+                if (AdModule.Bool(body, "removeGroups", true))
+                {
+                    foreach (var g in groups) ops.Add(new { op = "modify", dn = g, ignore = new[] { 16, 53 }, changes = new[] { new { op = "delete", attr = "member", values = new[] { dn } } } });
+                    steps.Add($"removed from {groups.Count} group(s)");
+                }
+                if (AdModule.Bool(body, "clearManager", false)) { ops.Add(Dir.Modify(dn, ("replace", "manager", Array.Empty<string>()))); steps.Add("manager cleared"); }
+                var note = AdModule.Clip((AdModule.Str(body, "note") ?? "").Trim(), 300);
+                if (note.Any(char.IsControl)) return Fail(400, "bad_input", "The note has unusable characters.");
+                ops.Add(Dir.Modify(dn, ("replace", "description", new[] { $"Left {DateTime.UtcNow:yyyy-MM-dd} ({actor}){(note == "" ? "" : ": " + note)}" })));
+                var np = (AdModule.Str(body, "newParent") ?? "").Trim(); var newDn = dn;
+                if (np != "" && !Dir.Same(Dir.Parent(dn), np)) { ops.Add(new { op = "rename", dn, newRdn = Dir.Rdns(dn)[0], newParent = np }); newDn = Dir.Rdns(dn)[0] + "," + np; steps.Add("moved to " + np); }
+                await Dir.RunAsync(relay, d, ops, ct, 90);
+                await audit.WriteAsync("adsuite.offboard", label, string.Join("; ", steps) + (groups.Count > 0 && AdModule.Bool(body, "removeGroups", true) ? " [" + string.Join(", ", groups.Select(Dir.RdnValue)) + "]" : ""), actor, ct);
+                return Done(new { ok = true, dn = newDn, steps, groups = groups.Select(Dir.RdnValue).ToList() });
+            }
             case "delete":
                 await Dir.RunAsync(relay, d, new object[] { new { op = "delete", dn } }, ct);
                 await audit.WriteAsync("adsuite.delete", label, kind + " " + dn, actor, ct);
@@ -254,11 +306,22 @@ internal static class Actions
         };
         void Opt(string attr, string v) { if (v != "") a[attr] = new[] { v }; }
         Opt("givenName", first); Opt("sn", last); Opt("mail", S("email")); Opt("title", S("title")); Opt("department", S("department")); Opt("description", S("description")); Opt("manager", mgr);
-        var live = Dir.UacNormal | (service ? Dir.UacDontExpire : 0);
+        // everything else the form offers (phones, address, organisation, profile), from the same list editing allows
+        if (body.TryGetProperty("attrs", out var more) && more.ValueKind == JsonValueKind.Object)
+            foreach (var p in more.EnumerateObject())
+            {
+                var attr = Editable.FirstOrDefault(x => x.Equals(p.Name, StringComparison.OrdinalIgnoreCase));
+                if (attr == null || attr is "displayName" or "manager") return Fail(400, "bad_input", p.Name + " cannot be set here.");
+                var val = p.Value.ValueKind == JsonValueKind.String ? p.Value.GetString()!.Trim() : "";
+                if (val.Length > 1024 || val.Any(char.IsControl)) return Fail(400, "bad_input", attr + " is too long or has unusable characters.");
+                if (attr == "mail" && val != "" && !Mail.IsMatch(val)) return Fail(400, "bad_input", "That is not an email address.");
+                Opt(attr, val);
+            }
+        var live = Dir.UacNormal | (service || AdModule.Bool(body, "pwdNeverExpires") ? Dir.UacDontExpire : 0) | (AdModule.Bool(body, "disabled") ? Dir.UacDisabled : 0);
         var ops = new List<object>
         {
             new { op = "add", dn = udn, entry = a },
-            new { op = "setpw", dn = udn, password = pw, mustChange = !service && AdModule.Bool(body, "mustChange", true) },
+            new { op = "setpw", dn = udn, password = pw, mustChange = !service && !AdModule.Bool(body, "pwdNeverExpires") && AdModule.Bool(body, "mustChange", true) },
             Dir.Modify(udn, ("replace", "userAccountControl", new[] { live.ToString(CultureInfo.InvariantCulture) }))
         };
         if (expFt > 0) ops.Add(Dir.Modify(udn, ("replace", "accountExpires", new[] { expFt.ToString(CultureInfo.InvariantCulture) })));
