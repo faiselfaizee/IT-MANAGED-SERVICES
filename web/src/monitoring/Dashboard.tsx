@@ -121,7 +121,7 @@ export function CustomerDash({ id }: { id: string }) {
 }
 
 /** Counts per category as bars, largest first: one colour, the number written beside each bar, each row opening its list. */
-function BarList({ title, rows, empty }: { title: string; rows: { key: string; label: string; value: number; href: string }[]; empty: string }) {
+export function BarList({ title, rows, empty }: { title: string; rows: { key: string; label: string; value: number; href: string }[]; empty: string }) {
   const max = Math.max(1, ...rows.map((r) => r.value));
   const sorted = [...rows].sort((a, b) => b.value - a.value);
   const total = rows.reduce((s, r) => s + r.value, 0);

@@ -18,12 +18,12 @@ public static class BackupApi
 
     public sealed record Job(long Id, int? CompanyId, string Company, long? AssetId, string AssetName, string Tool, string Name, string Source, int EveryHours, bool Watched,
         string Notes, string LastResult, DateTime? LastAt, DateTime? LastSuccessAt, string LastMessage, long LastBytes, int Fails, string Alert, string TicketNumber,
-        DateTime Created, string Status);
+        DateTime Created, string Status, DateTime? AlertAt = null);
 
     static async Task<List<Job>> Load(NpgsqlConnection db, IReadOnlyList<int>? scope, long? id, int graceHours, CancellationToken ct)
     {
         await using var c = new NpgsqlCommand(@"select id, company_id, company, asset_id, asset_name, tool, name, source, every_hours, watched, notes, last_result, last_at,
-                last_success_at, last_message, last_bytes, fails, alert, ticket_number, created_at
+                last_success_at, last_message, last_bytes, fails, alert, ticket_number, created_at, alert_at
             from backup.jobs where (not @sc or company_id = any(@scope)) and (@id = 0 or id = @id) order by company, asset_name, name", db);
         BackupModule.P(c, "sc", scope != null); BackupModule.P(c, "scope", (scope ?? Array.Empty<int>()).ToArray()); BackupModule.P(c, "id", id ?? 0);
         var o = new List<Job>(); var now = DateTime.UtcNow;
@@ -34,7 +34,7 @@ public static class BackupApi
             var watched = rd.GetBoolean(9); var every = rd.GetInt32(8); var last = rd.GetString(11); var lastAt = D(12); var created = DateTime.SpecifyKind(rd.GetDateTime(19), DateTimeKind.Utc);
             o.Add(new Job(rd.GetInt64(0), rd.IsDBNull(1) ? null : rd.GetInt32(1), rd.GetString(2), rd.IsDBNull(3) ? null : rd.GetInt64(3), rd.GetString(4), rd.GetString(5), rd.GetString(6),
                 rd.GetString(7), every, watched, rd.GetString(10), last, lastAt, D(13), rd.GetString(14), rd.GetInt64(15), rd.GetInt32(16), rd.GetString(17), rd.GetString(18), created,
-                BackupChecker.Status(watched, every, last, lastAt, created, graceHours, now)));
+                BackupChecker.Status(watched, every, last, lastAt, created, graceHours, now), D(20)));
         }
         return o;
     }
@@ -63,7 +63,7 @@ public static class BackupApi
     {
         id = j.Id, companyId = j.CompanyId, company = j.Company, assetId = j.AssetId, assetName = j.AssetName, tool = j.Tool, toolName = BackupModule.ToolNames.GetValueOrDefault(j.Tool, j.Tool),
         name = j.Name, source = j.Source, everyHours = j.EveryHours, watched = j.Watched, notes = j.Notes, lastResult = j.LastResult, lastAt = j.LastAt, lastSuccessAt = j.LastSuccessAt,
-        lastMessage = j.LastMessage, lastBytes = j.LastBytes, fails = j.Fails, alert = j.Alert, ticketNumber = j.TicketNumber, created = j.Created, status = j.Status,
+        lastMessage = j.LastMessage, lastBytes = j.LastBytes, fails = j.Fails, alert = j.Alert, ticketNumber = j.TicketNumber, created = j.Created, status = j.Status, alertAt = j.AlertAt,
     };
 
     static async Task<Dictionary<long, (string Tools, DateTime Seen)>> ToolsSeen(NpgsqlConnection db, CancellationToken ct)
