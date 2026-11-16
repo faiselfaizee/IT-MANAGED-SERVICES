@@ -93,7 +93,7 @@ public class GoogleSsoTests : IClassFixture<WebApplicationFactory<Program>>
             // a Workspace person without an account is created as an engineer and lands where they wanted
             var ok = await SignIn(g);
             Assert.Equal(HttpStatusCode.Redirect, ok.StatusCode); Assert.Equal("/#/servicedesk", ok.Headers.Location!.ToString());
-            Assert.Equal("engineer|google:1001", await Text("select \"Role\" || '|' || \"ExternalId\" from identity.users where \"Email\" = 'new@gws.test'"));
+            Assert.Equal("engineer|google:1001", await Text("select \"Role\" || '|' || external_id from identity.users where \"Email\" = 'new@gws.test'"));
             // a personal Gmail account (no Workspace domain) is refused even with a known address
             g.Hd = ""; g.Sub = "777";
             var personal = await SignIn(g);
@@ -115,7 +115,7 @@ public class GoogleSsoTests : IClassFixture<WebApplicationFactory<Program>>
             Assert.False(users[2].GetProperty("enabled").GetBoolean());        // suspended
             var imp = await J(await admin.PostAsync("/api/platform/sso/google/import", Json(new { role = "viewer", users = new[] { new { id = "1002", email = "rita@gws.test", name = "Rita Iyer" } } })));
             Assert.Equal(1, imp.GetProperty("created").GetInt32());
-            Assert.Equal("viewer|google:1002", await Text("select \"Role\" || '|' || \"ExternalId\" from identity.users where \"Email\" = 'rita@gws.test'"));
+            Assert.Equal("viewer|google:1002", await Text("select \"Role\" || '|' || external_id from identity.users where \"Email\" = 'rita@gws.test'"));
 
             // a wrong key is reported in words
             g.ServiceKey = RSA.Create(2048);
