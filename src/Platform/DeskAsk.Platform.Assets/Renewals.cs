@@ -62,6 +62,13 @@ internal static class RenewalQueries
             union all
             select 'rental', m.id, m.title, m.end_date, m.company_id, coalesce(c.name,''), coalesce(c.contact_email,''), coalesce(c.renewal_to,''), '', null::int, '', '', '', ''
               from assets.rentals m left join assets.companies c on c.id = m.company_id where m.end_date between current_date and current_date + @d and (not @sc or m.company_id = any(@scope))
+            union all
+            select 'license', l.id, l.product || case when l.edition <> '' then ' ' || l.edition else '' end, l.end_date, l.company_id, coalesce(c.name,''), coalesce(c.contact_email,''), coalesce(c.renewal_to,''), '',
+                   l.vendor_id, coalesce(v.name,''), coalesce({vmail}, ''),
+                   concat_ws(', ', l.seats || ' ' || case l.model when 'device' then 'devices' when 'core' then 'cores' when 'site' then 'site' when 'concurrent' then 'concurrent users' else 'users' end,
+                     case when l.contract_no <> '' then 'subscription ' || l.contract_no end, case when l.auto_renew then 'renews automatically' end), ''
+              from assets.licenses l left join assets.companies c on c.id = l.company_id left join assets.vendors v on v.id = l.vendor_id
+             where l.end_date between current_date and current_date + @d and not exists (select 1 from assets.licenses n where n.previous_id = l.id) and (not @sc or l.company_id = any(@scope))
             order by 4";
         await using var cmd = new NpgsqlCommand(sql, db); cmd.Parameters.AddWithValue("d", withinDays); AssetsAccess.Bind(cmd, scope);
         await using var rd = await cmd.ExecuteReaderAsync(ct);
@@ -70,7 +77,7 @@ internal static class RenewalQueries
                 rd.GetString(7), rd.GetString(8), rd.IsDBNull(9) ? null : rd.GetInt32(9), rd.GetString(10), rd.GetString(11), rd.GetString(12), rd.GetString(13)));
         return o;
     }
-    public static string KindName(string k) => k switch { "warranty" => "Warranty", "amc" => "AMC contract", _ => "Rental" };
+    public static string KindName(string k) => k switch { "warranty" => "Warranty", "amc" => "AMC contract", "license" => "Software licence", _ => "Rental" };
     public static IEnumerable<string> Split(string list) => list.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Contains('@'));
 
     /// <summary>One line of a reminder: what, which customer and site, when it ends, and the purchase details.</summary>

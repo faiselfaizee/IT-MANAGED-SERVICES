@@ -45,7 +45,7 @@ public class AssetsAccessTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var admin = await TestSupport.AdminClient(factory);
         await Sql("delete from identity.users where \"Email\" like '%@del.test'");
-        await Sql("delete from assets.delete_requests; truncate mail.outbox, mail.outbox_files restart identity");
+        await Sql("delete from assets.delete_requests; delete from core.settings where key = 'assets.delete_approval'; truncate mail.outbox, mail.outbox_files restart identity");
         using var smtp = new FakeSmtp();
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/platform/mail/config", Json(new { provider = "smtp", from = "desk@example.test", fromName = "DeskAsk", host = "127.0.0.1", port = smtp.Port, security = "none", user = "", password = "" }))).StatusCode);
         Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "eng@del.test", name = "eng", role = "engineer", password = Pw }))).StatusCode);
@@ -59,6 +59,10 @@ public class AssetsAccessTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.True((await eng.PutAsync($"/api/assets/{id}", Json(new { location = "Front desk" }))).IsSuccessStatusCode);
 
         Assert.Equal(HttpStatusCode.Forbidden, (await eng.DeleteAsync($"/api/assets/{id}")).StatusCode);
+        // the approval step is off by default; with it on, people without the delete right ask
+        Assert.False(JsonDocument.Parse(await eng.GetStringAsync("/api/assets/delete-approval")).RootElement.GetProperty("required").GetBoolean());
+        Assert.Equal(HttpStatusCode.Forbidden, (await eng.PutAsync("/api/assets/delete-approval", Json(new { required = true }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/assets/delete-approval", Json(new { required = true }))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await eng.PostAsync($"/api/assets/{id}/delete-request", Json(new { reason = "" }))).StatusCode);
         var ask = await eng.PostAsync($"/api/assets/{id}/delete-request", Json(new { reason = "Scrapped" }));
         Assert.Equal(HttpStatusCode.Created, ask.StatusCode);
@@ -90,6 +94,15 @@ public class AssetsAccessTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/assets/delete-requests/{rid2}/approve", Json(new { }))).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await eng.GetAsync($"/api/assets/{id}/device")).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync($"/api/assets/delete-requests/{rid2}/approve", Json(new { }))).StatusCode);
+
+        // with the approval step off, someone who may change an asset deletes it at once (with a reason)
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/assets/delete-approval", Json(new { required = false }))).StatusCode);
+        var made2 = await eng.PostAsync("/api/assets", Json(new { name = "Old printer " + Guid.NewGuid().ToString("N")[..6], status = "in_use" }));
+        var id2 = JsonDocument.Parse(await made2.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetInt64();
+        Assert.Equal(HttpStatusCode.BadRequest, (await eng.PostAsync($"/api/assets/{id2}/delete-request", Json(new { reason = "" }))).StatusCode);
+        var gone = await eng.PostAsync($"/api/assets/{id2}/delete-request", Json(new { reason = "Broken" }));
+        Assert.True(JsonDocument.Parse(await gone.Content.ReadAsStringAsync()).RootElement.GetProperty("deleted").GetBoolean());
+        Assert.Equal(HttpStatusCode.NotFound, (await eng.GetAsync($"/api/assets/{id2}/device")).StatusCode);
     }
 
     [PgFact]

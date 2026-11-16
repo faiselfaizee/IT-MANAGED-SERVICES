@@ -148,3 +148,6 @@ The agent (version 3.4 and later) lists **every service** of a Windows computer 
 - **Custom services.** Type a service name (or systemd unit) under the list and choose **Watch it**. This also works for a service that is not on the list (for example one installed later). The agent reports chosen services every minute, so these alerts open fastest. "Not installed" is reported when the name does not exist.
 - **Network devices, printers and other devices without an agent** have no service list. Watch what they offer (web page, port, certificate, DNS) with **service checks** on the asset's Service checks tab; failing checks open alerts with the "Service check failing" rule.
 - **Change who is told.** The rule is under Monitoring › Alert rules like any other (severity, mail, ticket, customer).
+
+## v4.3.0: acknowledged alerts count as Ok
+An acknowledged alert is being handled: the device shows Ok in the rings, the device list and the counts while the alert stays open (marked acknowledged on the Alerts page) until it clears. The dashboards also show how many alerts are acknowledged.

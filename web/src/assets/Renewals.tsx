@@ -3,7 +3,7 @@ import { api, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Empty, Err, Field, Loading, fmtDay, useSubmit } from '../ui';
 import { usePerms } from '../perms';
 
-const KIND: Record<string, string> = { warranty: 'Warranty', amc: 'AMC contract', rental: 'Rental' };
+const KIND: Record<string, string> = { warranty: 'Warranty', amc: 'AMC contract', rental: 'Rental', license: 'Software licence' };
 
 /** What ends soon, and who is reminded about it. */
 export default function Renewals() {
@@ -18,7 +18,7 @@ export default function Renewals() {
     {perms.admin && <Card title="Reminders">
       <Loading loading={!v} error={cfg.error} />
       {v && <div className="form">
-        <label className="check"><input type="checkbox" checked={v.enabled} onChange={(e) => ch({ enabled: e.target.checked })} /> Send reminders when a warranty, AMC contract or rental is about to end</label>
+        <label className="check"><input type="checkbox" checked={v.enabled} onChange={(e) => ch({ enabled: e.target.checked })} /> Send reminders when a warranty, AMC contract, rental or software licence is about to end</label>
         <Field label="Days before the end date (one month and 15 days: 30, 15)"><input value={v.days} onChange={(e) => ch({ days: e.target.value })} /></Field>
         <Field label="Your team (every reminder; separate addresses with commas)"><input value={v.to} onChange={(e) => ch({ to: e.target.value })} placeholder="it@yourcompany.com" /></Field>
         <p className="muted small">Each customer's own team (Companies › Edit › "Your team for this customer") also gets that customer's reminders.</p>
@@ -36,7 +36,7 @@ export default function Renewals() {
     <Card title="Ending in the next 90 days">
       <Loading loading={up.loading && !up.data} error={up.error} />
       {up.data && (items.length === 0 ? <Empty>Nothing ends in the next 90 days.</Empty> : <table><thead><tr><th>What</th><th>Customer</th><th>Vendor</th><th>Ends</th><th>Reminders sent</th></tr></thead><tbody>
-        {items.map((x) => <tr key={x.kind + x.id}><td>{KIND[x.kind] ?? x.kind}: {x.kind === 'warranty' ? <a href={`#/assets/${x.id}`}>{x.title}</a> : x.title}{x.detail && <div className="muted small">{x.detail}</div>}</td>
+        {items.map((x) => <tr key={x.kind + x.id}><td>{KIND[x.kind] ?? x.kind}: {x.kind === 'warranty' ? <a href={`#/assets/${x.id}`}>{x.title}</a> : x.kind === 'license' ? <a href={`#/assets/licenses/${x.id}`}>{x.title}</a> : x.title}{x.detail && <div className="muted small">{x.detail}</div>}</td>
           <td>{x.company}{x.site && <div className="muted small">{x.site}</div>}</td><td>{x.vendorId ? <a href={`#/assets/vendors/${x.vendorId}`}>{x.vendor}</a> : <span className="muted">–</span>}</td>
           <td>{fmtDay(x.due)} <Badge tone={x.daysLeft <= 7 ? 'bad' : x.daysLeft <= 30 ? 'warn' : undefined}>{x.daysLeft === 0 ? 'today' : `${x.daysLeft} days`}</Badge></td>
           <td>{((x.remindersSent ?? []) as number[]).length ? [...(x.remindersSent as number[])].sort((a, b) => b - a).map((d) => `${d}-day`).join(', ') : <span className="muted">not yet</span>}</td></tr>)}</tbody></table>)}

@@ -32,5 +32,5 @@ test('a customer administrator sees only the pages they may read', async () => {
   mockApi({ read: [3], add: 'none', modify: 'none', delete: 'none' }, 'cadmin');
   render(<AssetsApp />);
   await waitFor(() => expect(screen.queryByText('Discover')).toBeNull());
-  expect(screen.getByText('Companies')).toBeTruthy(); expect(screen.queryByText('Software')).toBeNull(); expect(screen.queryByText('Settings')).toBeNull();
+  expect(screen.getByText('Companies')).toBeTruthy(); expect(screen.queryByText('Installed software')).toBeNull(); expect(screen.getByText('Licences & subscriptions')).toBeTruthy(); expect(screen.queryByText('Settings')).toBeNull();
 });

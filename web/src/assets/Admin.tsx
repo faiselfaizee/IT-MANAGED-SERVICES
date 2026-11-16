@@ -48,7 +48,9 @@ export function Settings() {
   const { data, error, reload } = useLoad<Rec>('/api/assets/settings/remote-control'); const [v, setV] = useState<Rec | null>(null); const [saved, setSaved] = useState(false);
   const cur = v ?? data; const set = (k: string, x: unknown) => { setSaved(false); setV({ ...(cur as Rec), [k]: x }); };
   return <>
-    <h1>Remote control settings</h1>
+    <h1>Settings</h1>
+    <DeleteApprovalCard />
+    <h2>Remote control</h2>
     <Err text={error} />
     {cur && <Card title="RustDesk"><div className="form" style={{ maxWidth: 560 }}>
       <label><input type="checkbox" checked={!!cur.enabled} onChange={(e) => set('enabled', e.target.checked)} /> Remote control is switched on</label>
@@ -59,4 +61,17 @@ export function Settings() {
       <Field label="Installer SHA-256 (optional)"><input value={cur.sha256} onChange={(e) => set('sha256', e.target.value)} className="mono" /></Field>
       <div className="actions"><Act label="Save" primary run={async () => { await api('/api/assets/settings/remote-control', { method: 'PUT', body: cur }); setSaved(true); setV(null); reload(); }} />{saved && <span className="muted">Saved.</span>}</div></div></Card>}
   </>;
+}
+
+/** Whether deleting an asset waits for an approver (off by default). */
+function DeleteApprovalCard() {
+  const { data, reload } = useLoad<Rec>('/api/assets/delete-approval');
+  if (!data) return null;
+  return <Card title="Deleting assets">
+    <label className="check"><input type="checkbox" checked={!!data.required} onChange={async (e) => { await api('/api/assets/delete-approval', { method: 'PUT', body: { required: e.target.checked } }); reload(); }} />
+      Deleting needs an approver</label>
+    <p className="muted small">{data.required
+      ? 'People who may edit assets but were not given the delete right send a request; an administrator or someone with the delete right decides (Delete requests).'
+      : 'People who may edit an asset can delete it themselves, giving a reason and typing the asset tag to confirm. Deleting is permanent; the reason is kept in the audit log.'}</p>
+  </Card>;
 }

@@ -507,3 +507,15 @@ button.primary.danger { background: var(--bad); color: #fff; }
 .tile-s { display: grid; gap: 2px; padding: 14px 16px; border-radius: var(--r-lg); background: var(--glass); border: 1px solid var(--edge); color: var(--ink); }
 .tile-s strong { font-size: 26px; } .tile-s span { color: var(--muted); font-size: 13px; } .tile-s:hover { text-decoration: none; border-color: var(--edge-hi); }
 .crumbs { margin: 0 0 8px; } p.ok { color: var(--ok); }
+
+/* Commands on an asset: categories on the left, commands as cards */
+.cmdbox { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: start; margin-bottom: 18px; }
+@media (max-width: 800px) { .cmdbox { grid-template-columns: 1fr; } }
+.cmdcats { display: grid; gap: 2px; position: sticky; top: 12px; }
+.cmdcats input { margin-bottom: 8px; }
+.cmdcats button { display: flex; justify-content: space-between; text-align: left; background: none; border: 0; border-radius: 8px; padding: 7px 10px; font-weight: 400; }
+.cmdcats button span { color: var(--muted); font-size: 12px; } .cmdcats button:hover { background: var(--row); }
+.cmdcats button.on { background: var(--glass-2); box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
+.cmdcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.cmdcard { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: var(--r-sm); background: var(--glass); border: 1px solid var(--edge); }
+.cmdcard p { margin: 0; flex: 1; } .cmdtop, .cmdfoot { display: flex; justify-content: space-between; align-items: center; gap: 8px; }

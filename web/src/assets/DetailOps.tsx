@@ -106,14 +106,29 @@ export function Commands({ id, d }: { id: string; d: Rec }) {
   const [q, setQ] = useState(''); const [cat, setCat] = useState(''); const [pick, setPick] = useState<Rec | null>(null); const [job, setJob] = useState<string | null>(null);
   const { data, error, loading } = useLoad<Rec>(`/api/assets/commands?q=${encodeURIComponent(q)}`);
   const jobs = useLoad<Rec[] | Rec>(`/api/assets/${id}/jobs`);
-  const items = ((data?.items ?? []) as Rec[]).filter((c) => c.enabled && (c.os === 'any' || c.os === os) && (!cat || c.category === cat));
-  const cats = [...new Set(((data?.items ?? []) as Rec[]).filter((c) => c.os === 'any' || c.os === os).map((c) => c.category as string))].sort();
+  const mine = ((data?.items ?? []) as Rec[]).filter((c) => c.enabled && (c.os === 'any' || c.os === os));
+  const items = mine.filter((c) => !cat || c.category === cat);
+  const cats = [...new Set(mine.map((c) => c.category as string))].sort((x, y) => x.localeCompare(y));
+  const count = (k: string) => mine.filter((c) => c.category === k).length;
   return <>
     <Blocked d={d} />
-    <div className="tools"><input placeholder="Search commands" value={q} onChange={(e) => setQ(e.target.value)} /><select value={cat} onChange={(e) => setCat(e.target.value)} aria-label="Category"><option value="">All categories</option>{cats.map((c) => <option key={c}>{c}</option>)}</select><span className="muted">{items.length} commands for {os}</span></div>
-    <Loading loading={loading && !data} error={error} />
-    <table><thead><tr><th>Command</th><th>Category</th><th>Risk</th><th /></tr></thead><tbody>
-      {items.map((c) => <tr key={c.id}><td><b>{c.title}</b><div className="muted">{c.description}</div></td><td>{c.category}</td><td><Badge tone={RISK[c.risk]}>{c.risk}</Badge></td><td><button disabled={!!remoteBlock(d)} onClick={() => setPick(c)}>Run…</button></td></tr>)}</tbody></table>
+    <div className="cmdbox">
+      <aside className="cmdcats" aria-label="Command categories">
+        <input placeholder="Search all commands" value={q} onChange={(e) => { setQ(e.target.value); setCat(''); }} aria-label="Search commands" />
+        <button className={cat === '' ? 'on' : ''} onClick={() => setCat('')}>All <span>{mine.length}</span></button>
+        {cats.map((k) => <button key={k} className={cat === k ? 'on' : ''} onClick={() => setCat(k)}>{k} <span>{count(k)}</span></button>)}
+      </aside>
+      <div className="cmdlist">
+        <Loading loading={loading && !data} error={error} />
+        <p className="muted small">{items.length} command{items.length === 1 ? '' : 's'} for {os === 'linux' ? 'Linux' : 'Windows'}{cat ? ` in ${cat}` : ''}</p>
+        {data && items.length === 0 && <Empty>No commands here.</Empty>}
+        <div className="cmdcards">{items.map((c) => <div key={c.id} className="cmdcard">
+          <div className="cmdtop"><strong>{c.title}</strong><Badge tone={RISK[c.risk]}>{c.risk}</Badge></div>
+          <p className="muted small">{c.description}</p>
+          <div className="cmdfoot">{!cat && <span className="muted small">{c.category}</span>}<button disabled={!!remoteBlock(d)} onClick={() => setPick(c)}>Run…</button></div>
+        </div>)}</div>
+      </div>
+    </div>
     <h2>Recent runs</h2>
     {Array.isArray(jobs.data) && (jobs.data.length === 0 ? <Empty>Nothing has been run on this device.</Empty> : <table><thead><tr><th>When</th><th>Command</th><th>By</th><th>Result</th><th /></tr></thead><tbody>
       {jobs.data.map((j: Rec) => <tr key={j.id}><td>{fmtDate(j.created)}</td><td>{j.title}</td><td>{j.by}</td><td><Badge tone={j.status === 'done' && !j.exit ? 'ok' : DONE.includes(j.status) ? 'bad' : undefined}>{j.status}</Badge></td><td><button onClick={() => setJob(j.id)}>Output</button></td></tr>)}</tbody></table>)}

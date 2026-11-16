@@ -15,15 +15,15 @@ namespace DeskAsk.Platform.Monitoring;
 /// </summary>
 public static class MonitoringApi
 {
-    internal sealed record AlertRow(long Id, long AssetId, string Severity, string Metric);
+    internal sealed record AlertRow(long Id, long AssetId, string Severity, string Metric, bool Acked = false);
     static readonly string[] Statuses = { "ok", "warning", "critical", "muted", "unwatched" };
 
     static async Task<List<AlertRow>> OpenAlerts(NpgsqlConnection db, CancellationToken ct)
     {
         var o = new List<AlertRow>();
-        await using var c = new NpgsqlCommand("select id, asset_id, severity, metric from monitoring.alerts where closed_at is null", db);
+        await using var c = new NpgsqlCommand("select id, asset_id, severity, metric, ack_at is not null from monitoring.alerts where closed_at is null", db);
         await using var rd = await c.ExecuteReaderAsync(ct);
-        while (await rd.ReadAsync(ct)) o.Add(new AlertRow(rd.GetInt64(0), rd.GetInt64(1), rd.GetString(2), rd.GetString(3)));
+        while (await rd.ReadAsync(ct)) o.Add(new AlertRow(rd.GetInt64(0), rd.GetInt64(1), rd.GetString(2), rd.GetString(3), rd.GetBoolean(4)));
         return o;
     }
 
@@ -36,9 +36,15 @@ public static class MonitoringApi
         return o;
     }
 
-    /// <summary>muted, critical, warning, ok (watched, nothing wrong) or unwatched (no agent, no site controller, no checks).</summary>
-    internal static string Status(DeviceState d, IReadOnlyCollection<AlertRow> alerts, bool muted) =>
-        muted ? "muted" : alerts.Any(a => a.Severity == "critical") ? "critical" : alerts.Count > 0 ? "warning" : Evaluator.Watched(d) ? "ok" : "unwatched";
+    /// <summary>
+    /// muted, critical, warning, ok (watched, nothing wrong) or unwatched (no agent, no site controller, no checks). An acknowledged alert
+    /// counts as handled: the device shows Ok while someone works on it (the alert itself stays open, marked acknowledged, until it clears).
+    /// </summary>
+    internal static string Status(DeviceState d, IReadOnlyCollection<AlertRow> alerts, bool muted)
+    {
+        var live = alerts.Where(a => !a.Acked).ToList();
+        return muted ? "muted" : live.Any(a => a.Severity == "critical") ? "critical" : live.Count > 0 ? "warning" : Evaluator.Watched(d) || alerts.Count > 0 ? "ok" : "unwatched";
+    }
 
     static double? WorstDisk(DeviceState d) => d.Disks.Count == 0 ? null : d.Disks.Min(x => x.FreePct);
     static string DiskBand(DeviceState d) => WorstDisk(d) switch { null => "nodata", < 10 => "critical", < 20 => "low", _ => "ok" };
@@ -58,14 +64,15 @@ public static class MonitoringApi
     static Dictionary<string, object?> Metrics(string company, int? companyId, IReadOnlyCollection<Row> rows)
     {
         int S(string s) => rows.Count(r => r.Status == s);
-        var al = rows.SelectMany(r => r.Alerts).ToList();
+        var al = rows.SelectMany(r => r.Alerts).Where(a => !a.Acked).ToList();   // acknowledged alerts are being handled: they count as Ok
+        var acked = rows.SelectMany(r => r.Alerts).Count(a => a.Acked);
         var checks = rows.SelectMany(r => r.D.Checks).ToList();
         var certs = checks.Where(c => c.Type == "ssl" && c.CertDays != null).ToList();
         return new()
         {
             ["company"] = company, ["companyId"] = companyId, ["devices"] = rows.Count, ["watched"] = rows.Count(r => Evaluator.Watched(r.D)),
             ["ok"] = S("ok"), ["warning"] = S("warning"), ["critical"] = S("critical"), ["muted"] = S("muted"), ["unwatched"] = S("unwatched"),
-            ["down"] = rows.Count(r => r.Alerts.Any(a => a.Metric == "offline")),
+            ["down"] = rows.Count(r => r.Alerts.Any(a => a.Metric == "offline" && !a.Acked)), ["acknowledged"] = acked,
             ["alertsCritical"] = al.Count(a => a.Severity == "critical"), ["alertsWarning"] = al.Count(a => a.Severity != "critical"),
             ["byMetric"] = RulesApi.Metrics.ToDictionary(m => m, m => al.Count(a => a.Metric == m)),
             ["checksOk"] = checks.Count(c => c.Ok == true), ["checksFailing"] = checks.Count(c => c.Ok == false), ["checksNotRun"] = checks.Count(c => c.Ok == null),
@@ -93,7 +100,7 @@ public static class MonitoringApi
         servicesAt = r.D.InventoryAt, services = r.D.InventoryList.Select(sv => new { sv.Name, sv.Display, sv.State, sv.Start, watched = ServiceWatch.IsWatched(sv, r.D.Modes, r.D.Kind), mode = r.D.Modes.TryGetValue(sv.Name.ToLowerInvariant(), out var sm) ? sm : (string?)null, quiet = ServiceWatch.IsDefaultQuiet(sv.Name) }),
         customServices = r.D.Modes.Where(kv => kv.Value == "watch" && r.D.InventoryList.All(x => !string.Equals(x.Name, kv.Key, StringComparison.OrdinalIgnoreCase))).Select(kv => kv.Key),
         watchedAt = r.D.WatchedAt, watched = r.D.WatchedList.Select(w => new { w.Name, w.Kind, w.Running, w.State, w.Count }),
-        alerts = r.Alerts.Count, alertsCritical = r.Alerts.Count(a => a.Severity == "critical"),
+        alerts = r.Alerts.Count(a => !a.Acked), alertsCritical = r.Alerts.Count(a => a.Severity == "critical" && !a.Acked), acknowledged = r.Alerts.Count(a => a.Acked),
         muted = mute == null ? null : new { until = mute.Value.Until, reason = mute.Value.Reason, by = mute.Value.By },
     };
 
@@ -166,7 +173,7 @@ public static class MonitoringApi
             var mutes = await Mutes(db, ct);
             IEnumerable<Row> f = rows;
             if (company == "none") f = f.Where(x => x.D.CompanyId == null); else if (company != "") f = f.Where(x => x.D.CompanyId?.ToString() == company);
-            if (status == "down") f = f.Where(x => x.Alerts.Any(a => a.Metric == "offline")); else if (status != "") f = f.Where(x => x.Status == status);
+            if (status == "down") f = f.Where(x => x.Alerts.Any(a => a.Metric == "offline" && !a.Acked)); else if (status != "") f = f.Where(x => x.Status == status);
             if (kind != "") f = f.Where(x => x.D.Kind == kind);
             if (disk != "") f = f.Where(x => DiskBand(x.D) == disk);
             if (cert != "") f = f.Where(x => x.D.Checks.Any(c => c.Type == "ssl" && CertBand(c) == cert));

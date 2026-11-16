@@ -26,7 +26,7 @@ function tabsFor(d: Rec): (readonly [string, string])[] {
 
 export default function Detail({ id, tab }: { id: string; tab: string }) {
   const { data: d, error, loading, reload } = useLoad<Rec>(`/api/assets/${id}/device`);
-  const perms = usePerms('assets');
+  const perms = usePerms('assets'); const approval = useLoad<Rec>('/api/assets/delete-approval');
   const vault = useLoad<Rec>(`/api/vault/assets/${id}/items`, [id]);
   const [modal, setModal] = useState<'' | 'ownership' | 'handover' | 'qr' | 'edit' | 'ask'>('');
   if (!d) return <Loading loading={loading} error={error} />;
@@ -43,7 +43,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
       <Act label="Export all details (CSV)" run={() => saveFile(`/api/assets/${id}/export.csv`, `${d.tag}-details.csv`)} />
       {perms.modify && <button onClick={() => setModal('edit')}>Edit</button>}
       {perms.delete ? <Act label="Delete" danger confirm={`Delete ${d.name} (${d.tag}) for good? Its history goes with it.`} run={async () => { await api(`/api/assets/${id}`, { method: 'DELETE' }); go('assets'); }} />
-        : perms.modify && <button onClick={() => setModal('ask')}>Request deletion</button>}
+        : perms.modify && <button className={approval.data?.required ? '' : 'danger'} onClick={() => setModal('ask')}>{approval.data?.required ? 'Request deletion' : 'Delete'}</button>}
       {perms.admin && hasAgent && <Act label="Refresh inventory" run={async () => { await api(`/api/assets/${id}/refresh`, { method: 'POST', body: {} }); reload(); }} />}
     </div>
     <nav className="sub" aria-label="Asset tabs">{tabsFor(d).map(([k, label]) => <a key={k} href={`#/assets/${id}/${k}`} className={tab === k ? 'on' : ''}>{label}</a>)}</nav>
@@ -210,6 +210,14 @@ function EditForm({ id, d, a, cov, onClose }: { id: string; d: Rec; a: Rec; cov:
 
 function AskDelete({ id, d, onClose }: { id: string; d: Rec; onClose: () => void }) {
   const [reason, setReason] = useState(''); const [sent, setSent] = useState(false); const f = useSubmit(() => setSent(true));
+  const approval = useLoad<Rec>('/api/assets/delete-approval'); const [typed, setTyped] = useState('');
+  if (approval.data && !approval.data.required) return <Modal title={`Delete ${d.tag}`} onClose={onClose}><div className="form">
+    <p>This deletes <strong>{d.name}</strong> ({d.tag}) for good, with its history. It cannot be undone; the reason is kept in the audit log. To keep the record, set its status to Retired instead.</p>
+    <Field label="Why?"><textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus /></Field>
+    <Field label={`Type ${d.tag} to confirm`}><input value={typed} onChange={(e) => setTyped(e.target.value)} /></Field>
+    <Err text={f.err} /><div className="actions"><button onClick={onClose}>Cancel</button>
+      <button className="primary danger" disabled={f.busy || !reason.trim() || typed.trim() !== d.tag} onClick={() => f.submit(async () => { await api(`/api/assets/${id}/delete-request`, { body: { reason } }); go('assets'); })}>Delete</button></div>
+  </div></Modal>;
   return <Modal title={`Request deletion of ${d.tag}`} onClose={onClose}><div className="form">
     {sent ? <><p>Request sent. The asset stays until an approver decides; follow it under Delete requests.</p><div className="actions"><button className="primary" onClick={onClose}>Close</button></div></> : <>
       <p className="muted">You may edit assets but not delete them. An approver (an administrator, or a team lead or manager who was given the delete right) will decide.</p>

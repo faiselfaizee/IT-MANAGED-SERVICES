@@ -343,6 +343,93 @@ public sealed class AssetsSchema : ITenantSchema
               kind text not null, payload text not null default '', status text not null default 'queued' check (status in ('queued','running','done','failed')),
               result text, error text, created_at timestamptz not null default now(), taken_at timestamptz, finished_at timestamptz);
             create index if not exists relay_jobs_c on assets.relay_jobs (collector_id, status)"),
+        new(27, "software licences and subscriptions, their seats; finer command categories", @"
+            create table if not exists assets.licenses (
+              id serial primary key, company_id int not null references assets.companies(id) on delete cascade,
+              product text not null, publisher text not null default '', edition text not null default '',
+              kind text not null default 'subscription' check (kind in ('subscription','perpetual','volume','oem','trial','open-source')),
+              model text not null default 'user' check (model in ('user','device','core','site','concurrent')),
+              seats int not null default 1, cost numeric, currency text not null default '',
+              billing text not null default 'yearly' check (billing in ('monthly','yearly','multi-year','one-time')),
+              vendor_id int references assets.vendors(id) on delete set null,
+              purchase_date date, start_date date, end_date date, auto_renew boolean not null default false,
+              po_number text not null default '', invoice_number text not null default '', contract_no text not null default '',
+              portal_url text not null default '', key_sealed text not null default '', match text not null default '', notes text not null default '',
+              previous_id int references assets.licenses(id) on delete set null,
+              created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+            create index if not exists licenses_company on assets.licenses (company_id, end_date);
+            create table if not exists assets.license_seats (
+              id serial primary key, license_id int not null references assets.licenses(id) on delete cascade,
+              asset_id bigint references assets.assets(id) on delete cascade, user_name text not null default '', note text not null default '',
+              assigned_at timestamptz not null default now());
+            create index if not exists license_seats_l on assets.license_seats (license_id);
+            update assets.commands c set category = v.cat from (values
+              ('System information','System information'),
+              ('Uptime and last boot','System information'),
+              ('OS and kernel','System information'),
+              ('Installed programs','System information'),
+              ('Startup programs','System information'),
+              ('Battery report','System information'),
+              ('Rename the computer (host name)','System information'),
+              ('Top 15 processes by CPU','Performance'),
+              ('Top 15 processes by memory','Performance'),
+              ('Top processes by memory','Performance'),
+              ('Memory and load','Performance'),
+              ('Disk space','Disk and storage'),
+              ('Largest folders on C:\','Disk and storage'),
+              ('Disk health (SMART status)','Disk and storage'),
+              ('Check disk (read-only)','Disk and storage'),
+              ('Clear temporary files','Disk and storage'),
+              ('Restart a service','Services'),
+              ('Service status','Services'),
+              ('Stopped automatic services','Services'),
+              ('Failed services','Services'),
+              ('Recent system errors','Logs and events'),
+              ('Recent application errors','Logs and events'),
+              ('Recent errors in the journal','Logs and events'),
+              ('Kernel messages (errors)','Logs and events'),
+              ('Scheduled tasks that failed','Logs and events'),
+              ('Failed sign-in attempts (last 24h)','Users and sign-in'),
+              ('Logged-on users','Users and sign-in'),
+              ('Local administrators','Users and sign-in'),
+              ('Last logins','Users and sign-in'),
+              ('Installed updates (hotfixes)','Updates'),
+              ('Pending reboot check','Updates'),
+              ('Reset Windows Update components','Updates'),
+              ('Available updates','Updates'),
+              ('Ping a host','Network diagnostics'),
+              ('Look up a DNS name','Network diagnostics'),
+              ('Trace route','Network diagnostics'),
+              ('Test a TCP port','Network diagnostics'),
+              ('DNS lookup','Network diagnostics'),
+              ('Listening ports and owners','Network diagnostics'),
+              ('Listening ports','Network diagnostics'),
+              ('Active connections','Network diagnostics'),
+              ('Routing table','Network diagnostics'),
+              ('IP configuration (full)','Network diagnostics'),
+              ('IP addresses and routes','Network diagnostics'),
+              ('Wi-Fi status and saved networks','Network diagnostics'),
+              ('Proxy settings','Network diagnostics'),
+              ('Flush DNS cache','Network repair'),
+              ('Register DNS','Network repair'),
+              ('Release and renew IP (DHCP)','Network repair'),
+              ('Reset Winsock and TCP/IP','Network repair'),
+              ('Group policy refresh','Domain and policy'),
+              ('Group policy result','Domain and policy'),
+              ('Sync time with the domain/time server','Domain and policy'),
+              ('Domain controller and secure channel','Domain and policy'),
+              ('System file check','Windows repair'),
+              ('DISM check and repair image','Windows repair'),
+              ('Clear print queue and restart spooler','Printing'),
+              ('List printers','Printing'),
+              ('Defender status','Security'),
+              ('Defender quick scan','Security'),
+              ('Defender update signatures','Security'),
+              ('BitLocker status','Security'),
+              ('Firewall profiles','Security'),
+              ('Restart in a few minutes','Power'),
+              ('Cancel pending shutdown','Power')
+            ) v(title, cat) where c.builtin and lower(c.title) = lower(v.title)"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -673,6 +760,8 @@ public sealed class AssetsModule : IPlatformModule
         SecretHandoff.Map(r, Key);
         RenewalsApi.Map(r, Key);
         LocationsApi.Map(r, Key);
+        LicensesApi.Map(r, Key);
+        DeleteApproval.Map(r, Key);
 
         // ---- types
         anyone(r.MapGet("/api/assets/types", async (ITenantContext t, CancellationToken ct) =>
@@ -966,6 +1055,13 @@ public sealed class AssetsModule : IPlatformModule
             if (!await AssetsAccess.InScope(db, id, await AssetsAccess.ScopeAsync(http, Acts.Modify), ct)) return Results.NotFound();
             var reason = AgentsApi.Clip(AgentsApi.Str(body, "reason"), 500).Trim();
             if (reason == "") return Results.BadRequest(new { error = "bad_input", detail = "Say why this asset should be deleted." });
+            if (!await DeleteApproval.RequiredAsync(http.RequestServices.GetRequiredService<ISettings>(), ct))
+            {   // no approval step: someone who may change the asset deletes it at once (permanently), with the reason in the audit log
+                await using var del = new NpgsqlCommand("delete from assets.assets where id = @i returning tag", db); P(del, "i", id);
+                if (await del.ExecuteScalarAsync(ct) is not string dtag) return Results.NotFound();
+                await audit.WriteAsync("assets.deleted", id.ToString(), dtag + ": " + reason, ct: ct);
+                return Results.Ok(new { deleted = true });
+            }
             string tag, name;
             await using (var c = new NpgsqlCommand("select tag, name from assets.assets where id = @i", db))
             {
