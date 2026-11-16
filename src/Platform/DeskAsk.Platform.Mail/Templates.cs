@@ -20,6 +20,8 @@ public static class MailTemplates
     static readonly string[] RenewVendor = { "vendor", "items", "count", "first", "days", "reply_to", "site" };
     static readonly string[] VaultReq = { "requester", "vault", "reason", "ticket", "minutes", "decision", "by", "note", "link", "site" };
     static readonly string[] VaultRot = { "account", "device", "vault", "error", "link", "site" };
+    static readonly string[] Approval = { "number", "subject", "requester", "company", "item", "details", "link", "site" };
+    static readonly string[] ChangeAp = { "number", "title", "type", "risk", "owner", "start", "link", "site" };
     static readonly string[] Report = { "company", "month", "availability", "devices", "outages", "alerts", "link", "site" };
 
     public static readonly TemplateDef[] All =
@@ -39,6 +41,12 @@ public static class MailTemplates
         new("ticket_assigned", "Ticket assigned", "Sent to an engineer when a ticket is assigned to them.", Ticket,
             "[{{number}}] Assigned to you: {{subject}}",
             "Hello {{assignee}},\n\n{{by}} assigned ticket {{number}} to you.\n\nSubject: {{subject}}\nPriority: {{priority}}\nRaised by: {{requester}} ({{company}})\n\n{{message}}\n\nOpen the ticket:\n{{link}}"),
+        new("request_approval", "Request waiting for approval", "Sent to the approvers of a service catalogue item when someone asks for it.", Approval,
+            "[{{number}}] Approval needed: {{item}} for {{requester}}",
+            "{{requester}} ({{company}}) asked for {{item}}.\n\n{{details}}\n\nApprove or turn it down:\n{{link}}\n\n{{site}}"),
+        new("change_approval", "Change waiting for approval", "Sent to the change advisory board (or every staff member when there is no board) when a change is submitted for approval.", ChangeAp,
+            "[{{number}}] Change for approval: {{title}}",
+            "{{owner}} submitted a {{type}} change for approval (risk: {{risk}}).\n\n{{title}}\nPlanned start: {{start}}\n\nReview and vote:\n{{link}}\n\n{{site}}"),
         new("monitoring_alert", "Monitoring alert", "Sent to the alert recipients when Monitoring opens an alert or raises it to critical.", Alert,
             "[{{severity}}] {{company}}: {{device}} - {{rule}}",
             "{{severity}} alert for {{device}} ({{tag}}, {{company}})\n\n{{message}}\n\nRule: {{rule}}\nSince: {{opened}}\n{{ticket}}\nOpen the device:\n{{link}}\n\n{{site}}"),
@@ -132,10 +140,11 @@ public static class MailTemplates
 
     public static readonly Dictionary<string, string> Sample = new()
     {
-        ["number"] = "TKT-000123", ["subject"] = "Printer on the third floor is down", ["status"] = "Open", ["priority"] = "High",
+        ["number"] = "INC-0123", ["subject"] = "Printer on the third floor is down", ["status"] = "Open", ["priority"] = "High",
         ["message"] = "The printer stopped working this morning. Paper is loaded and the display shows an error.", ["requester"] = "Pat Morgan", ["company"] = "Acme Ltd",
         ["assignee"] = "Sam Rivers", ["by"] = "Sam Rivers", ["path"] = "#/servicedesk/123",
         ["name"] = "Pat Morgan", ["vendor"] = "Acme Systems Pvt Ltd", ["count"] = "2", ["first"] = "Warranty of LAP-0042 (Dell Latitude 5440)", ["days"] = "30", ["reply_to"] = "renewals@yourcompany.example",
+        ["item"] = "New laptop", ["details"] = "Model: Standard laptop\nNeeded by: 2026-12-01", ["title"] = "Patch the file server", ["type"] = "normal", ["risk"] = "medium", ["owner"] = "Sam Rivers", ["start"] = "20 Dec 2026 22:00 UTC",
         ["items"] = "- Warranty: LAP-0042 Dell Latitude 5440, serial 8HX2LQ3 (Acme Ltd, Bengaluru HQ) ends 14 December 2026, bought 15 December 2023, PO 4500012\n- AMC contract: Server room AMC, contract AMC-2025-118 (Acme Ltd) ends 20 December 2026",
     };
 }

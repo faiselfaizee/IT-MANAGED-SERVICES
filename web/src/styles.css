@@ -519,3 +519,12 @@ button.primary.danger { background: var(--bad); color: #fff; }
 .cmdcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
 .cmdcard { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: var(--r-sm); background: var(--glass); border: 1px solid var(--edge); }
 .cmdcard p { margin: 0; flex: 1; } .cmdtop, .cmdfoot { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+/* Change calendar */
+.calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.calhead { font-size: 12px; color: var(--muted); text-align: center; padding: 4px 0; }
+.calday { min-height: 96px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; background: var(--glass); display: flex; flex-direction: column; gap: 3px; overflow: hidden; }
+.calday.today { border-color: var(--accent); } .calnum { font-size: 12px; color: var(--muted); }
+.calitem { display: block; font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 6px; padding: 2px 4px; background: var(--row); }
+.calitem.clash { box-shadow: inset 3px 0 0 var(--bad); } .calitem:hover { text-decoration: none; background: var(--glass-2); }
+pre.plaintext { white-space: pre-wrap; font: inherit; margin: 6px 0; }

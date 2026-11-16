@@ -183,7 +183,7 @@ public class TemplateTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.NotFound, (await admin.PutAsync("/api/platform/mail/templates/nope", Json(new { subject = "x", body = "y" }))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/platform/mail/templates/ticket_reply", Json(new { subject = "Update on {{number}}", body = "Dear {{requester}}, {{message}} {{link}}" }))).StatusCode);
         var prev = await J(await admin.PostAsync("/api/platform/mail/templates/ticket_reply/preview", Json(new { subject = "Update on {{number}}", body = "Dear {{requester}}, {{message}}\n{{link}}" })));
-        Assert.Equal("Update on TKT-000123", prev.GetProperty("subject").GetString());
+        Assert.Equal("Update on INC-0123", prev.GetProperty("subject").GetString());
         Assert.Contains("Dear Pat Morgan", prev.GetProperty("text").GetString());
         Assert.Contains("https://", prev.GetProperty("text").GetString()); Assert.Contains("#/servicedesk/123", prev.GetProperty("text").GetString());
         Assert.Contains("<a href=", prev.GetProperty("html").GetString());

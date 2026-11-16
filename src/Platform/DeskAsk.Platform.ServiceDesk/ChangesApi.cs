@@ -277,7 +277,7 @@ public static class ChangesApi
             catch (FormatException e) { return ServiceDeskModule.Bad("bad_request", e.Message); }
         }));
 
-        read(r.MapPost("/api/servicedesk/changes/{id:long}/submit", async (long id, ClaimsPrincipal u, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        read(r.MapPost("/api/servicedesk/changes/{id:long}/submit", async (long id, ClaimsPrincipal u, ITenantContext t, ISettings st, IUserDirectory people, IMailQueue mailq, IAuditLog audit, CancellationToken ct) =>
         {
             await using var db = await ServiceDeskModule.Open(t, ct);
             var w = await ServiceDeskModule.WhoAsync(u, db, ct);
@@ -298,14 +298,17 @@ public static class ChangesApi
             await Note(db, "change", id, w.Name, next == "approved" ? "Submitted. Standard changes are pre-approved." : "Submitted for approval.", ct);
             await ServiceDeskModule.Event(db, id, "change.submitted", new { number, status = next }, ct);
             await audit.WriteAsync("servicedesk.change_submitted", number, next, ct: ct);
+            if (next == "review") await ItilApi.TellCabAsync(st, people, mailq, db, id, w.Id, ct);
             return Results.Ok(new { status = next });
         }));
 
-        read(r.MapPost("/api/servicedesk/changes/{id:long}/vote", async (long id, JsonElement b, ClaimsPrincipal u, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        read(r.MapPost("/api/servicedesk/changes/{id:long}/vote", async (long id, JsonElement b, ClaimsPrincipal u, ITenantContext t, ISettings st, IAuditLog audit, CancellationToken ct) =>
         {
             await using var db = await ServiceDeskModule.Open(t, ct);
             var w = await ServiceDeskModule.WhoAsync(u, db, ct);
             if (!w.Staff) return Forbidden("Only the support team can vote on changes.");
+            var cab = await ItilApi.CabAsync(st, ct);
+            if (cab.Count > 0 && !cab.Contains(w.Id) && !w.Admin) return Forbidden("Only members of the change advisory board can approve changes.");
             string status, number, type; Guid? owner; int quorum;
             await using (var c = new NpgsqlCommand("select status, number, type, owner_id, quorum from servicedesk.changes where id = @i", db))
             {

@@ -164,7 +164,7 @@ internal static class IntegrationApi
         static void Match(NpgsqlCommand c, string idOrNumber)
         {
             if (long.TryParse(idOrNumber, out var n)) { ServiceDeskModule.P(c, "i", n); c.CommandText += " where id = @i"; }
-            else { ServiceDeskModule.P(c, "n", idOrNumber.ToUpperInvariant()); c.CommandText += " where number = @n"; }
+            else { ServiceDeskModule.P(c, "n", idOrNumber.ToUpperInvariant()); c.CommandText += " where (number = @n or @n = any(aliases))"; }
         }
 
         Keyed(r.MapGet("/api/v1/tickets", async (HttpContext h, ITenantContext t, CancellationToken ct) =>

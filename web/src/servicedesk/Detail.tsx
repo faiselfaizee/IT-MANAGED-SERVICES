@@ -3,6 +3,7 @@ import { api, go, saveFile, upload, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Err, Loading, fmtDate, fmtBytes, useSubmit } from '../ui';
 import { CustomCard, useFields } from './Fields';
 import { KIND, KindBadge, LEVEL, PRIORITY, PriorityBadge, STATUS, SlaBadge, StatusBadge } from './List';
+import { KnownErrorHints } from './Itil';
 
 export default function Detail({ id }: { id: string }) {
   const { data, error, loading, reload } = useLoad<Rec>('/api/servicedesk/tickets/' + id);
@@ -51,6 +52,7 @@ export default function Detail({ id }: { id: string }) {
         </Card>
         <CustomCard defs={fieldDefs} values={(data?.custom ?? {}) as Rec} edit={!!can.edit} save={patch} />
         <Related id={id} />
+        {can.edit && <KnownErrorHints id={id} />}
         {can.edit && <Assist id={id} t={t} patch={patch} fill={setBody} />}
         <Card title="Details">
           {can.edit ? <div className="form">

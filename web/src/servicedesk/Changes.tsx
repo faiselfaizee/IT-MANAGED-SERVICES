@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, go, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Empty, Err, Field, Loading, Modal, fmtDate, useSubmit } from '../ui';
+import { ChangeExtra } from './Itil';
 
 export const CHANGE_STATUS: Record<string, string> = { draft: 'Draft', review: 'Awaiting approval', approved: 'Approved', rejected: 'Rejected', scheduled: 'Scheduled', implementing: 'In progress', completed: 'Completed', failed: 'Failed', closed: 'Closed', cancelled: 'Cancelled' };
 export const CHANGE_TYPE: Record<string, string> = { normal: 'Normal', standard: 'Standard (pre-approved)', emergency: 'Emergency' };
@@ -115,6 +116,7 @@ export function ChangeDetail({ id, staff, admin, myId }: { id: string; staff: bo
     <Stepper stage={c.stage ?? 'planning'} status={c.status} />
     <Err text={msg} />
     <Card><Dl rows={[['Type', CHANGE_TYPE[c.type]], ['Risk', LEVEL[c.risk]], ['Impact', LEVEL[c.impact]], ['Company', c.companyName], ['Owner', c.ownerName], ['Window', c.startAt ? `${fmtDate(c.startAt)} to ${fmtDate(c.endAt)}` : ''], ['Approvals', c.type === 'standard' ? 'Pre-approved' : `${approvals} of ${c.quorum} needed`]]} /></Card>
+    <ChangeExtra id={id} staff={staff} />
     {staff && <div className="actions" style={{ justifyContent: 'flex-start', margin: '12px 0' }}>
       {['draft', 'rejected'].includes(c.status) && <Act label="Submit for approval" primary run={() => post('submit')} />}
       {canVote && <Act label={mine?.decision === 'approve' ? 'Approved by you' : 'Approve'} primary disabled={mine?.decision === 'approve'} run={() => post('vote', { decision: 'approve' })} />}

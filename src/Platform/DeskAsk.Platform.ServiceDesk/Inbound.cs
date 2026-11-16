@@ -12,7 +12,7 @@ namespace DeskAsk.Platform.ServiceDesk;
 /// </summary>
 public sealed class InboundHandler : IInboundMailHandler
 {
-    static readonly Regex Ref = new(@"\bTKT-\d{6}\b", RegexOptions.IgnoreCase);
+    static readonly Regex Ref = new(@"\b(?:INC|SRV|TKT)-\d{4,}\b", RegexOptions.IgnoreCase);   // TKT: numbers from before v4.4, kept as aliases
     readonly ITenantContext tenant; readonly ISettings settings; readonly IUserDirectory users; readonly ICompanyDirectory companies;
     public InboundHandler(ITenantContext t, ISettings s, IUserDirectory u, ICompanyDirectory c) { tenant = t; settings = s; users = u; companies = c; }
 
@@ -52,7 +52,7 @@ public sealed class InboundHandler : IInboundMailHandler
         {
             var number = r.Value.ToUpperInvariant();
             long id = 0; string status = "", requester = ""; int? ticketCompany = null; var found = false;
-            await using (var c = new NpgsqlCommand("select id, status, requester_email, company_id from servicedesk.tickets where number = @n", db))
+            await using (var c = new NpgsqlCommand("select id, status, requester_email, company_id from servicedesk.tickets where number = @n or @n = any(aliases)", db))
             {
                 ServiceDeskModule.P(c, "n", number);
                 await using var rd = await c.ExecuteReaderAsync(ct);

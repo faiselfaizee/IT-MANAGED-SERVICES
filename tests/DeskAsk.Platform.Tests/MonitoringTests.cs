@@ -146,7 +146,7 @@ public class MonitoringTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(2, open.Count);
         var disk = open.Single(x => x.GetProperty("metric").GetString() == "disk");
         Assert.Equal("critical", disk.GetProperty("severity").GetString()); Assert.Equal("C:", disk.GetProperty("subject").GetString());
-        Assert.StartsWith("TKT-", disk.GetProperty("ticket").GetString());
+        Assert.StartsWith("INC-", disk.GetProperty("ticket").GetString());
         Assert.Equal(1, await Scalar("select count(*) from servicedesk.tickets where source = 'monitoring' and asset_id = " + asset + " and priority = 'high'"));
         Assert.Equal("", open.Single(x => x.GetProperty("metric").GetString() == "memory").GetProperty("ticket").GetString());
         Assert.Equal(2, await Scalar("select count(*) from mail.outbox where reference like 'mon-alert:%' and to_addr = 'ops@mon.test'"));

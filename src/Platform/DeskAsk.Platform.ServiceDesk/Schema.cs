@@ -133,6 +133,66 @@ public sealed class ServiceDeskSchema : ITenantSchema
             alter table servicedesk.tickets add column if not exists major boolean not null default false;
             alter table servicedesk.tickets add column if not exists major_at timestamptz;
             create index if not exists tickets_kind on servicedesk.tickets (kind, status)"),
+        new(8, "ITIL numbers (INC, SRV, PRB, CHG), service catalogue and request approvals, change board, standard changes, linked assets", @"
+            create sequence if not exists servicedesk.inc_seq;
+            create sequence if not exists servicedesk.srv_seq;
+            create or replace function servicedesk.ref(prefix text, n bigint) returns text language sql immutable as
+              $f$ select prefix || '-' || case when n < 10000 then lpad(n::text, 4, '0') else n::text end $f$;
+            alter table servicedesk.tickets add column if not exists aliases text[] not null default '{}';
+            create index if not exists tickets_aliases on servicedesk.tickets using gin (aliases);
+            alter table servicedesk.tickets alter column number drop default;
+            -- existing tickets get their INC or SRV number in the order they were opened; the old TKT number stays as an alias (mail replies, searches)
+            do $d$ declare r record; begin
+              for r in select id, kind, number from servicedesk.tickets where number like 'TKT-%' order by id loop
+                update servicedesk.tickets set aliases = aliases || r.number,
+                  number = servicedesk.ref(case when r.kind = 'request' then 'SRV' else 'INC' end, nextval((case when r.kind = 'request' then 'servicedesk.srv_seq' else 'servicedesk.inc_seq' end)::regclass))
+                  where id = r.id;
+              end loop; end $d$;
+            create or replace function servicedesk.ticket_number() returns trigger language plpgsql as $f$
+            begin
+              if tg_op = 'UPDATE' then
+                if new.kind is not distinct from old.kind then return new; end if;
+                new.aliases := old.aliases || old.number;
+              end if;
+              new.number := servicedesk.ref(case when new.kind = 'request' then 'SRV' else 'INC' end,
+                nextval((case when new.kind = 'request' then 'servicedesk.srv_seq' else 'servicedesk.inc_seq' end)::regclass));
+              return new;
+            end $f$;
+            drop trigger if exists tickets_number on servicedesk.tickets;
+            create trigger tickets_number before insert or update of kind on servicedesk.tickets for each row execute function servicedesk.ticket_number();
+            -- problems and changes: same four-digit style for new ones; existing numbers keep their value with less padding
+            alter table servicedesk.problems alter column number set default servicedesk.ref('PRB', nextval('servicedesk.problem_seq'));
+            alter table servicedesk.changes alter column number set default servicedesk.ref('CHG', nextval('servicedesk.change_seq'));
+            update servicedesk.problems set number = servicedesk.ref('PRB', substring(number from 5)::bigint) where number ~ '^PRB-0+[0-9]{4,}$' or number ~ '^PRB-[0-9]{6}$';
+            update servicedesk.changes set number = servicedesk.ref('CHG', substring(number from 5)::bigint) where number ~ '^CHG-[0-9]{6}$';
+            alter table servicedesk.problems add column if not exists impact text not null default '';
+            alter table servicedesk.problems add column if not exists urgency text not null default '';
+            alter table servicedesk.problems add column if not exists known_error_at timestamptz;
+            alter table servicedesk.changes add column if not exists category text not null default '';
+            alter table servicedesk.changes add column if not exists test_plan text not null default '';
+            alter table servicedesk.changes add column if not exists asset_ids bigint[] not null default '{}';
+            alter table servicedesk.changes add column if not exists template_id int;
+            -- the service catalogue: what people can ask for, with its own form and an approval step
+            create table if not exists servicedesk.catalog (
+              id serial primary key, name text not null, category text not null default 'General', description text not null default '',
+              icon text not null default '', fields jsonb not null default '[]', approvers uuid[] not null default '{}',
+              assignee_id uuid, assignee_name text not null default '', priority text not null default 'medium',
+              resolve_hours int, staff_only boolean not null default false, active boolean not null default true, position int not null default 0,
+              created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+            alter table servicedesk.tickets add column if not exists catalog_id int;
+            alter table servicedesk.tickets add column if not exists form jsonb not null default '{}';
+            alter table servicedesk.tickets add column if not exists approval text not null default '';
+            alter table servicedesk.tickets drop constraint if exists tickets_approval_check;
+            alter table servicedesk.tickets add constraint tickets_approval_check check (approval in ('','pending','approved','rejected'));
+            alter table servicedesk.tickets add column if not exists approval_by text not null default '';
+            alter table servicedesk.tickets add column if not exists approval_at timestamptz;
+            alter table servicedesk.tickets add column if not exists approval_note text not null default '';
+            create index if not exists tickets_approval on servicedesk.tickets (approval) where approval = 'pending';
+            -- standard changes: pre-approved, repeatable work
+            create table if not exists servicedesk.change_templates (
+              id serial primary key, name text not null unique, category text not null default '', description text not null default '',
+              plan text not null default '', rollback text not null default '', test_plan text not null default '', risk text not null default 'low',
+              active boolean not null default true, created_by text not null default '', created_at timestamptz not null default now())"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
         SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);

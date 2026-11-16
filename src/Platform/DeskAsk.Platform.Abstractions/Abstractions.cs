@@ -331,7 +331,7 @@ public sealed record TicketRequest(string Subject, string Body, string Priority,
 /// <summary>Opening tickets from other modules (Monitoring alerts). Implemented by the Service Desk.</summary>
 public interface ITicketDesk
 {
-    /// <summary>Opens a ticket with the customer's service levels. Returns its id and number (TKT-000123).</summary>
+    /// <summary>Opens a ticket with the customer's service levels. Returns its id and number (INC-0123).</summary>
     Task<(long Id, string Number)> OpenAsync(TicketRequest r, CancellationToken ct = default);
     /// <summary>Adds a system note to the ticket (for example "the alert has cleared"). Does nothing for an unknown id.</summary>
     Task NoteAsync(long ticketId, string text, CancellationToken ct = default);

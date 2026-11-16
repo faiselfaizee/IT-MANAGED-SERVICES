@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, go, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Empty, Err, Field, Loading, fmtDate, useSubmit } from '../ui';
 import { PRIORITY, PriorityBadge } from './List';
+import { ProblemExtra } from './Itil';
 
 export const PROBLEM_STATUS: Record<string, string> = { open: 'Open', investigating: 'Investigating', known_error: 'Known error', resolved: 'Resolved', closed: 'Closed' };
 export const ProblemBadge = ({ s }: { s: string }) => <Badge tone={s === 'resolved' || s === 'closed' ? 'ok' : s === 'known_error' ? 'warn' : undefined}>{PROBLEM_STATUS[s] ?? s}</Badge>;
@@ -67,6 +68,7 @@ export function ProblemDetail({ id, staff }: { id: string; staff: boolean }) {
     <p className="muted">{[p.category, p.ownerName && 'Owner: ' + p.ownerName].filter(Boolean).join(' · ')}</p>
     <Err text={msg} />
     {p.description && <Card title="What keeps going wrong"><p>{p.description}</p></Card>}
+    <ProblemExtra id={id} staff={staff} status={String(p.status)} open={tickets.filter((t) => !['resolved', 'closed'].includes(String(t.status))).length} />
     {staff && <div className="actions" style={{ justifyContent: 'flex-start', margin: '12px 0' }}>
       {Object.entries(PROBLEM_STATUS).map(([k, n]) => <Act key={k} label={n} primary={k === p.status} disabled={k === p.status} run={async () => { if (edit) await patch({ ...edit }); await patch({ status: k }); setEdit(null); }} />)}
     </div>}

@@ -118,7 +118,7 @@ public static class TicketsApi
             if (q["q"].ToString().Trim() is { Length: > 0 } text)
             {
                 P(c, "q", "%" + text.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%");
-                where.Add("(t.number ilike @q or t.subject ilike @q or t.requester_name ilike @q or t.company_name ilike @q or t.asset_name ilike @q)");
+                where.Add("(t.number ilike @q or array_to_string(t.aliases, ' ') ilike @q or t.subject ilike @q or t.requester_name ilike @q or t.company_name ilike @q or t.asset_name ilike @q)");
             }
             var take = Math.Clamp(int.TryParse(q["take"], out var tk) ? tk : 50, 1, 200); var skip = Math.Max(0, int.TryParse(q["skip"], out var sk) ? sk : 0);
             var cond = string.Join(" and ", where);

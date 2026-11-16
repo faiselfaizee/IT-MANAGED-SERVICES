@@ -75,7 +75,7 @@ public class ServiceDeskTests : IClassFixture<WebApplicationFactory<Program>>
         var r = await x.Admin.PostAsync("/api/servicedesk/tickets", Json(new { subject = "Printer down", description = "Third floor", priority = "critical", category = "Hardware", companyId = x.CoA, requesterName = "Pat", requesterEmail = "pat@alpha.test" }));
         Assert.Equal(HttpStatusCode.Created, r.StatusCode);
         var made = await J(r);
-        Assert.Matches(new Regex("^TKT-\\d{6}$"), made.GetProperty("number").GetString()!);
+        Assert.Matches(new Regex("^INC-\\d{4,}$"), made.GetProperty("number").GetString()!);
         var t = (await Get(x.Admin, made.GetProperty("id").GetInt64())).GetProperty("ticket");
         Assert.Equal("open", t.GetProperty("status").GetString()); Assert.Equal("SD Alpha", t.GetProperty("company").GetString()); Assert.Equal("Pat", t.GetProperty("requester").GetString());
         var created = t.GetProperty("createdAt").GetDateTime();
