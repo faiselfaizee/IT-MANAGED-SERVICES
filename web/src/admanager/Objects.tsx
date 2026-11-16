@@ -176,18 +176,16 @@ export function ObjectList({ domain, kind, open, onOpen }: { domain: Rec; kind: 
       <button className="danger" onClick={() => { if (confirm(`Delete ${sel.length} object(s)? Each waits for a second person's approval.`)) void runBulk('Deleting', (dn) => ({ action: 'delete', dn })); }}>Delete</button>
       <button className="link" onClick={() => setSel([])}>Clear</button></div>}
     <Loading loading={res.loading} error={res.error} />
-    {res.data && (items.length === 0 ? <Empty>Nothing found.</Empty> : <div className="tablewrap"><table className="grid">
-      <thead><tr><th style={{ width: 32 }}><input type="checkbox" aria-label="Choose all" checked={all} onChange={() => setSel(all ? [] : items.map((i) => String(i.dn)))} /></th>
-        <th>Name</th>{kind === 'user' && <><th>Sign-in</th><th>Title / department</th><th>Last sign-in</th></>}{kind === 'computer' && <><th>Operating system</th><th>Last sign-in</th></>}
-        {kind === 'group' && <th>Description</th>}<th>OU</th><th /></tr></thead>
-      <tbody>{items.map((i) => { const dn = String(i.dn); return <tr key={dn} className={open === dn ? 'on' : ''} onClick={() => onOpen(dn)}>
-        <td onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={'Choose ' + i.name} checked={sel.includes(dn)} onChange={() => toggle(dn)} /></td>
-        <td><strong>{String(i.name)}</strong>{i.mail && kind === 'user' ? <div className="muted small">{String(i.mail)}</div> : null}</td>
-        {kind === 'user' && <><td>{String(i.sam ?? '')}</td><td className="small">{[i.title, i.department].filter(Boolean).join(' · ')}</td><td className="small">{i.lastLogon ? fmtDate(i.lastLogon) : 'Never'}</td></>}
-        {kind === 'computer' && <><td className="small">{String(i.os ?? '')}</td><td className="small">{i.lastLogon ? fmtDate(i.lastLogon) : 'Never'}</td></>}
-        {kind === 'group' && <td className="small">{String(i.description ?? '')}</td>}
-        <td className="small muted">{ouPath(dn.replace(/^(?:[^,\\]|\\.)*,/, ''), domain.baseDn)}</td>
-        <td>{i.disabled && <Badge tone="bad">Disabled</Badge>}{i.locked && <Badge tone="bad">Locked</Badge>}{i.expired && <Badge tone="warn">Expired</Badge>}</td></tr>; })}</tbody></table></div>)}
+    {res.data && (items.length === 0 ? <Empty>Nothing found.</Empty> : <>
+      <div className="listhead"><label className="check"><input type="checkbox" aria-label="Choose all" checked={all} onChange={() => setSel(all ? [] : items.map((i) => String(i.dn)))} /> {items.length} {TITLES[kind].toLowerCase()}</label></div>
+      <ul className="objlist">{items.map((i) => { const dn = String(i.dn);
+        const sub = kind === 'user' ? [i.sam, i.title, i.department].filter(Boolean).join(' · ') : kind === 'computer' ? String(i.os ?? '') : kind === 'group' ? String(i.description ?? '') : ouPath(dn.replace(/^(?:[^,\\]|\\.)*,/, ''), domain.baseDn);
+        return <li key={dn} className={open === dn ? 'on' : ''} onClick={() => onOpen(dn)}>
+          <input type="checkbox" aria-label={'Choose ' + i.name} checked={sel.includes(dn)} onClick={(e) => e.stopPropagation()} onChange={() => toggle(dn)} />
+          <span className={'avatar k-' + kind} aria-hidden>{kind === 'ou' ? '📁' : String(i.name ?? '?').slice(0, 1).toUpperCase()}</span>
+          <span className="who"><strong>{String(i.name)}</strong><small>{sub}</small></span>
+          <span className="flags">{i.disabled && <Badge tone="bad">Disabled</Badge>}{i.locked && <Badge tone="bad">Locked</Badge>}{i.expired && <Badge tone="warn">Expired</Badge>}</span>
+        </li>; })}</ul></>)}
     {res.data?.truncated ? <p className="muted small">Only the first 1,000 are shown. Narrow the search or choose an OU.</p> : null}
     {bulk === 'move' && <MoveTo domain={domain} onClose={() => setBulk(null)} onGo={(to) => runBulk('Moving', (dn) => ({ action: 'move', dn, newParent: to }))} />}
     {bulk === 'addto' && <PickObjects domain={domain} kind="group" title={`Add ${sel.length} to groups`} onClose={() => setBulk(null)} onGo={async (h) => {
@@ -205,7 +203,7 @@ export function Progress({ p, onClose }: { p: Rec; onClose: () => void }) {
     <div className="bar"><i style={{ width: `${(100 * p.done) / Math.max(1, p.total)}%` }} /></div>
     <p>{out.filter((o) => o.ok && !o.approval).length} done, {out.filter((o) => o.approval).length} sent for approval, {out.filter((o) => !o.ok).length} failed.</p>
     {out.some((o) => !o.ok) && <ul className="plain small">{out.filter((o) => !o.ok).map((o) => <li key={String(o.dn)}><code>{ouPath(String(o.dn)).split(' › ').pop()}</code>: <span className="err">{String(o.error)}</span></li>)}</ul>}
-    {pws.length > 0 && <><p>New passwords, shown once:</p><table className="grid small"><tbody>{pws.map((o) => <tr key={String(o.dn)}><td>{ouPath(String(o.dn)).split(' › ').pop()}</td><td><code>{String(o.password)}</code></td></tr>)}</tbody></table></>}
+    {pws.length > 0 && <><p>New passwords, shown once:</p><table className="adtable small"><tbody>{pws.map((o) => <tr key={String(o.dn)}><td>{ouPath(String(o.dn)).split(' › ').pop()}</td><td><code>{String(o.password)}</code></td></tr>)}</tbody></table></>}
     {finished && <div className="actions"><button className="primary" onClick={onClose}>Close</button></div>}
   </Modal>;
 }

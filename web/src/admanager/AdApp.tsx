@@ -71,9 +71,10 @@ export default function AdApp() {
   else if (!domain.enabled) page = <Card><p className="err">This domain is switched off.</p></Card>;
   else {
     const kinds: Record<string, 'user' | 'group' | 'computer' | 'ou'> = { users: 'user', groups: 'group', computers: 'computer', ous: 'ou' };
-    if (kinds[section]) page = <div className={open ? 'masterdetail open' : 'masterdetail'}>
+    if (kinds[section]) page = <div className="masterdetail">
       <ObjectList key={section + domain.id} domain={domain} kind={kinds[section]} open={open} onOpen={setOpen} />
-      {open && <Panel key={open} domain={domain} dn={open} onChanged={() => undefined} onOpen={setOpen} onClose={() => setOpen('')} />}</div>;
+      {open ? <Panel key={open} domain={domain} dn={open} onChanged={() => undefined} onOpen={setOpen} onClose={() => setOpen('')} />
+        : <div className="panel placeholder"><p className="muted">Choose one on the left to see its details and what you can do with it.</p></div>}</div>;
     else if (section === 'new-user') page = <><h1>New user</h1><NewUser domain={domain} onDone={(dn) => { setOpen(dn); go('admanager/users'); }} /></>;
     else if (section === 'new-other') page = <><h1>New group or OU</h1><CreateOther domain={domain} /></>;
     else if (section === 'bulk-create') page = <><h1>Users from a file</h1><BulkCreate domain={domain} /></>;

@@ -1,4 +1,5 @@
 import { Fragment, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { Rec } from './http';
 
 export const fmtBytes = (n?: number | null) => {
@@ -19,8 +20,10 @@ export function Err({ text }: { text?: string }) { return text ? <p className="e
 export function Loading({ loading, error }: { loading: boolean; error: string }) { return error ? <Err text={error} /> : loading ? <p className="muted">Loading…</p> : null; }
 export function Empty({ children }: { children: ReactNode }) { return <p className="muted">{children}</p>; }
 
+/** A dialog. It is drawn at the end of the page, so no surface it is opened from (blurred glass, a scrolling pane, another dialog) can hide or clip it. */
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  return <div className="modal" role="dialog" aria-label={title} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><div><h2>{title}</h2>{children}</div></div>;
+  const box = <div className="modal" role="dialog" aria-label={title} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><div><h2>{title}</h2>{children}</div></div>;
+  return typeof document === 'undefined' ? box : createPortal(box, document.body);
 }
 export function Field({ label, children }: { label: string; children: ReactNode }) { return <label><span>{label}</span>{children}</label>; }
 

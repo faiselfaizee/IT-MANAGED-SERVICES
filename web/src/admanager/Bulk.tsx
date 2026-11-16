@@ -70,7 +70,7 @@ export function BulkCreate({ domain }: { domain: Rec }) {
     {rows.length > 0 && !check && <div className="actions"><button className="primary" disabled={busy} onClick={() => void doCheck()}>{busy ? 'Checking…' : `Check ${rows.length} row(s)`}</button></div>}
     {check && <>
       <p><Badge tone="ok">{String(check.ok)} ready</Badge> {bad.length > 0 && <Badge tone="bad">{bad.length} with problems</Badge>}</p>
-      {bad.length > 0 && <table className="grid small"><thead><tr><th>Row</th><th>Sign-in</th><th>Problem</th></tr></thead><tbody>{bad.map((r) => <tr key={String(r.row)}><td>{String(r.row)}</td><td>{String(r.sam)}</td><td className="err">{(r.problems as string[]).join('; ')}</td></tr>)}</tbody></table>}
+      {bad.length > 0 && <table className="adtable small"><thead><tr><th>Row</th><th>Sign-in</th><th>Problem</th></tr></thead><tbody>{bad.map((r) => <tr key={String(r.row)}><td>{String(r.row)}</td><td>{String(r.sam)}</td><td className="err">{(r.problems as string[]).join('; ')}</td></tr>)}</tbody></table>}
       {out.length === 0 && Number(check.ok) > 0 && <div className="actions"><button className="primary" disabled={busy} onClick={() => void run()}>Create {String(check.ok)} account(s)</button>{bad.length > 0 && <span className="muted small">Rows with problems are skipped.</span>}</div>}
     </>}
     {out.length > 0 && <>
@@ -106,7 +106,7 @@ export function BulkModify({ domain }: { domain: Rec }) {
     {rows.length > 0 && !check && <div className="actions"><button className="primary" disabled={busy} onClick={() => void doCheck()}>{busy ? 'Checking…' : `Check ${rows.length} row(s)`}</button></div>}
     {check && <>
       <p><Badge tone="ok">{String(check.ok)} found</Badge> {bad.length > 0 && <Badge tone="bad">{bad.length} with problems</Badge>}</p>
-      {bad.length > 0 && <table className="grid small"><tbody>{bad.map((r) => <tr key={String(r.row)}><td>Row {String(r.row)}</td><td>{String(r.sam)}</td><td className="err">{(r.problems as string[]).join('; ')}</td></tr>)}</tbody></table>}
+      {bad.length > 0 && <table className="adtable small"><tbody>{bad.map((r) => <tr key={String(r.row)}><td>Row {String(r.row)}</td><td>{String(r.sam)}</td><td className="err">{(r.problems as string[]).join('; ')}</td></tr>)}</tbody></table>}
       {out.length === 0 && Number(check.ok) > 0 && <div className="actions"><button className="primary" disabled={busy} onClick={() => void run()}>Change {String(check.ok)} account(s)</button></div>}
     </>}
     {out.length > 0 && <p>{busy ? 'Changing… ' : 'Finished: '}{out.filter((o) => o.ok).length} changed, {out.filter((o) => !o.ok).length} failed.</p>}

@@ -42,7 +42,7 @@ export function Templates({ domain }: { domain: Rec }) {
   return <Card title="User templates">
     <p className="muted">A template fills the new-user form: where the account goes, its groups, default fields, how names are made and the account options.</p>
     <div className="actions"><button className="primary" onClick={() => setEdit(null)}>New template</button></div>
-    {rows.length === 0 ? <Empty>No templates yet.</Empty> : <table className="grid"><thead><tr><th>Name</th><th>OU</th><th>Groups</th><th>Naming</th><th /></tr></thead><tbody>
+    {rows.length === 0 ? <Empty>No templates yet.</Empty> : <table className="adtable"><thead><tr><th>Name</th><th>OU</th><th>Groups</th><th>Naming</th><th /></tr></thead><tbody>
       {rows.map((t) => <tr key={t.id}><td><strong>{t.name}</strong><div className="muted small">{t.description}</div></td><td className="small">{t.ou ? ouPath(t.ou, domain.baseDn) : '–'}</td>
         <td className="small">{((t.groups ?? []) as string[]).map(rdn).join(', ') || '–'}</td><td className="small"><code>{String(t.naming?.sam ?? '{first}.{last}')}</code></td>
         <td className="actions"><button onClick={() => setEdit(t)}>Edit</button><Act label="Delete" danger confirm={`Delete the template ${t.name}?`} run={async () => { await api(`/api/adsuite/templates/${t.id}`, { method: 'DELETE' }); list.reload(); }} /></td></tr>)}</tbody></table>}
@@ -75,7 +75,7 @@ export function Automation({ domain }: { domain: Rec }) {
   return <Card title="Automation">
     <p className="muted">Clean-up that runs every day: disable accounts and computers nobody has used, and move disabled accounts out of the way.</p>
     <div className="actions"><button className="primary" onClick={() => setEdit(null)}>New policy</button></div>
-    {rows.length === 0 ? <Empty>No policies yet.</Empty> : <table className="grid"><thead><tr><th>Policy</th><th>Where</th><th>Status</th><th>Last run</th><th /></tr></thead><tbody>
+    {rows.length === 0 ? <Empty>No policies yet.</Empty> : <table className="adtable"><thead><tr><th>Policy</th><th>Where</th><th>Status</th><th>Last run</th><th /></tr></thead><tbody>
       {rows.map((p) => <tr key={p.id}><td><strong>{p.name}</strong><div className="muted small">{KINDS[p.kind]}{p.kind !== 'move-disabled-users' ? `, ${p.days} days` : ''}{p.moveTo ? ` → ${ouPath(p.moveTo, domain.baseDn)}` : ''}</div></td>
         <td className="small">{p.ou ? ouPath(p.ou, domain.baseDn) : 'Whole domain'}</td><td>{p.enabled ? <Badge tone="ok">Daily</Badge> : <Badge>Off</Badge>}</td>
         <td className="small">{p.lastRun ? fmtDate(p.lastRun) : '–'}<div className="muted">{p.lastResult}</div></td>
