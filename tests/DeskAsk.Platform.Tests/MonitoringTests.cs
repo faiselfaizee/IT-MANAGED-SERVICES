@@ -179,7 +179,7 @@ public class MonitoringTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync($"/api/monitoring/alerts/{memId}/ticket", Json(new { }))).StatusCode); // has one now
 
         // once every alert of the device is acknowledged, the device counts as Ok (the alerts stay open and acknowledged until they clear)
-        foreach (var other in open.Where(x => x.GetProperty("id").GetInt64() != memId)) Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/monitoring/alerts/{other.GetProperty("id").GetInt64()}/ack", Json(new { }))).StatusCode);
+        foreach (var rest in open.Where(x => x.GetProperty("id").GetInt64() != memId)) Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/monitoring/alerts/{rest.GetProperty("id").GetInt64()}/ack", Json(new { }))).StatusCode);
         var handled = (await J(await api.GetAsync($"/api/monitoring/devices/{asset}"))).GetProperty("device");
         Assert.Equal("ok", handled.GetProperty("status").GetString()); Assert.Equal(open.Count, handled.GetProperty("acknowledged").GetInt32()); Assert.Equal(0, handled.GetProperty("alerts").GetInt32());
         Assert.Equal(open.Count, (await J(await api.GetAsync("/api/monitoring/alerts"))).GetProperty("total").GetInt64());
