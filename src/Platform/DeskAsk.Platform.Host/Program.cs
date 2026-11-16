@@ -36,6 +36,15 @@ builder.Services.AddResponseCompression(o => o.MimeTypes = Microsoft.AspNetCore.
 
 var app = builder.Build();
 if (trustProxy) app.UseForwardedHeaders();
+// A proxy in front of IIS (HAProxy, nginx, a firewall) that ends https can say so with "X-Forwarded-Ssl: on" or "Front-End-Https: on".
+// IIS passes those on untouched, while its own rewrite rule may replace X-Forwarded-Proto with "http" because IIS itself was reached over http.
+if (trustProxy) app.Use((ctx, next) =>
+{
+    var h = ctx.Request.Headers;
+    if (!ctx.Request.IsHttps && (string.Equals(h["X-Forwarded-Ssl"], "on", StringComparison.OrdinalIgnoreCase) || string.Equals(h["Front-End-Https"], "on", StringComparison.OrdinalIgnoreCase)))
+        ctx.Request.Scheme = "https";
+    return next(ctx);
+});
 app.UseResponseCompression();
 app.UseTenancy();
 app.UseTenantSchemas();
