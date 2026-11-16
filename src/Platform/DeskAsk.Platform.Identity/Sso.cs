@@ -52,21 +52,22 @@ public static class SsoEndpoints
 {
     /// <summary>Tests replace the network (Microsoft's sign-in and Graph addresses) with a fake.</summary>
     public static HttpMessageHandler? TestHandler { get; set; }
-    static HttpClient Client() => TestHandler != null ? new HttpClient(TestHandler, false) : Shared;
+    internal static HttpClient Client() => TestHandler != null ? new HttpClient(TestHandler, false) : Shared;
     static readonly HttpClient Shared = new() { Timeout = TimeSpan.FromSeconds(20) };
     const string StateCookie = "dk.sso";
 
     static string Authority(IConfiguration c) => (c["Identity:EntraAuthority"] ?? "https://login.microsoftonline.com").TrimEnd('/');
     static string Graph(IConfiguration c) => (c["Identity:GraphUrl"] ?? "https://graph.microsoft.com").TrimEnd('/');
-    static string B64(byte[] b) => Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-    static byte[] UnB64(string s) { s = s.Replace('-', '+').Replace('_', '/'); return Convert.FromBase64String(s + new string('=', (4 - s.Length % 4) % 4)); }
+    internal static string B64(byte[] b) => Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    internal static byte[] UnB64(string s) { s = s.Replace('-', '+').Replace('_', '/'); return Convert.FromBase64String(s + new string('=', (4 - s.Length % 4) % 4)); }
     static string Callback(HttpContext h) => $"{h.Request.Scheme}://{h.Request.Host}/account/sso/microsoft/callback";
 
     public static async Task<bool> EnabledAsync(HttpContext h) =>
         (await EntraConfig.LoadAsync(h.RequestServices.GetRequiredService<ISettings>(), h.RequestServices.GetRequiredService<IDataProtectionProvider>(), h.RequestAborted)).Ready;
 
-    static IResult Error(string text, int status = 400) =>
-        Results.Content(IdentityModule.Html("<form><div class=\"m\"><i></i>DeskAsk</div><h2>Sign in with Microsoft</h2><p class=\"e\" role=\"alert\">" + System.Net.WebUtility.HtmlEncode(text) + "</p><a href=\"/account/login\">Back to sign in</a></form>"), "text/html; charset=utf-8", Encoding.UTF8, status);
+    static IResult Error(string text, int status = 400) => ErrorPage("Microsoft", text, status);
+    internal static IResult ErrorPage(string provider, string text, int status = 400) =>
+        Results.Content(IdentityModule.Html("<form><div class=\"m\"><i></i>DeskAsk</div><h2>Sign in with " + provider + "</h2><p class=\"e\" role=\"alert\">" + System.Net.WebUtility.HtmlEncode(text) + "</p><a href=\"/account/login\">Back to sign in</a></form>"), "text/html; charset=utf-8", Encoding.UTF8, status);
 
     /// <summary>A Microsoft access token for the directory (Graph), for importing users: the app's own permissions, no person involved.</summary>
     static async Task<(string? Token, string? Error)> GraphToken(EntraConfig c, IConfiguration cfg, CancellationToken ct)
@@ -83,7 +84,7 @@ public static class SsoEndpoints
         catch (JsonException) { return (null, "Microsoft answered something unexpected (" + (int)r.StatusCode + ")."); }
     }
 
-    static string Str(JsonElement e, string n) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
+    internal static string Str(JsonElement e, string n) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
 
     public static void Map(IEndpointRouteBuilder r)
     {

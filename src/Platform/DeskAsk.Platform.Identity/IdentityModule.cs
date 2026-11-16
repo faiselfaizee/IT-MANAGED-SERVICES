@@ -130,6 +130,7 @@ public sealed class IdentityModule : IPlatformModule
         r.MapPost("/account/login", LoginPost).AllowAnonymous();
         TwoStepEndpoints.Map(r);
         SsoEndpoints.Map(r);
+        GoogleSso.Map(r);
         AdEndpoints.Map(r);
         UsersEndpoints.Map(r);
         r.MapPost("/api/platform/identity/keys/rotate", async (ITenantContext t, TenantKeys keys, IAuditLog audit, CancellationToken ct) =>
@@ -276,6 +277,7 @@ public sealed class IdentityModule : IPlatformModule
     static async Task<IResult> Page(HttpContext http, IAntiforgery af, string? returnUrl, string error = "", int status = 200)
     {
         var sso = await SsoEndpoints.EnabledAsync(http);
+        var google = await GoogleSso.EnabledAsync(http);
         var t = af.GetAndStoreTokens(http);
         var body = "<form method=\"post\" action=\"/account/login\"><div class=\"m\"><i></i>DeskAsk</div><h2>Sign in</h2>"
             + (error == "" ? "" : "<p class=\"e\" role=\"alert\">" + WebUtility.HtmlEncode(error) + "</p>")
@@ -284,7 +286,9 @@ public sealed class IdentityModule : IPlatformModule
             + "<input name=\"email\" type=\"email\" placeholder=\"Email\" autocomplete=\"username\" required>"
             + "<input name=\"password\" type=\"password\" placeholder=\"Password\" autocomplete=\"current-password\" required>"
             + "<button type=\"submit\">Sign in</button>"
-            + (sso ? "<p class=\"m\" style=\"margin:14px 0 0;justify-content:center\">or</p><a class=\"sso\" href=\"/account/sso/microsoft?returnUrl=" + Uri.EscapeDataString(LocalOrRoot(returnUrl)) + "\">Sign in with Microsoft</a>" : "")
+            + (sso || google ? "<p class=\"m\" style=\"margin:14px 0 0;justify-content:center\">or</p>" : "")
+            + (sso ? "<a class=\"sso\" href=\"/account/sso/microsoft?returnUrl=" + Uri.EscapeDataString(LocalOrRoot(returnUrl)) + "\">Sign in with Microsoft</a>" : "")
+            + (google ? "<a class=\"sso\" style=\"margin-top:8px\" href=\"/account/sso/google?returnUrl=" + Uri.EscapeDataString(LocalOrRoot(returnUrl)) + "\">Sign in with Google</a>" : "")
             + "</form>";
         return Results.Content(Html(body), "text/html; charset=utf-8", Encoding.UTF8, status);
     }

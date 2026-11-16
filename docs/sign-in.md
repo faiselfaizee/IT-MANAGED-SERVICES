@@ -29,3 +29,24 @@ Users › **Active Directory…**
 - **Sign-in:** people imported from AD sign in on the normal page with their email and **AD password**; DeskAsk checks it against the controller each time and never stores it. The DeskAsk two-step code still applies if they turned it on. Disabled or locked AD accounts are refused by the controller. Switching "sign in with AD password" off stops it at once.
 
 Planned: Google Workspace.
+
+
+## Google Workspace
+
+Users › **Google sign-in…** (administrators).
+
+1. In Google Cloud console › APIs & Services › Credentials, create an **OAuth client** of type *Web application* and add the redirect address shown in DeskAsk (`https://<your DeskAsk>/account/sso/google/callback`). Make the OAuth consent screen *Internal* so only your Workspace can use it.
+2. Enter the client id and secret, and the **Workspace domains** allowed to sign in (for example `acme.com`). With domains set, only accounts managed by them come in: a personal Gmail account is refused even if its address matches a DeskAsk user. With one domain, Google's account chooser is limited to it.
+3. Optionally let people of those domains get an account at their first sign-in, with a role (never administrator).
+4. Tick *Show "Sign in with Google"*.
+
+People are matched by their Google account (stored as `google:<id>`) or their email. Google's sign-in, including its 2-step verification, replaces DeskAsk's two-step code for them. An account already linked to Microsoft or Active Directory keeps that link and can also sign in with Google by its email.
+
+### Importing from the Workspace directory
+
+1. In the same Google Cloud project, turn on the **Admin SDK API**, create a **service account** and download a JSON key.
+2. In the Google Admin console › Security › API controls › **Domain-wide delegation**, add the service account's client id with the scope `https://www.googleapis.com/auth/admin.directory.user.readonly`.
+3. In DeskAsk choose the key file and enter the Workspace administrator the service account acts as, then **Save and test import**.
+4. Users › **Import from Google**: choose people and a role. People who already have an account (by email) are linked instead.
+
+The client secret and the service account key are kept encrypted; the key is never shown again (only the service account's email).

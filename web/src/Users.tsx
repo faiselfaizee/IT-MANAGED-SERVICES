@@ -10,12 +10,13 @@ const roleName = (r: string) => ROLES.find(([k]) => k === r)?.[1] ?? r;
 
 export default function Users({ meId, embedded = false }: { meId?: string; embedded?: boolean }) {
   const { data, error, loading, reload } = useLoad<Rec[]>('/api/platform/users');
-  const [form, setForm] = useState<Rec | null>(null); const [pw, setPw] = useState<Rec | null>(null); const [sso, setSso] = useState<'' | 'settings' | 'import' | 'adsettings' | 'adimport'>('');
+  const [form, setForm] = useState<Rec | null>(null); const [pw, setPw] = useState<Rec | null>(null); const [sso, setSso] = useState<'' | 'settings' | 'import' | 'adsettings' | 'adimport' | 'gsettings' | 'gimport'>('');
   const list = Array.isArray(data) ? data : [];
   return <>
     {embedded ? null : <h1>Users</h1>}
     <div className="tools"><button className="primary" onClick={() => setForm({ email: '', name: '', role: 'engineer', password: '' })}>Add user</button>
       <button onClick={() => setSso('import')}>Import from Microsoft</button><button onClick={() => setSso('settings')}>Microsoft sign-in…</button>
+      <button onClick={() => setSso('gimport')}>Import from Google</button><button onClick={() => setSso('gsettings')}>Google sign-in…</button>
       <button onClick={() => setSso('adimport')}>Import from Active Directory</button><button onClick={() => setSso('adsettings')}>Active Directory…</button>
       <span className="muted">Staff sign in as administrator, engineer or viewer. Customer users see only their own company's tickets.</span></div>
     <Loading loading={loading && !data} error={error} />
@@ -35,6 +36,8 @@ export default function Users({ meId, embedded = false }: { meId?: string; embed
     {sso === 'settings' && <SsoSettings onClose={() => setSso('')} />}
     {sso === 'import' && <ImportEntra onClose={(ch) => { setSso(''); if (ch) reload(); }} />}
     {sso === 'adsettings' && <AdSettings onClose={() => setSso('')} />}
+    {sso === 'gsettings' && <GoogleSettings onClose={() => setSso('')} />}
+    {sso === 'gimport' && <ImportEntra base="/api/platform/sso/google" title="Import from Google Workspace" onClose={(ch) => { setSso(''); if (ch) reload(); }} />}
     {sso === 'adimport' && <ImportEntra base="/api/platform/ad" title="Import from Active Directory" onClose={(ch) => { setSso(''); if (ch) reload(); }} />}
   </>;
 }
@@ -99,6 +102,37 @@ function SsoForm({ init, onClose }: { init: Rec; onClose: () => void }) {
     {note && <p className="note" role="status">{note}</p>}
     <Err text={f.err} /><div className="actions"><button onClick={onClose}>Cancel</button>
       <button disabled={f.busy} onClick={() => f.submit(async () => { await save(); const r = await api<Rec>('/api/platform/sso/test', { method: 'POST', body: {} }).then(() => 'The app can read the directory.', (e) => (e as Error).message); setNote(r); throw new Error(''); })}>Save and test</button>
+      <button className="primary" disabled={f.busy} onClick={() => f.submit(save)}>Save</button></div>
+  </div></Modal>;
+}
+
+function GoogleSettings({ onClose }: { onClose: () => void }) {
+  const { data } = useLoad<Rec>('/api/platform/sso/google');
+  if (!data) return <Modal title="Sign in with Google" onClose={onClose}><Loading loading error="" /></Modal>;
+  return <GoogleForm init={data} onClose={onClose} />;
+}
+function GoogleForm({ init, onClose }: { init: Rec; onClose: () => void }) {
+  const [v, setV] = useState<Rec>({ enabled: init.enabled, clientId: init.clientId, secret: '', domains: init.domains, autoCreate: init.autoCreate, defaultRole: init.defaultRole, serviceAccount: '', adminEmail: init.adminEmail });
+  const [note, setNote] = useState(''); const f = useSubmit(() => onClose()); const set = (k: string, x: unknown) => setV({ ...v, [k]: x });
+  const save = () => api('/api/platform/sso/google', { method: 'PUT', body: { ...v, secret: v.secret || undefined, serviceAccount: v.serviceAccount || undefined } });
+  const readFile = (file?: File) => { if (file) void file.text().then((t) => set('serviceAccount', t)); };
+  return <Modal title="Sign in with Google" onClose={onClose}><div className="form">
+    <p className="muted small">In Google Cloud console (APIs &amp; Services › Credentials) create an OAuth client of type Web application and add the redirect address below. The OAuth consent screen can be Internal, so only your Workspace can use it.</p>
+    <Field label="Redirect address to register"><input value={init.redirectUri} readOnly onFocus={(e) => e.target.select()} /></Field>
+    <Field label="Client id"><input value={v.clientId} onChange={(e) => set('clientId', e.target.value)} spellCheck={false} placeholder="1234-abc.apps.googleusercontent.com" /></Field>
+    <Field label={init.hasSecret ? 'Client secret (saved; type a new one to replace it)' : 'Client secret'}><input type="password" value={v.secret} onChange={(e) => set('secret', e.target.value)} autoComplete="new-password" /></Field>
+    <Field label="Workspace domains allowed to sign in (blank: any Google account that already has a DeskAsk account)"><input value={v.domains} onChange={(e) => set('domains', e.target.value)} placeholder="acme.com, acme.in" /></Field>
+    <label><input type="checkbox" checked={v.autoCreate} onChange={(e) => set('autoCreate', e.target.checked)} /> Create an account at first sign-in for people of these domains who have none</label>
+    {v.autoCreate && <Field label="Role of new people"><select value={v.defaultRole} onChange={(e) => set('defaultRole', e.target.value)}>{ROLES.filter(([k]) => k !== 'admin').map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>}
+    <h3 style={{ margin: '6px 0 0', fontSize: 14 }}>Importing users (optional)</h3>
+    <p className="muted small">Create a service account in the same project, turn on the Admin SDK API, and download a JSON key. In the Google Admin console (Security › API controls › Domain-wide delegation) add the service account's client id with the scope <code>https://www.googleapis.com/auth/admin.directory.user.readonly</code>.</p>
+    <Field label={init.serviceAccount ? `Service account key (saved: ${init.serviceAccount}; choose a new file to replace it)` : 'Service account key (JSON file)'}><input type="file" accept=".json,application/json" onChange={(e) => readFile(e.target.files?.[0])} /></Field>
+    <Field label="Workspace administrator it acts as"><input value={v.adminEmail} onChange={(e) => set('adminEmail', e.target.value)} placeholder="admin@acme.com" /></Field>
+    <label><input type="checkbox" checked={v.enabled} onChange={(e) => set('enabled', e.target.checked)} /> Show "Sign in with Google" on the sign-in page</label>
+    <p className="muted small">People are matched by their Google account or email. Google's sign-in, including its 2-step verification, replaces DeskAsk's two-step code for them. A personal Gmail address is refused when domains are set.</p>
+    {note && <p className="note" role="status">{note}</p>}
+    <Err text={f.err} /><div className="actions"><button onClick={onClose}>Cancel</button>
+      <button disabled={f.busy} onClick={() => f.submit(async () => { await save(); const r = await api<Rec>('/api/platform/sso/google/test', { method: 'POST', body: {} }).then(() => 'The service account can read the Workspace directory.', (e) => (e as Error).message); setNote(r); throw new Error(''); })}>Save and test import</button>
       <button className="primary" disabled={f.busy} onClick={() => f.submit(save)}>Save</button></div>
   </div></Modal>;
 }

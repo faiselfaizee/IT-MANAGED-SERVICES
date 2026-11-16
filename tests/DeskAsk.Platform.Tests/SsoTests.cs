@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Npgsql;
 using Xunit;
 
+[Collection("sso")]
 public class SsoTests : IClassFixture<WebApplicationFactory<Program>>
 {
     static readonly string Pg = Environment.GetEnvironmentVariable("TEST_PG_CONNECTION") ?? "";
