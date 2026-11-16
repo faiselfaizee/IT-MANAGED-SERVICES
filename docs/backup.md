@@ -1,6 +1,6 @@
 # Backup
 
-Backup watches the backup software your customers already run. It only reads results; it never starts, stops or changes a backup. (Backups made by DeskAsk itself come in a later version.)
+Backup does two things: it watches the backup software your customers already run (it only reads their results), and since 5.2 the DeskAsk agent makes file backups itself (see File backups below).
 
 ## Where results come from
 
@@ -58,3 +58,27 @@ Under **Backup › Alerts**: recipients (everyone, plus a customer's own list), 
 ## Access
 
 Staff and viewers see every customer, engineers change and delete jobs, customer administrators see their own customer; settings, senders and keys are for administrators. Backup is in the Users › Permissions grants list.
+
+## File backups (agent 5.2 and later)
+
+Under **Backup › File backups** an administrator makes a plan for a device with the agent: the folders, what to leave out, when (daily from an hour of the device's clock, every 1 to 12 hours, weekly, or only when asked), how long backups are kept (the last N, plus every backup of the last D days) and where they go:
+
+| Where | What to give |
+|---|---|
+| Folder or USB disk | a folder on the device (`D:\Backups`, `E:\`) |
+| SMB share | `\\server\share\folder`, and an account (domain\user) or nothing for the computer's own account. The agent signs in to the share without a drive letter. |
+| S3-compatible storage | endpoint (empty for Amazon S3), region, bucket, optional folder, access key and secret key; "bucket in the path" for MinIO. Works with Wasabi, Backblaze B2, MinIO, Synology C2, Cloudflare R2. |
+| Azure Blob | a container SAS address allowing read, add, create, write, delete and list, and an optional folder. |
+
+How a backup is made:
+
+- Files are cut into pieces of about 1 MB where the content says, so a change in a large file stores only the changed pieces; a file whose size and change time are the same as last time is not read at all.
+- Every piece and every list of files (a snapshot) is compressed and encrypted with AES-256-GCM. Piece names are keyed hashes, so the storage learns nothing about the content.
+- On Windows, open files are read from a shadow copy of their drive (can be switched off); a file that still cannot be read is skipped and the run ends with a warning naming it.
+- Each plan has its own folder in the storage (`deskask-plan-<id>`) and its own password, made by DeskAsk and sealed on the server. An administrator can show it on the plan (recorded in the audit log), so backups can be opened without this server.
+- After each run, backups outside the retention are removed, then pieces no remaining backup needs.
+- Results appear as the job *DeskAsk file backup* with the usual statuses and alerts.
+
+**Back up now** (engineers and administrators) asks the agent at once. **Restore** on a backup puts chosen files or folders (or everything) into a folder on the device, keeping the original folders under it (`C:\DeskAsk-Restore\C\Users\...`), or back where they were when that is ticked. The agent reports the result under Restores.
+
+The agent keeps its plans in `backup-plans.json` beside `agent.json` (same protection), so scheduled backups also run while the server cannot be reached.

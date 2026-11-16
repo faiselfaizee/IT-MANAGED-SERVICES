@@ -289,6 +289,8 @@ public interface IDeviceActions
     /// fetches it once. Returns a handle for <see cref="PasswordChangeAsync"/>, or null when the device has no agent or the wrong system.
     /// </summary>
     Task<string?> SetPasswordAsync(long assetId, string account, string target, string password, string by, CancellationToken ct = default);
+    /// <summary>Wakes the device's agent with a short order (type and id), for example "backuprun" with a plan id. False when the device has no working agent.</summary>
+    Task<bool> NotifyAgentAsync(long assetId, string type, string id, CancellationToken ct = default);
     /// <summary>Where a password change stands: queued (not fetched yet), fetched (the agent has it), done or failed.</summary>
     Task<PasswordChange?> PasswordChangeAsync(string handle, CancellationToken ct = default);
     /// <summary>Withdraws a password change the agent has not fetched yet. True when it was withdrawn.</summary>
@@ -339,6 +341,15 @@ public interface IBackupReports
 {
     /// <summary>Stores what an agent found: the backup tools installed and their finished runs. Returns how many runs were new.</summary>
     Task<int> FromAgentAsync(long assetId, IReadOnlyList<string> tools, IReadOnlyList<BackupReport> reports, CancellationToken ct = default);
+}
+
+/// <summary>
+/// The file backup side of agents: plans, snapshots and restores (implemented by the Backup module). The Assets module checks the agent and
+/// passes on GET and POST /agent/v1/backup/{action}; the answer is a status code and a body to send back as JSON.
+/// </summary>
+public interface IBackupAgent
+{
+    Task<(int Status, object? Body)> HandleAsync(long assetId, string method, string action, string id, System.Text.Json.JsonElement body, CancellationToken ct = default);
 }
 
 /// <summary>

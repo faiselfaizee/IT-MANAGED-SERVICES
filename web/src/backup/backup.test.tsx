@@ -57,3 +57,17 @@ test('with no results yet the home explains how to connect', async () => {
   expect(screen.getByText(/found backup software on 3 devices/)).toBeTruthy();
   expect(screen.queryByText('Alerts')).toBeNull();   // set-up pages are for administrators
 });
+
+test('a file backup plan shows its backups, and a restore goes to a folder unless replacing is ticked', async () => {
+  const plan = { id: 3, assetId: 4, assetName: 'PC-PAT', name: 'Documents', paths: ['C:\\Users'], excludes: [], everyHours: 24, atHour: 22, keepLast: 30, keepDays: 30, useVss: true, enabled: true,
+    storageKind: 'smb', storageWhere: '\\\\nas01\\backup', snapshots: 1, status: 'success', jobId: 9 };
+  const calls = mock({ '/api/backup/plans/3': { plan, snapshots: [{ id: 'S1', at: new Date().toISOString(), files: 120, bytes: 5000, newBytes: 100, warnings: 0 }], restores: [], storageEdit: { kind: 'smb', path: '\\\\nas01\\backup', user: '' } },
+    '/api/platform/me': { role: 'admin' } });
+  location.hash = '#/backup/plan/3'; render(<BackupApp />);
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Documents' })).toBeTruthy());
+  expect(screen.getByText('Daily at 22:00')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Restore' }));
+  const buttons = screen.getAllByRole('button', { name: 'Restore' });
+  fireEvent.click(buttons[buttons.length - 1]);   // the dialog's (it is drawn last, at page level)
+  await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === '/api/backup/plans/3/restore' && JSON.parse(c.body).target === 'C:\\DeskAsk-Restore' && JSON.parse(c.body).snapshot === 'S1')).toBe(true));
+});

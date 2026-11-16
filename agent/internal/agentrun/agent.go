@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -103,10 +104,11 @@ type Runner struct {
 	cancels    map[string]context.CancelFunc
 	collectNow chan struct{}
 	rdBusy     bool // a remote-control set-up or removal is running
+	fb         *fileBackups
 }
 
 func NewRunner(cfg config.Agent, version string) *Runner {
-	return &Runner{Cfg: cfg, Version: version, Exit: os.Exit, RestartSoon: svc.Agent.RestartSoon, cancels: map[string]context.CancelFunc{}, collectNow: make(chan struct{}, 1),
+	return &Runner{Cfg: cfg, Version: version, Exit: os.Exit, RestartSoon: svc.Agent.RestartSoon, cancels: map[string]context.CancelFunc{}, collectNow: make(chan struct{}, 1), fb: newFileBackups(),
 		cl: &client.Client{Server: cfg.Server, IDHeader: "X-Agent-Id", ID: cfg.AgentID, Key: cfg.Key}}
 }
 
@@ -123,6 +125,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	go r.inventoryLoop(ctx)
 	go r.metricsLoop(ctx)
 	go r.backupLoop(ctx)
+	go r.fileBackupLoop(ctx)
 	failures := 0
 	for ctx.Err() == nil {
 		var out struct {
@@ -184,6 +187,17 @@ func (r *Runner) handle(ctx context.Context, m message) {
 		go r.rdRemove(ctx, defaultRdEnv())
 	case "setpw":
 		go r.setPassword(ctx, m.ID)
+	case "backupsync":
+		select {
+		case r.fb.sync <- struct{}{}:
+		default:
+		}
+	case "backuprun":
+		if id, err := strconv.ParseInt(m.ID, 10, 64); err == nil {
+			r.fb.runNow <- id
+		}
+	case "backuprestore":
+		r.fb.restore <- m.ID
 	case "uninstall":
 		log.Printf("the platform asked this agent to uninstall")
 		config.Remove(ConfigFile)

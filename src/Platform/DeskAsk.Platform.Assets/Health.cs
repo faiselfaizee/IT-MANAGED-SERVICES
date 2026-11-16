@@ -47,6 +47,19 @@ public sealed class DeviceHealth : IDeviceHealth
             var stored = await sink.FromAgentAsync(ag.Value.AssetId, tools, reports, ct);
             return Results.Ok(new { stored, every = 900 });
         });
+        // file backups made by the agent: its plans, the snapshots it made, the restores it was asked for
+        async Task<IResult> BackupAgent(string action, HttpContext http, ITenantContext t, IEntitlements ent, JsonElement body, CancellationToken ct)
+        {
+            await using var db = await AgentsApi.Open(t, ct);
+            var ag = await AgentsApi.AuthAgent(http, db, ct); if (ag == null) return Results.Json(new { error = "agent_auth" }, statusCode: 401);
+            var h = http.RequestServices.GetService<IBackupAgent>();
+            if (ag.Value.AssetId == 0 || h == null || !(await ent.CurrentAsync(ct)).Has(Modules.Backup)) return Results.NotFound(new { error = "no_backup" });
+            var (status, res) = await h.HandleAsync(ag.Value.AssetId, http.Request.Method, action, http.Request.Query["id"].ToString(), body, ct);
+            http.Response.Headers.CacheControl = "no-store";
+            return Results.Json(res ?? new { }, statusCode: status);
+        }
+        r.MapGet("/agent/v1/backup/{action}", (string action, HttpContext http, ITenantContext t, IEntitlements ent, CancellationToken ct) => BackupAgent(action, http, t, ent, default, ct));
+        r.MapPost("/agent/v1/backup/{action}", (string action, JsonElement b, HttpContext http, ITenantContext t, IEntitlements ent, CancellationToken ct) => BackupAgent(action, http, t, ent, b, ct));
         r.MapPost("/agent/v1/metrics", async (JsonElement b, HttpContext http, ITenantContext t, IConfiguration cfg, CancellationToken ct) =>
         {
             await using var db = await AgentsApi.Open(t, ct);
@@ -397,6 +410,21 @@ public sealed class DeviceActions : IDeviceActions
 {
     readonly ITenantContext tenant; readonly AgentHub hub; readonly IAuditLog audit; readonly IConfiguration cfg;
     public DeviceActions(ITenantContext t, AgentHub h, IAuditLog a, IConfiguration c) { tenant = t; hub = h; audit = a; cfg = c; }
+
+    public async Task<bool> NotifyAgentAsync(long assetId, string type, string id, CancellationToken ct = default)
+    {
+        if (type is not ("backupsync" or "backuprun" or "backuprestore")) return false;
+        await using var db = new NpgsqlConnection(tenant.Require().ConnectionString); await db.OpenAsync(ct);
+        string agent;
+        await using (var c = new NpgsqlCommand("select g.id from assets.assets a join assets.agents g on g.id = a.agent_id and g.deleted_at is null and g.uninstall_at is null where a.id = @a", db))
+        {
+            AgentsApi.P(c, "a", assetId);
+            if (await c.ExecuteScalarAsync(ct) is not string g) return false;
+            agent = g;
+        }
+        await AgentsApi.Enqueue(db, hub, tenant, agent, type, new { id }, ct);
+        return true;
+    }
 
     public async Task<string?> SetPasswordAsync(long assetId, string account, string target, string password, string by, CancellationToken ct = default)
     {

@@ -24,11 +24,12 @@ public sealed class BackupModule : IPlatformModule
         s.AddSingleton<ITenantSchema, BackupSchema>();
         s.AddScoped<IBackupReports, BackupStore>();
         s.AddScoped<IInboundMailFilter, BackupMailFilter>();
+        s.AddScoped<IBackupAgent, BackupAgentHandler>();
         s.AddSingleton<IJobHandler, BackupCheckJob>();
         s.AddSingleton(new RecurringJob("backup.check", BackupCheckJob.JobType, TimeSpan.FromMinutes(5)));
     }
 
-    public void MapEndpoints(IEndpointRouteBuilder r) => BackupApi.Map(r, Key);
+    public void MapEndpoints(IEndpointRouteBuilder r) { BackupApi.Map(r, Key); PlansApi.Map(r, Key); }
 
     internal static IResult Bad(string error, string? detail = null) => Results.BadRequest(new { error, detail });
     internal static async Task<NpgsqlConnection> Open(ITenantContext t, CancellationToken ct) { var db = new NpgsqlConnection(t.Require().ConnectionString); await db.OpenAsync(ct); return db; }
@@ -36,10 +37,10 @@ public sealed class BackupModule : IPlatformModule
     internal static string Clip(string? s, int max) { s ??= ""; s = s.Trim(); return s.Length <= max ? s : s[..max]; }
     internal static string Actor(System.Security.Claims.ClaimsPrincipal u) => u.FindFirst("email")?.Value ?? u.FindFirst("name")?.Value ?? u.FindFirst("sub")?.Value ?? "unknown";
 
-    public static readonly string[] Tools = { "veeam", "wsb", "mars", "mabs", "synology", "qnap", "acronis", "azure", "macrium", "other" };
+    public static readonly string[] Tools = { "deskask", "veeam", "wsb", "mars", "mabs", "synology", "qnap", "acronis", "azure", "macrium", "other" };
     public static readonly Dictionary<string, string> ToolNames = new()
     {
-        ["veeam"] = "Veeam", ["wsb"] = "Windows Server Backup", ["mars"] = "Azure Recovery Services agent (MARS)", ["mabs"] = "Azure Backup Server (MABS/DPM)",
+        ["deskask"] = "DeskAsk file backup", ["veeam"] = "Veeam", ["wsb"] = "Windows Server Backup", ["mars"] = "Azure Recovery Services agent (MARS)", ["mabs"] = "Azure Backup Server (MABS/DPM)",
         ["synology"] = "Synology", ["qnap"] = "QNAP", ["acronis"] = "Acronis", ["azure"] = "Microsoft Azure Backup", ["macrium"] = "Macrium", ["other"] = "Other",
     };
     internal static string Tool(string? t) { t = (t ?? "").Trim().ToLowerInvariant(); return Tools.Contains(t) ? t : "other"; }
@@ -94,6 +95,27 @@ public sealed class BackupSchema : ITenantSchema
             create table if not exists backup.keys (
               id serial primary key, name text not null, company_id int, hash text not null unique, prefix text not null,
               created_at timestamptz not null default now(), last_used timestamptz);"),
+        new(2, "file backup plans made by the agent, their snapshots and restores", @"
+            create table if not exists backup.plans (
+              id bigserial primary key, company_id int, asset_id bigint not null, asset_name text not null default '',
+              name text not null, paths text[] not null, excludes text[] not null default '{}',
+              every_hours int not null default 24 check (every_hours between 0 and 744), at_hour int not null default 22 check (at_hour between -1 and 23),
+              keep_last int not null default 30 check (keep_last between 1 and 1000), keep_days int not null default 30 check (keep_days between 0 and 3650),
+              use_vss boolean not null default true, enabled boolean not null default true,
+              storage_kind text not null check (storage_kind in ('local','smb','s3','azure')), storage_where text not null default '',
+              storage_sealed text not null, password_sealed text not null,
+              created_by text not null default '', created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+            create index if not exists plans_asset on backup.plans (asset_id);
+            create table if not exists backup.snapshots (
+              plan_id bigint not null references backup.plans(id) on delete cascade, id text not null, at timestamptz not null,
+              files int not null default 0, bytes bigint not null default 0, new_bytes bigint not null default 0, warnings int not null default 0,
+              primary key (plan_id, id));
+            create table if not exists backup.restores (
+              id bigserial primary key, plan_id bigint not null references backup.plans(id) on delete cascade, snapshot_id text not null,
+              include text[] not null default '{}', target text not null default '',
+              state text not null default 'queued' check (state in ('queued','running','done','failed')),
+              message text not null default '', files int not null default 0, bytes bigint not null default 0,
+              by_name text not null default '', created_at timestamptz not null default now(), done_at timestamptz);"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) => SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
 }

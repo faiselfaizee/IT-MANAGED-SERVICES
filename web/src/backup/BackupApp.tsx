@@ -3,10 +3,11 @@ import { api, useHash, useInterval, useLoad, type Rec } from '../http';
 import { ago, Act, Copy, Empty, Err, fmtBytes, fmtDate, Loading, Modal, useSubmit } from '../ui';
 import { CountUp, MiniRing, Ring, type Part } from '../Rings';
 import { BarList } from '../monitoring/Dashboard';
+import { Plans, PlanPage } from './Plans';
 
 const n = (v: unknown) => Number(v ?? 0);
 export const TOOLS: Record<string, string> = {
-  veeam: 'Veeam', wsb: 'Windows Server Backup', mars: 'Azure Recovery Services agent (MARS)', mabs: 'Azure Backup Server (MABS/DPM)',
+  deskask: 'DeskAsk file backup', veeam: 'Veeam', wsb: 'Windows Server Backup', mars: 'Azure Recovery Services agent (MARS)', mabs: 'Azure Backup Server (MABS/DPM)',
   synology: 'Synology', qnap: 'QNAP', acronis: 'Acronis', azure: 'Microsoft Azure Backup', macrium: 'Macrium', other: 'Other',
 };
 const STATUS: Record<string, [string, string]> = {
@@ -34,7 +35,7 @@ export function StatusBadge({ s }: { s: string }) {
 }
 
 const MENU: { group: string; items: { key: string; label: string; admin?: boolean }[] }[] = [
-  { group: '', items: [{ key: '', label: 'Dashboard' }, { key: 'jobs', label: 'Backup jobs' }, { key: 'devices', label: 'Devices with backup software' }] },
+  { group: '', items: [{ key: '', label: 'Dashboard' }, { key: 'jobs', label: 'Backup jobs' }, { key: 'plans', label: 'File backups' }, { key: 'devices', label: 'Devices with backup software' }] },
   { group: 'Set-up', items: [{ key: 'settings', label: 'Alerts', admin: true }, { key: 'senders', label: 'Report mails', admin: true }, { key: 'keys', label: 'Report address', admin: true }, { key: 'connect', label: 'How to connect' }] },
 ];
 
@@ -44,13 +45,15 @@ export default function BackupApp() {
   const me = useLoad<Rec>('/api/platform/me');
   const role = String(me.data?.role ?? '');
   const admin = role === 'admin'; const canEdit = admin || role === 'engineer';
-  const section = a === 'customer' ? '' : a === 'job' ? 'jobs' : a ?? '';
+  const section = a === 'customer' ? '' : a === 'job' ? 'jobs' : a === 'plan' ? 'plans' : a ?? '';
   let page;
   switch (a) {
     case 'customer': page = <CustomerDash key={b} id={b ?? 'all'} />; break;
     case 'jobs': page = <Jobs key={location.hash} />; break;
     case 'job': page = <JobPage key={b} id={b ?? ''} canEdit={canEdit} />; break;
     case 'devices': page = <Devices />; break;
+    case 'plans': page = <Plans admin={admin} />; break;
+    case 'plan': page = <PlanPage key={b} id={b ?? ''} admin={admin} canRun={canEdit} />; break;
     case 'settings': page = admin ? <Settings /> : <Dashboard />; break;
     case 'senders': page = admin ? <Senders /> : <Dashboard />; break;
     case 'keys': page = admin ? <Keys /> : <Dashboard />; break;

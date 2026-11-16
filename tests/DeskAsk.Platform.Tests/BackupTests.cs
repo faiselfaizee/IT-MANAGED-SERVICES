@@ -203,4 +203,81 @@ public class BackupTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.Forbidden, (await viewer.GetAsync("/api/backup/settings")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.GetAsync("/api/backup/jobs")).StatusCode);
     }
+
+    [PgFact]
+    public async Task AFilePlanReachesItsAgentWithItsSecretsAndRestoresAreHandedOver()
+    {
+        var api = await TestSupport.AdminClient(factory);
+        await api.GetAsync("/api/backup/plans");
+        await Sql("truncate backup.plans, backup.snapshots, backup.restores restart identity cascade; delete from identity.users where \"Email\" like '%@bkp.test'");
+        var acme = (await J(await api.PostAsync("/api/assets/companies", Json(new { name = "Plan Acme " + Guid.NewGuid().ToString("N")[..6] })))).GetProperty("id").GetInt32();
+        var tok = (await J(await api.PostAsync("/api/assets/enrolments", Json(new { companyId = acme })))).GetProperty("token").GetString()!;
+        var agent = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var host = "PC-FB" + Guid.NewGuid().ToString("N")[..4].ToUpperInvariant();
+        var en = await J(await agent.PostAsync("/agent/v1/enroll", Json(new { token = tok, platform = "windows", version = "5.2.0", inventory = new { schema = 1, hostname = host, os_family = "windows", os_name = "Windows 11 Pro", serial_number = "SN-" + host } })));
+        agent.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", en.GetProperty("key").GetString()); agent.DefaultRequestHeaders.Add("X-Agent-Id", en.GetProperty("agentId").GetString());
+        var asset = long.Parse(en.GetProperty("assetId").GetString()!);
+        var agentId = en.GetProperty("agentId").GetString();
+
+        // checks: folders, storage
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync("/api/backup/plans", Json(new { name = "Docs", assetId = asset, paths = Array.Empty<string>(), storage = new { kind = "local", path = "E:\\" } }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync("/api/backup/plans", Json(new { name = "Docs", assetId = asset, paths = new[] { "C:\\Users" }, storage = new { kind = "smb", path = "nas\\backup" } }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync("/api/backup/plans", Json(new { name = "Docs", assetId = asset, paths = new[] { "C:\\Users" }, storage = new { kind = "s3", bucket = "acme-backup", accessKey = "AK" } }))).StatusCode);
+        var created = await api.PostAsync("/api/backup/plans", Json(new { name = "Documents", assetId = asset, paths = "C:\\Users\nD:\\Data", excludes = new[] { "*.iso" }, everyHours = 24, atHour = 21, keepLast = 14, keepDays = 30,
+            storage = new { kind = "smb", path = "\\\\nas01\\backup", user = "ACME\\svc-backup", password = "Sh4re-pass" } }));
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        var planId = (await J(created)).GetProperty("id").GetInt64();
+        Assert.DoesNotContain("Sh4re-pass", await Text("select storage_sealed || password_sealed from backup.plans"));
+        Assert.Equal(1, await Scalar($"select count(*) from assets.agent_q where agent_id = '{agentId}' and kind = 'backupsync'"));
+        var list = await J(await api.GetAsync("/api/backup/plans?asset=" + asset));
+        Assert.Equal("\\\\nas01\\backup", list[0].GetProperty("storageWhere").GetString());
+        Assert.DoesNotContain("Sh4re-pass", list.ToString());
+
+        // the agent gets its plan with the secrets and the backup password
+        var plans = await J(await agent.GetAsync("/agent/v1/backup/plans"));
+        var p0 = plans[0];
+        Assert.Equal(("Documents", 2, "Sh4re-pass", 21), (p0.GetProperty("name").GetString(), p0.GetProperty("paths").GetArrayLength(), p0.GetProperty("storage").GetProperty("password").GetString(), p0.GetProperty("atHour").GetInt32()));
+        var password = p0.GetProperty("password").GetString()!;
+        Assert.True(password.Length >= 30);
+
+        // changing the plan without the share password keeps it
+        Assert.Equal(HttpStatusCode.OK, (await api.PutAsync("/api/backup/plans/" + planId, Json(new { name = "Documents", paths = new[] { "C:\\Users" }, everyHours = 24, atHour = 22, keepLast = 14, keepDays = 30,
+            storage = new { kind = "smb", path = "\\\\nas01\\backup", user = "ACME\\svc-backup", password = "" } }))).StatusCode);
+        Assert.Equal("Sh4re-pass", (await J(await agent.GetAsync("/agent/v1/backup/plans")))[0].GetProperty("storage").GetProperty("password").GetString());
+
+        // a run and its snapshot; the job on the dashboard is the plan's
+        Assert.Equal(HttpStatusCode.OK, (await api.PostAsync($"/api/backup/plans/{planId}/run", null)).StatusCode);
+        Assert.Equal(1, await Scalar($"select count(*) from assets.agent_q where agent_id = '{agentId}' and kind = 'backuprun' and payload like '%\"{planId}\"%'"));
+        await agent.PostAsync("/agent/v1/backup", Json(new { tools = new[] { "deskask" }, reports = new[] { new { tool = "deskask", job = "Documents", ended = DateTime.UtcNow.ToString("o"), result = "success", message = "120 files", bytes = 1000, key = "deskask:S1" } } }));
+        Assert.Equal(HttpStatusCode.OK, (await agent.PostAsync("/agent/v1/backup/snapshot", Json(new { plan = planId, id = "20261116T210000.000000Z-aa", at = DateTime.UtcNow.ToString("o"), files = 120, bytes = 1000, newBytes = 600, warnings = 0, removed = Array.Empty<string>() }))).StatusCode);
+        var detail = await J(await api.GetAsync($"/api/backup/plans/{planId}"));
+        Assert.Equal(1, detail.GetProperty("snapshots").GetArrayLength());
+        Assert.Equal("success", detail.GetProperty("plan").GetProperty("status").GetString());
+
+        // a restore: refused without a target unless replacing is confirmed; the agent takes it once and reports
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync($"/api/backup/plans/{planId}/restore", Json(new { snapshot = "20261116T210000.000000Z-aa" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsync($"/api/backup/plans/{planId}/restore", Json(new { snapshot = "nope", target = "D:\\Restore" }))).StatusCode);
+        var rid = (await J(await api.PostAsync($"/api/backup/plans/{planId}/restore", Json(new { snapshot = "20261116T210000.000000Z-aa", include = "C:\\Users\\pat\\Documents", target = "D:\\Restore" })))).GetProperty("id").GetInt64();
+        var job = await J(await agent.GetAsync("/agent/v1/backup/restore?id=" + rid));
+        Assert.Equal(("D:\\Restore", "Sh4re-pass"), (job.GetProperty("target").GetString(), job.GetProperty("plan").GetProperty("storage").GetProperty("password").GetString()));
+        Assert.Equal(HttpStatusCode.NotFound, (await agent.GetAsync("/agent/v1/backup/restore?id=" + rid)).StatusCode);   // only once
+        await agent.PostAsync("/agent/v1/backup/restore?id=" + rid, Json(new { ok = true, message = "12 files restored", files = 12, bytes = 3000 }));
+        var restores = (await J(await api.GetAsync($"/api/backup/plans/{planId}"))).GetProperty("restores");
+        Assert.Equal(("done", 12), (restores[0].GetProperty("state").GetString(), restores[0].GetProperty("files").GetInt32()));
+
+        // the password is shown to an administrator and recorded; a viewer cannot see it, change plans or restore
+        var shown = await J(await api.PostAsync($"/api/backup/plans/{planId}/password", null));
+        Assert.Equal((password, "deskask-plan-" + planId), (shown.GetProperty("password").GetString(), shown.GetProperty("folder").GetString()));
+        Assert.Equal(1, await Scalar("select count(*) from core.audit where action = 'backup.password_shown' and target = 'Documents' and at > now() - interval '5 minutes'"));
+        Assert.Equal(HttpStatusCode.Created, (await api.PostAsync("/api/platform/users", Json(new { email = "view@bkp.test", name = "Viewer", role = "viewer", password = Pw }))).StatusCode);
+        var viewer = await TestSupport.ClientFor(factory, "view@bkp.test", Pw);
+        Assert.Equal(HttpStatusCode.OK, (await viewer.GetAsync("/api/backup/plans")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PostAsync($"/api/backup/plans/{planId}/password", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PostAsync($"/api/backup/plans/{planId}/restore", Json(new { snapshot = "20261116T210000.000000Z-aa", target = "D:\\X" }))).StatusCode);
+        // another agent never sees this plan
+        Assert.Equal(HttpStatusCode.Unauthorized, (await factory.CreateClient().GetAsync("/agent/v1/backup/plans")).StatusCode);
+
+        Assert.Equal(HttpStatusCode.OK, (await api.DeleteAsync($"/api/backup/plans/{planId}")).StatusCode);
+        Assert.Equal(0, (await J(await agent.GetAsync("/agent/v1/backup/plans"))).GetArrayLength());
+    }
 }
