@@ -18,6 +18,7 @@ public sealed class FakeController : IControllerRelay
     public readonly List<string> Log = new();
     public readonly Dictionary<string, string> Passwords = new(StringComparer.OrdinalIgnoreCase);
     public string LastConnPassword = "";
+    public string Pinned = "", UntrustedCert = "";   // a controller whose DC shows a certificate it does not trust
     public bool Down, Refuse;
 
     const string Base = "DC=acme,DC=test";
@@ -28,7 +29,7 @@ public sealed class FakeController : IControllerRelay
 
     public void Reset()
     {
-        Dir.Clear(); Log.Clear(); Passwords.Clear(); Down = Refuse = false;
+        Dir.Clear(); Log.Clear(); Passwords.Clear(); Down = Refuse = false; UntrustedCert = "";
         Dir[Base] = O(C("objectClass", "top", "domain", "domainDNS"), C("name", "acme"));
         Dir["OU=Staff," + Base] = O(C("objectClass", "top", "organizationalUnit"), C("name", "Staff"));
         Dir["OU=Sales,OU=Staff," + Base] = O(C("objectClass", "top", "organizationalUnit"), C("name", "Sales"));
@@ -69,6 +70,10 @@ public sealed class FakeController : IControllerRelay
         var p = JsonSerializer.SerializeToElement(payload);
         var conn = p.GetProperty("conn"); LastConnPassword = conn.GetProperty("password").GetString() ?? "";
         if (Refuse) return Task.FromResult(new RelayReply(false, null, Err("the domain controller dc01 refused the service account: bad password", 49), false));
+        Pinned = conn.TryGetProperty("certSha256", out var pin) ? pin.GetString() ?? "" : "";
+        if (UntrustedCert != "" && Pinned != UntrustedCert)
+            return Task.FromResult(new RelayReply(false, null, JsonSerializer.SerializeToElement(new { message = "The certificate of dc01:636 was issued by a certificate authority this controller does not trust.", code = -2, step = 0, tls = "untrusted",
+                cert = new { subject = "CN=dc01.acme.test", names = new[] { "dc01.acme.test" }, issuer = "CN=Acme Root", notAfter = "2027-01-01T00:00:00Z", sha256 = UntrustedCert } }), false));
         var results = new List<object>(); var step = 0;
         foreach (var op in p.GetProperty("ops").EnumerateArray())
         {
@@ -233,6 +238,19 @@ public class AdManagerTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.False(t2.GetProperty("ok").GetBoolean()); Assert.Contains("refused", t2.GetProperty("error").GetString()); Assert.Contains("password", t2.GetProperty("hint").GetString());
         Assert.Contains("refused", (await J(await admin.GetAsync("/api/adsuite/domains")))[0].GetProperty("lastError").GetString());
         Fake.Refuse = false;
+
+        // LDAPS on a certificate the controller does not trust: the reason and the certificate come back, and trusting it makes it work
+        Fake.UntrustedCert = new string('a', 64);
+        var t3 = await J(await admin.PostAsync($"/api/adsuite/domains/{dom}/test", Json(new { })));
+        Assert.False(t3.GetProperty("ok").GetBoolean()); Assert.Equal("untrusted", t3.GetProperty("tlsProblem").GetString());
+        Assert.Equal(Fake.UntrustedCert, t3.GetProperty("cert").GetProperty("sha256").GetString());
+        Assert.Equal(HttpStatusCode.Forbidden, (await eve.PostAsync($"/api/adsuite/domains/{dom}/trust", Json(new { sha256 = Fake.UntrustedCert }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync($"/api/adsuite/domains/{dom}/trust", Json(new { sha256 = "abc" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/adsuite/domains/{dom}/trust", Json(new { sha256 = Fake.UntrustedCert.ToUpperInvariant() }))).StatusCode);
+        var t4 = await J(await admin.PostAsync($"/api/adsuite/domains/{dom}/test", Json(new { })));
+        Assert.True(t4.GetProperty("ok").GetBoolean()); Assert.Equal(Fake.UntrustedCert, Fake.Pinned); Assert.Equal(Fake.UntrustedCert, t4.GetProperty("trusted").GetString());
+        Fake.UntrustedCert = "";
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/adsuite/domains/{dom}/trust", Json(new { sha256 = "" }))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync($"/api/adsuite/domains/{dom}", Json(new { companyId = co, name = "acme main", baseDn = Base, servers = "dc01", tls = true, bindDn = "svc-deskask@acme.test", password = "New-Secret-2", controllerId = "ctl1" }))).StatusCode);
         await admin.PostAsync($"/api/adsuite/domains/{dom}/test", Json(new { }));
         Assert.Equal("New-Secret-2", Fake.LastConnPassword);

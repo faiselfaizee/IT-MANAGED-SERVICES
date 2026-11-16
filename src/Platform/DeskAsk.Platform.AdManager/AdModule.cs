@@ -98,6 +98,8 @@ public sealed class AdSchema : ITenantSchema
               status text not null default 'pending' check (status in ('pending','rejected','done','failed')),
               requested_by text not null, requested_by_id uuid, decided_by text not null default '', decided_at timestamptz,
               decision_note text not null default '', error text not null default '', created_at timestamptz not null default now())"),
+        new(2, "a trusted LDAPS certificate per domain", @"
+            alter table adsuite.domains add column if not exists cert_sha256 text not null default '';"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
         await SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);

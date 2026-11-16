@@ -24,6 +24,7 @@ type dirConn struct {
 	Servers    []string `json:"servers"` // host or host:port, tried in order
 	TLS        bool     `json:"tls"`     // LDAPS (port 636 unless given); setting a password needs it
 	SkipVerify bool     `json:"skipVerify"`
+	PinSHA256  string   `json:"certSha256"` // trust exactly this certificate
 	BindDN     string   `json:"bindDn"`
 	Password   string   `json:"password"`
 }
@@ -70,9 +71,11 @@ type dirResult struct {
 
 // dirError carries the directory's own result code so the platform can say what went wrong.
 type dirError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Step    int    `json:"step"`
+	Code    int            `json:"code"`
+	Message string         `json:"message"`
+	Step    int            `json:"step"`
+	TLS     string         `json:"tls,omitempty"`  // why encryption failed: no_certificate, name_mismatch, untrusted, ...
+	Cert    *ldap.CertInfo `json:"cert,omitempty"` // the certificate the domain controller showed
 }
 
 func (e *dirError) Error() string { return e.Message }
@@ -97,10 +100,15 @@ func connect(c dirConn, timeout time.Duration) (*ldap.Conn, string, error) {
 		return nil, "", &dirError{Message: "no domain controller is set"}
 	}
 	var last error
+	var tlsErr *ldap.TLSError
 	for _, s := range c.Servers {
 		addr := ldapAddr(strings.TrimSpace(s), c.TLS)
-		l, err := ldap.Dial(addr, c.TLS, c.SkipVerify, timeout)
+		l, err := ldap.DialWith(addr, ldap.Options{TLS: c.TLS, SkipVerify: c.SkipVerify, PinSHA256: c.PinSHA256, Timeout: timeout})
 		if err != nil {
+			var te *ldap.TLSError
+			if errors.As(err, &te) && tlsErr == nil {
+				tlsErr = te
+			}
 			last = fmt.Errorf("%s: %v", addr, err)
 			continue
 		}
@@ -116,6 +124,9 @@ func connect(c dirConn, timeout time.Duration) (*ldap.Conn, string, error) {
 			}
 		}
 		return l, addr, nil
+	}
+	if tlsErr != nil { // every server failed, at least one at the encryption step: that is the useful reason
+		return nil, "", &dirError{Code: -2, Message: tlsErr.Message, TLS: tlsErr.Kind, Cert: tlsErr.Cert}
 	}
 	return nil, "", &dirError{Message: "no domain controller could be reached: " + last.Error()}
 }
@@ -203,7 +214,7 @@ func text(name string, vals [][]byte) []string {
 	return out
 }
 
-func runOp(l *ldap.Conn, server string, o dirOp) (dirResult, error) {
+func runOp(l *ldap.Conn, server string, conn dirConn, o dirOp) (dirResult, error) {
 	res := dirResult{Server: server}
 	switch o.Op {
 	case "rootdse":
@@ -252,6 +263,9 @@ func runOp(l *ldap.Conn, server string, o dirOp) (dirResult, error) {
 	case "rename":
 		return res, l.Rename(o.DN, o.NewRDN, o.NewParent)
 	case "setpw":
+		if !conn.TLS && windowsPasswords != nil { // without LDAPS a Windows controller sets it through Windows' own signed and sealed channel
+			return res, windowsPasswords(conn, o)
+		}
 		ch := []ldap.Change{{Op: ldap.ModReplace, Attr: "unicodePwd", Vals: [][]byte{pwdValue(o.Password)}}}
 		if err := l.Modify(o.DN, ch); err != nil {
 			var re *ldap.ResultError
@@ -285,7 +299,7 @@ func doDirectory(raw json.RawMessage) (any, error) {
 	defer l.Close()
 	out := make([]dirResult, 0, len(j.Ops))
 	for i, o := range j.Ops {
-		r, err := runOp(l, server, o)
+		r, err := runOp(l, server, j.Conn, o)
 		if err != nil {
 			var re *ldap.ResultError
 			if errors.As(err, &re) && slices.Contains(o.Ignore, re.Code) {

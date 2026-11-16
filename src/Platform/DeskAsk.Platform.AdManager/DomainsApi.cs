@@ -123,7 +123,7 @@ internal static class DomainsApi
         {
             await using var db = await AdModule.Open(t, ct);
             var d = await Dir.LoadAsync(db, dp, t, id, ct); if (d == null) return Results.NotFound();
-            string? error = null; string hint = ""; string server = "", host = "", context = "";
+            string? error = null; string hint = ""; string server = "", host = "", context = "", tlsKind = ""; JsonElement? cert = null;
             try
             {
                 var res = await Dir.RunAsync(relay, d, new object[] { new { op = "rootdse" }, Dir.Search(d.BaseDn, "(objectClass=*)", new[] { "distinguishedName" }, "base", 1) }, ct, 30);
@@ -131,10 +131,22 @@ internal static class DomainsApi
                 var root = Dir.Entries(res[0]).FirstOrDefault();
                 host = root?.S("dnsHostName") ?? ""; context = root?.S("defaultNamingContext") ?? "";
             }
-            catch (DirError e) { error = e.Message; hint = Dir.Hint(e.Code); if (e.Code == 32) error = "The service account signed in, but the base DN " + d.BaseDn + " does not exist on this domain controller."; }
+            catch (DirError e) { error = e.Message; hint = Dir.Hint(e.Code); tlsKind = e.Tls; cert = e.Cert; if (e.Code == 32) error = "The service account signed in, but the base DN " + d.BaseDn + " does not exist on this domain controller."; }
             await using (var c = new NpgsqlCommand("update adsuite.domains set last_ok = case when @e = '' then now() else last_ok end, last_error = @e where id = @i", db)) { AdModule.P(c, "e", AdModule.Clip(error, 500)); AdModule.P(c, "i", id); await c.ExecuteNonQueryAsync(ct); }
             await audit.WriteAsync("adsuite.domain.test", d.Name, error ?? "ok", null, ct);
-            return Results.Ok(new { ok = error == null, error, hint, server, host, namingContext = context, tls = d.Tls });
+            return Results.Ok(new { ok = error == null, error, hint, server, host, namingContext = context, tls = d.Tls, tlsProblem = tlsKind, cert, trusted = d.CertSha256 });
+        }), key);
+
+        // Trust exactly the certificate the domain controller showed (its SHA-256), whatever its name or issuer; empty to check it normally again.
+        AdModule.AdminOnly(r.MapPost("/api/adsuite/domains/{id:int}/trust", async (int id, JsonElement body, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        {
+            var fp = (AdModule.Str(body, "sha256") ?? "").Replace(":", "").Trim().ToLowerInvariant();
+            if (fp != "" && !System.Text.RegularExpressions.Regex.IsMatch(fp, "^[0-9a-f]{64}$")) return Results.BadRequest(new { error = "bad_input", detail = "That is not a SHA-256 fingerprint." });
+            await using var db = await AdModule.Open(t, ct);
+            await using var c = new NpgsqlCommand("update adsuite.domains set cert_sha256 = @f where id = @i returning name", db); AdModule.P(c, "f", fp); AdModule.P(c, "i", id);
+            var name = await c.ExecuteScalarAsync(ct) as string; if (name == null) return Results.NotFound();
+            await audit.WriteAsync(fp == "" ? "adsuite.domain.untrust" : "adsuite.domain.trust", name, fp, null, ct);
+            return Results.Ok(new { ok = true });
         }), key);
 
         AdModule.AdminOnly(r.MapGet("/api/adsuite/controllers", async (int? companyId, IControllerRelay relay, CancellationToken ct) =>

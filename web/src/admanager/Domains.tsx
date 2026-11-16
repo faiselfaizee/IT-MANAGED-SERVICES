@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, useLoad, type Rec } from '../http';
-import { Act, Badge, Card, Empty, Err, Field, Modal, useSubmit, str } from '../ui';
+import { Act, Badge, Card, Dl, Empty, Err, Field, Modal, fmtDate, useSubmit, str } from '../ui';
 
 const RIGHTS: [string, string][] = [['read', 'Look'], ['unlock', 'Unlock'], ['reset', 'Reset passwords'], ['enable', 'Enable / disable'], ['modify', 'Change details'], ['members', 'Group members'], ['create', 'Create'], ['move', 'Move'], ['delete', 'Delete'], ['approve', 'Approve others']];
 
@@ -18,7 +18,8 @@ function Form({ d, onClose, onSaved }: { d: Rec | null; onClose: () => void; onS
       <Field label="Base DN"><input value={f.baseDn} onChange={(e) => set('baseDn', e.target.value)} placeholder="DC=corp,DC=example,DC=com" /></Field>
       <Field label="Domain controllers"><input value={f.servers} onChange={(e) => set('servers', e.target.value)} placeholder="dc01.corp.example.com, dc02" /></Field>
       <label className="check"><input type="checkbox" checked={f.tls} onChange={(e) => set('tls', e.target.checked)} /> Use LDAPS (needed to set passwords)</label>
-      <label className="check"><input type="checkbox" checked={f.skipVerify} onChange={(e) => set('skipVerify', e.target.checked)} /> Accept the controller's own certificate</label>
+      <label className="check"><input type="checkbox" checked={f.skipVerify} onChange={(e) => set('skipVerify', e.target.checked)} /> Do not check the domain controller's certificate (not recommended; use "Trust this certificate" after a test instead)</label>
+      <p className="muted small">Without LDAPS, passwords can still be set when the site controller runs on Windows: it uses Windows' own signed and sealed channel. Give the service account as user@domain or DOMAIN\user for that.</p>
       <Field label="Service account"><input value={f.bindDn} onChange={(e) => set('bindDn', e.target.value)} placeholder="svc-deskask@corp.example.com" /></Field>
       <Field label={d ? 'Password (leave empty to keep)' : 'Password'}><input type="password" autoComplete="new-password" value={f.password} onChange={(e) => set('password', e.target.value)} /></Field>
       <Field label="Site controller"><select value={f.controllerId} onChange={(e) => set('controllerId', e.target.value)}><option value="">Choose…</option>
@@ -66,7 +67,7 @@ export default function Domains({ domains, onChanged }: { domains: Rec[]; onChan
         {domains.map((d) => <tr key={d.id}><td><strong>{d.name}</strong><div className="muted small">{d.servers}</div></td><td>{d.company}</td>
           <td>{d.controller || '–'} {d.controller && <Badge tone={d.controllerOnline ? 'ok' : 'bad'}>{d.controllerOnline ? 'Online' : 'Offline'}</Badge>}</td>
           <td>{!d.enabled ? <Badge>Off</Badge> : d.lastError ? <Badge tone="bad">Failed</Badge> : d.lastOk ? <Badge tone="ok">Working</Badge> : <Badge>Not tested</Badge>}
-            {(res[d.id] ?? null) && <div className={res[d.id].ok ? 'muted small' : 'err'}>{res[d.id].ok ? `Signed in to ${str(res[d.id], 'host') || str(res[d.id], 'server')}.` : `${str(res[d.id], 'error')} ${str(res[d.id], 'hint')}`}</div>}
+            {(res[d.id] ?? null) && <TestResult r={res[d.id]} d={d} onTrusted={async () => { const r = await api<Rec>(`/api/adsuite/domains/${d.id}/test`, { method: 'POST', body: {} }); setRes({ ...res, [d.id]: r }); onChanged(); }} />}
             {!res[d.id] && d.lastError && <div className="err">{d.lastError}</div>}</td>
           <td className="tools"><Act label="Test" run={async () => { const r = await api<Rec>(`/api/adsuite/domains/${d.id}/test`, { method: 'POST', body: {} }); setRes({ ...res, [d.id]: r }); onChanged(); }} />
             <button onClick={() => setEdit(d)}>Edit</button><button onClick={() => setOpen(open === d.id ? null : d.id)}>Who may</button>
@@ -74,4 +75,28 @@ export default function Domains({ domains, onChanged }: { domains: Rec[]; onChan
     {open !== null && domains.find((d) => d.id === open) && <Delegation d={domains.find((d) => d.id === open)!} />}
     {edit !== undefined && <Form d={edit} onClose={() => setEdit(undefined)} onSaved={onChanged} />}
   </>;
+}
+
+const PROBLEM: Record<string, string> = {
+  no_certificate: 'The domain controller has no LDAPS certificate',
+  name_mismatch: 'The certificate is for another name',
+  untrusted: 'The certificate is not trusted by the controller',
+  expired: 'The certificate has expired',
+  pin_changed: 'The certificate changed since you trusted it',
+  tls_version: 'The domain controller offers an old TLS version',
+};
+
+/** The result of Test, with the certificate when LDAPS failed on it, and a way to trust that certificate. */
+function TestResult({ r, d, onTrusted }: { r: Rec; d: Rec; onTrusted: () => Promise<void> }) {
+  const cert = r.cert as Rec | null; const kind = str(r, 'tlsProblem');
+  if (r.ok) return <div className="muted small">Signed in to {str(r, 'host') || str(r, 'server')}{r.tls ? ' over LDAPS' : ' without encryption'}.{r.trusted ? ' Using the certificate you chose to trust.' : ''}</div>;
+  return <div className="err small">
+    {kind && <strong>{PROBLEM[kind] ?? 'LDAPS failed'}. </strong>}{str(r, 'error')} {str(r, 'hint')}
+    {cert && <div className="card" style={{ marginTop: 8, color: 'var(--text)' }}>
+      <Dl rows={[['Issued to', String(cert.subject ?? '')], ['Names', ((cert.names ?? []) as string[]).join(', ')], ['Issued by', String(cert.issuer ?? '')], ['Valid until', cert.notAfter ? fmtDate(cert.notAfter) : ''], ['SHA-256', <code key="f" style={{ wordBreak: 'break-all' }}>{String(cert.sha256 ?? '')}</code>]]} />
+      {(kind === 'untrusted' || kind === 'name_mismatch' || kind === 'pin_changed') && <>
+        <p className="muted small">Compare the SHA-256 with the certificate on the domain controller (certlm.msc › Personal › Certificates) before trusting it.</p>
+        <Act label="Trust this certificate" primary run={async () => { await api(`/api/adsuite/domains/${d.id}/trust`, { method: 'POST', body: { sha256: cert.sha256 } }); await onTrusted(); }} /></>}
+    </div>}
+  </div>;
 }

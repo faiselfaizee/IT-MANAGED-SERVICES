@@ -10,11 +10,14 @@ using Npgsql;
 
 namespace DeskAsk.Platform.AdManager;
 
-internal sealed record Domain(int Id, int CompanyId, string Name, string DnsName, string BaseDn, string[] Servers, bool Tls, bool SkipVerify, string BindDn, string Password, string ControllerId, bool Enabled);
+internal sealed record Domain(int Id, int CompanyId, string Name, string DnsName, string BaseDn, string[] Servers, bool Tls, bool SkipVerify, string BindDn, string Password, string ControllerId, bool Enabled, string CertSha256 = "");
 
 /// <summary>The directory (or the controller) refused or failed. Code is the LDAP result code when there is one; Step the position in the job.</summary>
 internal sealed class DirError(string message, int code = 0, int step = 0, bool unreachable = false) : Exception(message)
 {
+    /// <summary>Why LDAPS failed (no_certificate, name_mismatch, untrusted, expired, pin_changed, tls_version), and the certificate shown.</summary>
+    public string Tls { get; init; } = "";
+    public JsonElement? Cert { get; init; }
     public int Code { get; } = code;
     public int Step { get; } = step;
     public bool Unreachable { get; } = unreachable;
@@ -114,13 +117,13 @@ internal static class Dir
     static IDataProtector Protector(IDataProtectionProvider dp, ITenantContext t) => dp.CreateProtector("adsuite.bind:" + t.Require().Id);
     public static string Seal(IDataProtectionProvider dp, ITenantContext t, string secret) => Protector(dp, t).Protect(secret);
 
-    const string DomainCols = "id, company_id, name, dns_name, base_dn, servers, tls, skip_verify, bind_dn, secret_sealed, controller_id, enabled";
+    const string DomainCols = "id, company_id, name, dns_name, base_dn, servers, tls, skip_verify, bind_dn, secret_sealed, controller_id, enabled, cert_sha256";
     static Domain? ReadDomain(NpgsqlDataReader r, IDataProtectionProvider dp, ITenantContext t)
     {
         string pw;
         try { pw = Protector(dp, t).Unprotect(r.GetString(9)); } catch (Exception) { pw = ""; }
         return new Domain(r.GetInt32(0), r.GetInt32(1), r.GetString(2), r.GetString(3), r.GetString(4),
-            r.GetString(5).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), r.GetBoolean(6), r.GetBoolean(7), r.GetString(8), pw, r.GetString(10), r.GetBoolean(11));
+            r.GetString(5).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), r.GetBoolean(6), r.GetBoolean(7), r.GetString(8), pw, r.GetString(10), r.GetBoolean(11), r.GetString(12));
     }
     public static async Task<Domain?> LoadAsync(NpgsqlConnection db, IDataProtectionProvider dp, ITenantContext t, int id, CancellationToken ct)
     {
@@ -130,7 +133,7 @@ internal static class Dir
     }
 
     // ---- talking to the directory through the controller
-    static object Conn(Domain d) => new { servers = d.Servers, tls = d.Tls, skipVerify = d.SkipVerify, bindDn = d.BindDn, password = d.Password };
+    static object Conn(Domain d) => new { servers = d.Servers, tls = d.Tls, skipVerify = d.SkipVerify, certSha256 = d.CertSha256, bindDn = d.BindDn, password = d.Password };
 
     public static object Search(string baseDn, string filter, string[] attrs, string scope = "sub", int max = 500, int pageSize = 500) =>
         new { op = "search", @base = baseDn, scope, filter, attrs, max, pageSize };
@@ -151,7 +154,13 @@ internal static class Dir
                 if (e.TryGetProperty("code", out var c) && c.TryGetInt32(out var ci)) code = ci;
                 if (e.TryGetProperty("step", out var s) && s.TryGetInt32(out var si)) step = si;
             }
-            throw new DirError(msg, code, step, reply.TimedOut || msg.Contains("could be reached", StringComparison.Ordinal) || msg.Contains("did not", StringComparison.Ordinal));
+            string tls = ""; JsonElement? cert = null;
+            if (reply.Error is { ValueKind: JsonValueKind.Object } e2)
+            {
+                if (e2.TryGetProperty("tls", out var tk) && tk.ValueKind == JsonValueKind.String) tls = tk.GetString()!;
+                if (e2.TryGetProperty("cert", out var ce) && ce.ValueKind == JsonValueKind.Object) cert = ce.Clone();
+            }
+            throw new DirError(msg, code, step, reply.TimedOut || msg.Contains("could be reached", StringComparison.Ordinal) || msg.Contains("did not", StringComparison.Ordinal)) { Tls = tls, Cert = cert };
         }
         var list = new List<JsonElement>();
         if (reply.Result is { ValueKind: JsonValueKind.Object } r && r.TryGetProperty("results", out var rs) && rs.ValueKind == JsonValueKind.Array) foreach (var x in rs.EnumerateArray()) list.Add(x);
@@ -177,7 +186,9 @@ internal static class Dir
     {
         49 => "The service account was refused. Check its name and password under Domains.",
         50 => "The service account is not allowed to do this in the directory. Delegate the right to it in Active Directory (Delegation of Control).",
-        53 => "The domain controller would not do this. Setting a password needs TLS (LDAPS), and the password must meet the domain's rules.",
+        53 => "The domain controller would not do this. Setting a password needs LDAPS, or a site controller on Windows with LDAPS turned off; the password must also meet the domain's rules.",
+        8 => "This domain controller requires signed or encrypted LDAP. Turn on LDAPS for this domain.",
+        -2 => "",
         19 => "The change breaks a rule of the directory (for example a password that is too simple or a name that is not allowed).",
         68 => "An object with that name already exists.",
         32 => "That object no longer exists.",
