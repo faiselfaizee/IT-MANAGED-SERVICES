@@ -2,7 +2,7 @@
   <PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled></PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="Npgsql" Version="9.0.3" />
+    <PackageVersion Include="Npgsql" Version="10.0.0" />
     <PackageVersion Include="MailKit" Version="4.16.0" />
     <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />   <!-- pins the copy MimeKit pulls in (GHSA-846f-f764-76mx) -->
     <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
