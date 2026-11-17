@@ -430,6 +430,11 @@ public sealed class AssetsSchema : ITenantSchema
               ('Restart in a few minutes','Power'),
               ('Cancel pending shutdown','Power')
             ) v(title, cat) where c.builtin and lower(c.title) = lower(v.title)"),
+        new(28, "things handed to people (monitors, keyboards, phones): attached to a main device, not reached remotely", @"
+            alter table assets.types add column if not exists peripheral boolean not null default false;
+            alter table assets.assets add column if not exists parent_id bigint references assets.assets(id) on delete set null;
+            create index if not exists assets_parent on assets.assets (parent_id) where parent_id is not null"),
+        new(29, "starter types for peripherals, phones and tablets", Run: async (db, tx, ct) => await PeripheralsApi.SeedTypesAsync(db, tx, ct)),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -715,7 +720,8 @@ public sealed class AssetsModule : IPlatformModule
         var w = new List<string>
         {
             "(@q = '' or a.name ilike @l or a.tag ilike @l or a.serial ilike @l or a.model ilike @l or a.assigned_to ilike @l or a.location ilike @l or a.po_number ilike @l or a.invoice_number ilike @l"
-              + " or exists (select 1 from assets.places sx where sx.id = a.site_id and (sx.name ilike @l or sx.code ilike @l)))",
+              + " or exists (select 1 from assets.places sx where sx.id = a.site_id and (sx.name ilike @l or sx.code ilike @l))"
+              + " or a.parent_id in (select px.id from assets.assets px where px.serial ilike @l or px.tag ilike @l or px.name ilike @l))",
             "(@st = '' or a.status = @st) and (@ty = 0 or a.type_id = @ty) and (@as = '' or lower(a.assigned_to) = lower(@as))",
         };
         if (agentF != "") w.Add("a.status not in ('retired','lost') and " + AssetDash.Where("agent", agentF));
@@ -763,15 +769,16 @@ public sealed class AssetsModule : IPlatformModule
         LocationsApi.Map(r, Key);
         LicensesApi.Map(r, Key);
         DeleteApproval.Map(r, Key);
+        PeripheralsApi.Map(r, Key);
 
         // ---- types
         anyone(r.MapGet("/api/assets/types", async (ITenantContext t, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
-            await using var c = new NpgsqlCommand("select t.id, t.name, t.fields, (select count(*) from assets.assets a where a.type_id = t.id) from assets.types t order by lower(t.name)", db);
+            await using var c = new NpgsqlCommand("select t.id, t.name, t.fields, (select count(*) from assets.assets a where a.type_id = t.id), t.peripheral from assets.types t order by lower(t.name)", db);
             var rows = new List<object>();
             await using var rd = await c.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) rows.Add(new { id = rd.GetInt32(0), name = rd.GetString(1), fields = JsonDocument.Parse(rd.GetString(2)).RootElement.Clone(), assets = rd.GetInt64(3) });
+            while (await rd.ReadAsync(ct)) rows.Add(new { id = rd.GetInt32(0), name = rd.GetString(1), fields = JsonDocument.Parse(rd.GetString(2)).RootElement.Clone(), assets = rd.GetInt64(3), peripheral = rd.GetBoolean(4) });
             return Results.Ok(rows);
         }));
 
@@ -783,8 +790,8 @@ public sealed class AssetsModule : IPlatformModule
             var fields = body.TryGetProperty("fields", out var f) ? ParseFields(f, out err) : new List<FieldDef>();
             if (fields == null) return Bad("bad_input", err);
             await using var db = await Open(t, ct);
-            await using var c = new NpgsqlCommand("insert into assets.types (name, fields) values (@n, @f) on conflict do nothing returning id", db);
-            P(c, "n", name); P(c, "f", FieldsJson(fields));
+            await using var c = new NpgsqlCommand("insert into assets.types (name, fields, peripheral) values (@n, @f, @p) on conflict do nothing returning id", db);
+            P(c, "n", name); P(c, "f", FieldsJson(fields)); P(c, "p", body.TryGetProperty("peripheral", out var pf) && pf.ValueKind == JsonValueKind.True);
             if (await c.ExecuteScalarAsync(ct) is not int id) return Results.Conflict(new { error = "type_exists" });
             await audit.WriteAsync("assets.type_created", id.ToString(), name, ct: ct);
             return Results.Ok(new { id, name });
@@ -801,10 +808,13 @@ public sealed class AssetsModule : IPlatformModule
                 var fields = ParseFields(f, out var err); if (fields == null) return Bad("bad_input", err);
                 fieldsJson = FieldsJson(fields);
             }
+            object peripheralValue = DBNull.Value;
+            if (body.ValueKind == JsonValueKind.Object && body.TryGetProperty("peripheral", out var pp) && (pp.ValueKind == JsonValueKind.True || pp.ValueKind == JsonValueKind.False)) peripheralValue = pp.GetBoolean();
             try
             {
-                await using var c = new NpgsqlCommand("update assets.types set name = coalesce(@n, name), fields = coalesce(@f, fields) where id = @i", db);
+                await using var c = new NpgsqlCommand("update assets.types set name = coalesce(@n, name), fields = coalesce(@f, fields), peripheral = coalesce(@p, peripheral) where id = @i", db);
                 P(c, "n", name); P(c, "f", fieldsJson); P(c, "i", id);
+                c.Parameters.Add(new NpgsqlParameter("p", NpgsqlDbType.Boolean) { Value = peripheralValue });
                 if (await c.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound();
             }
             catch (PostgresException e) when (e.SqlState == "23505") { return Results.Conflict(new { error = "type_exists" }); }
@@ -938,6 +948,13 @@ public sealed class AssetsModule : IPlatformModule
             int? newCompany = scope != null ? scope[0] : body.TryGetProperty("companyId", out var nc) && nc.ValueKind == JsonValueKind.Number && nc.TryGetInt32(out var nci) ? nci : null;
             if (newCompany != null)
                 await using (var q = new NpgsqlCommand("select 1 from assets.companies where id = @i", db)) { P(q, "i", newCompany); if (await q.ExecuteScalarAsync(ct) == null) return Bad("bad_input", "companyId does not exist"); }
+            long? parentId = null;
+            if (body.TryGetProperty("parentId", out var pidEl) && pidEl.ValueKind == JsonValueKind.Number && pidEl.TryGetInt64(out var pidVal))
+            {   // an accessory is attached to the main device it came with (the desktop, the laptop)
+                var (parentError, parentCompany) = await PeripheralsApi.CheckParent(db, null, pidVal, newCompany, await AssetsAccess.ScopeAsync(http, Acts.Read), ct);
+                if (parentError != null) return Bad("bad_input", parentError);
+                parentId = pidVal; newCompany ??= parentCompany;
+            }
             if (v.Set.ContainsKey("site_id") || v.Set.ContainsKey("vendor_id"))
             {
                 var refErr = await LocationsApi.CheckRefs(db, newCompany, v.Set.GetValueOrDefault("site_id") as int?, v.Set.GetValueOrDefault("vendor_id") as int?, await AssetsAccess.ScopeAsync(http, Acts.Read), ct);
@@ -959,6 +976,8 @@ public sealed class AssetsModule : IPlatformModule
             {   // someone limited to one company adds assets to that company; others may name the customer
                 await using var own = new NpgsqlCommand("update assets.assets set company_id = @c where id = @i", db); P(own, "c", newCompany); P(own, "i", created.Id); await own.ExecuteNonQueryAsync(ct);
             }
+            if (parentId != null) await PeripheralsApi.AttachAsync(db, created.Id, parentId, true, Actor(u), ct);
+            await PeripheralsApi.QuietAsync(db, created.Id, ct);
             await audit.WriteAsync("assets.created", created.Id.ToString(), created.Tag, ct: ct);
             return Results.Ok(new { id = created.Id, tag = created.Tag });
         }));

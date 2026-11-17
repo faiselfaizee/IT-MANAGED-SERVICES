@@ -37,7 +37,7 @@ public static class AssetDash
         ("agent", "online") => $"g.id is not null and {Seen} and (@lv = '' or g.version = @lv)",
         ("agent", "update") => $"g.id is not null and {Seen} and @lv <> '' and g.version <> @lv",
         ("agent", "offline") => $"g.id is not null and (g.last_seen is null or not {Seen})",
-        ("agent", "none") => "g.id is null",
+        ("agent", "none") => "g.id is null and not coalesce(t.peripheral, false)",
         ("compliance", "compliant") => $"g.id is not null and {Comp}",
         ("compliance", "noncompliant") => $"g.id is not null and {NonComp}",
         ("compliance", "nodata") => $"g.id is not null and not {Comp} and not {NonComp}",

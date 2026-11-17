@@ -4,6 +4,7 @@ import { usePerms } from '../perms';
 import { Act, Badge, Empty, Err, Field, Loading, Modal, fmtDay, useSubmit } from '../ui';
 import { PurchaseFields, purchaseBody } from './Purchase';
 import { DuplicateNotice, matchesOf } from './Duplicates';
+import { AddSeveral, CustomFields, MainDevicePicker } from './Peripherals';
 
 const STATUSES = ['stock', 'in_use', 'repair', 'retired', 'lost'];
 const label = (s: string) => s.replace('_', ' ');
@@ -28,7 +29,7 @@ export default function List() {
   const co = useLoad<Rec>(company ? `/api/assets/dashboard?company=${encodeURIComponent(company)}` : null);
   const coName = company ? String(co.data?.customer?.company ?? (company === 'none' ? 'No customer' : '…')) : '';
   const without = (key: string) => { const n = new URLSearchParams(qs); n.delete(key); const t = n.toString(); return '#/assets/list' + (t ? '?' + t : ''); };
-  const [sel, setSel] = useState<Set<number>>(new Set()); const [add, setAdd] = useState(false); const [print, setPrint] = useState(false);
+  const [sel, setSel] = useState<Set<number>>(new Set()); const [add, setAdd] = useState(false); const [several, setSeveral] = useState(false); const [print, setPrint] = useState(false);
   const filters = `&agent=${agent}` + (company ? `&company=${encodeURIComponent(company)}` : '') + (place ? `&place=${place}` : '') + (vendor ? `&vendor=${vendor}` : '') + drill.map(([k, v]) => `&${k}=${v}`).join('');
   const exportQs = `search=${encodeURIComponent(search)}&status=${status}${filters}`;
   const q = `/api/assets?search=${encodeURIComponent(search)}&status=${status}${filters}&skip=${skip}&take=${take}`;
@@ -46,6 +47,7 @@ export default function List() {
       <select value={status} onChange={(e) => { setStatus(e.target.value); setSkip(0); }} aria-label="Status"><option value="">Any status</option>{STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}</select>
       <select value={agent} onChange={(e) => { setAgent(e.target.value); setSkip(0); }} aria-label="Agent"><option value="">Any agent state</option><option value="online">Agent live, up to date</option><option value="offline">Agent offline</option><option value="update">Agent update due</option><option value="none">No agent</option></select>
       {perms.add && <button className="primary" onClick={() => setAdd(true)}>Add asset</button>}
+      {perms.add && <button onClick={() => setSeveral(true)}>Add several…</button>}
       <button disabled={sel.size === 0} onClick={() => setPrint(true)}>QR labels ({sel.size})</button>
       <button onClick={() => download('/api/assets/export.csv?' + exportQs, 'assets.csv')}>Export list (CSV)</button>
       <Act label="Export all details (CSV)" run={() => saveFile('/api/assets/export-full.csv?' + exportQs, 'assets-full-details.csv')} />
@@ -54,11 +56,12 @@ export default function List() {
     {perms.admin && sel.size > 0 && <BulkAgents ids={[...sel]} total={total} query={q} onSelect={(ids) => setSel(new Set(ids))} onDone={() => { setSel(new Set()); reload(); }} />}
     <Loading loading={loading && !data} error={error} />
     {data && (items.length === 0 ? <Empty>No assets match.</Empty> : <table><thead><tr><th><input type="checkbox" aria-label="Select all" checked={items.every((i) => sel.has(i.id))} onChange={(e) => setSel(e.target.checked ? new Set([...sel, ...items.map((i) => i.id)]) : new Set([...sel].filter((x) => !items.some((i) => i.id === x))))} /></th>
-      <th>Tag</th><th>Name</th><th>Type</th><th>Agent</th><th>Model</th><th>Assigned to</th><th>Site</th><th>Warranty</th></tr></thead><tbody>
+      <th>Tag</th><th>Name</th><th>Type</th><th>Serial number</th><th>Agent</th><th>Model</th><th>Assigned to</th><th>Site</th><th>Warranty</th></tr></thead><tbody>
       {items.map((a) => <tr key={a.id}><td><input type="checkbox" aria-label={'Select ' + a.name} checked={sel.has(a.id)} onChange={() => toggle(a.id)} /></td>
-        <td className="mono">{a.tag}</td><td><a href={`#/assets/${a.id}`}>{a.name}</a></td><td>{a.type ?? ''}</td><td><AgentCell a={(a.agent ?? { state: 'none' }) as Rec} /></td>
+        <td className="mono">{a.tag}</td><td><a href={`#/assets/${a.id}`}>{a.name}</a></td><td>{a.type ?? ''}</td><td className="mono">{a.serial ?? ''}</td><td><AgentCell a={(a.agent ?? { state: 'none' }) as Rec} /></td>
         <td>{[a.manufacturer, a.model].filter(Boolean).join(' ')}</td><td>{a.assignedTo}</td><td>{a.site ? <>{a.site}{a.siteCode ? <span className="muted mono"> {a.siteCode}</span> : null}<div className="muted small">{[a.location, a.state, a.country].filter(Boolean).join(', ')}</div></> : a.location}</td><td>{fmtDay(a.warrantyEnd)}</td></tr>)}</tbody></table>)}
     <div className="tools" style={{ marginTop: 10 }}><button disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - take))}>Previous</button><span className="muted">{total ? `${skip + 1}–${Math.min(total, skip + take)} of ${total}` : ''}</span><button disabled={skip + take >= total} onClick={() => setSkip(skip + take)}>Next</button></div>
+    {several && <AddSeveral onClose={(ch) => { setSeveral(false); if (ch) reload(); }} />}
     {add && <AddAsset onClose={(id) => { setAdd(false); if (id) go(`assets/${id}`); else reload(); }} />}
     {print && <PrintDialog ids={[...sel]} onClose={() => setPrint(false)} />}
   </>;
@@ -118,15 +121,16 @@ function AgentCell({ a }: { a: Rec }) {
 }
 
 function AddAsset({ onClose }: { onClose: (id?: number) => void }) {
-  const [v, setV] = useState<Rec>({ name: '', status: 'in_use', manufacturer: '', model: '', serial: '', location: '', assignedTo: '', companyId: null, ipAddress: '', macAddress: '', hostname: '', monitored: true }); const types = useLoad<Rec[]>('/api/assets/types');
+  const [v, setV] = useState<Rec>({ name: '', status: 'in_use', manufacturer: '', model: '', serial: '', location: '', assignedTo: '', companyId: null, ipAddress: '', macAddress: '', hostname: '', monitored: true, custom: {} }); const types = useLoad<Rec[]>('/api/assets/types'); const [main, setMain] = useState<Rec | null>(null);
   const companies = useLoad<Rec[]>('/api/assets/companies'); const cos = Array.isArray(companies.data) ? companies.data : [];
   const f = useSubmit(() => undefined); const [err, setErr] = useState(''); const [dup, setDup] = useState<ReturnType<typeof matchesOf>>(null);
   const set = (k: string, x: string) => setV({ ...v, [k]: x });
   const companyId = (v.companyId ?? (cos.length === 1 ? cos[0].id : null)) as number | null;
+  const kind = (Array.isArray(types.data) ? types.data : []).find((t) => t.id === v.typeId); const remote = !kind?.peripheral;
   const create = async (confirmDuplicate: boolean) => {
     setErr(''); if (!confirmDuplicate) setDup(null);
     try {
-      const r = await api<Rec>('/api/assets', { body: { name: v.name, typeId: v.typeId, status: v.status, manufacturer: v.manufacturer, model: v.model, serial: v.serial, assignedTo: v.assignedTo, companyId, ...purchaseBody(v), ipAddress: String(v.ipAddress).trim(), macAddress: String(v.macAddress).trim(), hostname: String(v.hostname).trim(), monitored: v.monitored, confirmDuplicate } });
+      const r = await api<Rec>('/api/assets', { body: { name: v.name, typeId: v.typeId, status: v.status, manufacturer: v.manufacturer, model: v.model, serial: v.serial, assignedTo: v.assignedTo, companyId, ...purchaseBody(v), ipAddress: String(v.ipAddress).trim(), macAddress: String(v.macAddress).trim(), hostname: String(v.hostname).trim(), monitored: remote ? v.monitored : false, custom: v.custom, parentId: main ? Number(main.id) : undefined, confirmDuplicate } });
       onClose(r.id);
     } catch (e) { const m = matchesOf(e); if (m) setDup(m); else setErr((e as Error).message); }
   };
@@ -137,11 +141,15 @@ function AddAsset({ onClose }: { onClose: (id?: number) => void }) {
       <Field label="Status"><select value={v.status} onChange={(e) => set('status', e.target.value)}>{STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}</select></Field></div>
     <div className="row"><Field label="Manufacturer"><input value={v.manufacturer} onChange={(e) => set('manufacturer', e.target.value)} /></Field><Field label="Model"><input value={v.model} onChange={(e) => set('model', e.target.value)} /></Field><Field label="Serial number"><input value={v.serial} onChange={(e) => set('serial', e.target.value)} /></Field></div>
     <Field label="Assigned to (name or email)"><input value={v.assignedTo} onChange={(e) => set('assignedTo', e.target.value)} /></Field>
+    {remote ? <>
     <div className="row"><Field label="IP address (DeskAsk reaches the device here)"><input value={v.ipAddress} onChange={(e) => set('ipAddress', e.target.value)} placeholder="10.0.0.25" spellCheck={false} /></Field>
       <Field label="MAC address"><input value={v.macAddress} onChange={(e) => set('macAddress', e.target.value)} placeholder="00:1A:2B:3C:4D:5E" spellCheck={false} /></Field></div>
     <Field label="Host name"><input value={v.hostname} onChange={(e) => set('hostname', e.target.value)} spellCheck={false} /></Field>
     <label><input type="checkbox" checked={v.monitored} onChange={(e) => setV({ ...v, monitored: e.target.checked })} /> Monitor this asset (alerts, services, checks)</label>
-    <p className="muted small">To install the agent from a controller, save the asset with its IP address, then open it and use "Install agent through the controller".</p>
+    <p className="muted small">To install the agent from a controller, save the asset with its IP address, then open it and use "Install agent through the controller".</p></> : <>
+      <p className="muted small">{kind?.name} is not reached remotely, so it has no agent or monitoring. Give it its own serial number.</p>
+      <MainDevicePicker value={main} onChange={setMain} companyId={companyId} /></>}
+    <CustomFields fields={(kind?.fields ?? []) as Rec[]} value={v.custom} onChange={(c) => setV({ ...v, custom: c })} />
     <PurchaseFields v={v} set={(p) => setV({ ...v, ...p })} companyId={companyId} />
     {dup && <DuplicateNotice info={dup} busy={f.busy} onAnyway={() => void create(true)} />}
     <Err text={err || f.err} /><div className="actions"><button onClick={() => onClose()}>Cancel</button>
