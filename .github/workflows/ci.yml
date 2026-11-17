@@ -21,6 +21,10 @@ jobs:
       - run: dotnet restore DeskAsk.Platform.slnx
       - run: dotnet build DeskAsk.Platform.slnx -c Release --no-restore
       - run: dotnet test DeskAsk.Platform.slnx -c Release --no-build
+      - name: Known vulnerable NuGet packages (fails when one is found)
+        run: |
+          dotnet list DeskAsk.Platform.slnx package --vulnerable --include-transitive 2>&1 | tee vuln.txt
+          if grep -q "has the following vulnerable packages" vuln.txt; then echo "::error::vulnerable packages found"; exit 1; fi
   web:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: web } }
@@ -31,6 +35,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - name: Audit the packages that ship (fails on a high or critical finding)
+        run: npm audit --omit=dev --audit-level=high
   agent:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: agent } }
