@@ -56,7 +56,7 @@ app.UseIdentity();
 app.MapGet("/health", (HttpContext c) => c.Request.Host.Host is "localhost" or "127.0.0.1" or "[::1]" && c.Connection.RemoteIpAddress is { } ip && System.Net.IPAddress.IsLoopback(ip)
     ? Results.Ok(new { status = "ok", version = typeof(Program).Assembly.GetName().Version?.ToString(), roles = roles.ToString(), host = c.Request.Host.Host })
     : Results.Ok(new { status = "ok" }));
-app.MapGet("/api/platform/whoami", (ITenantContext t) => Results.Ok(new { tenant = t.Require().Id, name = t.Require().Name }));
+app.MapGet("/api/platform/whoami", (ITenantContext t) => Results.Ok(new { tenant = t.Require().Id, name = t.Require().Name })).AllowAnonymous();   // on purpose: the sign-in page asks which customer this address belongs to
 foreach (var m in modules) m.MapEndpoints(app);
 
 // The web app (web/dist) is shipped inside the bundle as wwwroot. Everything that is not an API or sign-in address falls back to it.
