@@ -177,7 +177,7 @@ public static class PeripheralsApi
                 if (err != null) return Bad(err);
             }
             await AttachAsync(db, id, parentId, inherit, Actor(u), ct);
-            await audit.WriteAsync(parentId == null ? "assets.detached" : "assets.attached", id.ToString(), parentId?.ToString(), ct: ct);
+            await audit.WriteAsync(parentId == null ? "assets.detached" : "assets.attached", id.ToString(), parentId?.ToString() ?? "", ct: ct);
             return Results.Ok(new { ok = true });
         }).RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Modify);
 
@@ -325,7 +325,7 @@ public static class PeripheralsApi
                     await using var up = new NpgsqlCommand("update assets.assets set assigned_to = '', prev_holder = @h, unalloc_at = now(), status = case when status = 'in_use' then 'stock' when @c = 'lost' then 'lost' else status end, updated_at = now(), updated_by = @b where id = @i", db, tx);
                     P(up, "h", holder); P(up, "c", cond); P(up, "b", actor); P(up, "i", id); await up.ExecuteNonQueryAsync(ct);
                 }
-                await AssetsDevice.History(db, id, actor, "handover", JsonSerializer.Serialize(mode == "assign" ? new { to, condition = cond, notes } : new { from = holder, condition = cond, notes }), ct, tx);
+                await AssetsDevice.History(db, id, actor, "handover", JsonSerializer.Serialize(mode == "assign" ? (object)new { to, condition = cond, notes } : new { from = holder, condition = cond, notes }), ct, tx);
                 await tx.CommitAsync(ct);
                 await audit.WriteAsync(mode == "assign" ? "assets.allocated" : "assets.handover", id.ToString(), mode == "assign" ? to : holder + " (" + cond + ")", ct: ct);
                 done++;
