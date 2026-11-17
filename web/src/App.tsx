@@ -3,6 +3,7 @@ import { whoAmI, type WhoAmI } from './api';
 import { signOut } from './auth';
 import { LOOKS, currentLook, setLook } from './look';
 import { Icon, Logo } from './chrome';
+import { logoUrl, useBrand } from './brand';
 import { Ring } from './Rings';
 import { useHash, useLoad, type Rec } from './http';
 
@@ -18,6 +19,7 @@ const AssetsApp = lazy(() => import('./assets/AssetsApp'));
 const Users = lazy(() => import('./Users'));
 const Access = lazy(() => import('./Access'));
 const Licence = lazy(() => import('./Licence'));
+const Branding = lazy(() => import('./Branding'));
 const Mail = lazy(() => import('./Mail'));
 const Updates = lazy(() => import('./Updates'));
 const ServiceDeskApp = lazy(() => import('./servicedesk/ServiceDeskApp'));
@@ -41,7 +43,7 @@ function UsersArea({ meId, tab }: { meId?: string; tab: string }) {
 }
 
 const SECTION: Record<string, string> = { '': 'Home', servicedesk: 'Service Desk', assets: 'Assets', monitoring: 'Monitoring', admanager: 'AD Manager', vault: 'Vault', backup: 'Backup',
-  users: 'Administration › Users', access: 'Administration › Users', mail: 'Administration › Mail', updates: 'Administration › Updates', licence: 'Administration › Licence' };
+  users: 'Administration › Users', access: 'Administration › Users', mail: 'Administration › Mail', updates: 'Administration › Updates', licence: 'Administration › Licence', branding: 'Administration › Branding' };
 const ROLE: Record<string, string> = { admin: 'Administrator', engineer: 'Engineer', viewer: 'Viewer', cadmin: 'Customer administrator', customer: 'Customer' };
 
 /** The signed-in person: name and role, appearance, two-step sign-in and signing out. */
@@ -198,14 +200,16 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const inBackup = parts[0] === 'backup' && canBackup;
   const inUsers = (parts[0] === 'users' || parts[0] === 'access') && isAdmin;
   const inLicence = parts[0] === 'licence' && isAdmin;
+  const inBranding = parts[0] === 'branding' && isAdmin;
+  const brand = useBrand();
   const inMail = parts[0] === 'mail' && isAdmin;
   const inUpdates = parts[0] === 'updates' && isAdmin;
   return (
     <div className="shell">
       <nav aria-label="Modules" className="side">
-        <a className="brand" href="#/" aria-label="DeskAsk Platform home"><Logo size={30} /><strong>DeskAsk</strong></a>
+        <a className="brand" href="#/" aria-label={brand.name + ' home'}>{brand.hasLogo ? <span className="logo-chip"><img src={logoUrl(brand)} alt="" /></span> : <Logo size={30} />}<strong>{brand.name}</strong></a>
         <div className="side-group">
-          <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
+          <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inBranding && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
           {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
             ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
             : m === 'Service Desk'
@@ -225,10 +229,12 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           <a href="#/mail" className={inMail ? 'on' : ''}><Icon name="mail" />Mail</a>
           <a href="#/updates" className={inUpdates ? 'on' : ''}><Icon name="updates" />Updates</a>
           <a href="#/licence" className={inLicence ? 'on' : ''}><Icon name="licence" />Licence</a>
+          <a href="#/branding" className={inBranding ? 'on' : ''}><Icon name="branding" />Branding</a>
         </div> : null}
       </nav>
       <header className="topbar">
         <div className="crumb">{SECTION[parts[0] ?? ''] ?? 'Home'}</div>
+        {brand.headerText ? <div className="crumb-extra">{brand.headerText}</div> : null}
         <UserMenu name={String(me.data?.name ?? who?.name ?? '')} role={String(me.data?.role ?? '')} look={look} onLook={(v) => { setLook(v); setLookState(v); }} live={!fetcher} />
       </header>
       <main className="main">
@@ -243,9 +249,11 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           : inBackup ? <Suspense fallback={<p className="muted">Loading…</p>}><BackupApp /></Suspense>
           : inUpdates ? <Suspense fallback={<p className="muted">Loading…</p>}><Updates /></Suspense>
           : inMail ? <Suspense fallback={<p className="muted">Loading…</p>}><Mail /></Suspense>
+          : inBranding ? <Suspense fallback={<p className="muted">Loading…</p>}><Branding /></Suspense>
           : inLicence ? <Suspense fallback={<p className="muted">Loading…</p>}><Licence /></Suspense>
           : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><UsersArea meId={me.data?.sub} tab={parts[0] === 'access' ? 'groups' : (parts[1] ?? '')} /></Suspense>
           : !err ? <Home who={who} live={!fetcher} assets={canAssets} monitoring={canMon && !fetcher} vault={canVault} adm={canAd} backup={canBackup} /> : null}
+        {brand.footerText ? <footer className="site-foot">{brand.footerText}</footer> : null}
       </main>
     </div>
   );

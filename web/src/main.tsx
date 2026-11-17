@@ -5,8 +5,10 @@ import App from './App';
 import { ensureSignedIn } from './auth';
 import './styles.css';
 import { applyLook } from './look';
+import { loadBrand } from './brand';
 
 applyLook();
+void loadBrand();   // the customer's logo, colours and theme; no sign-in needed
 
 const root = createRoot(document.getElementById('root')!);
 // a send link opens without signing in; its key stays in the address after the #

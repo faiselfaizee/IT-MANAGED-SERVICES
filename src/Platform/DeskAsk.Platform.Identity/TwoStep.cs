@@ -189,14 +189,17 @@ public static class TwoStepEndpoints
 
     static string Field(IAntiforgery af, HttpContext http) { var t = af.GetAndStoreTokens(http); return "<input type=\"hidden\" name=\"" + t.FormFieldName + "\" value=\"" + WebUtility.HtmlEncode(t.RequestToken) + "\">"; }
 
-    static IResult CodePage(HttpContext http, IAntiforgery af, string error = "", int status = 200) =>
-        Results.Content(IdentityModule.Html("<form method=\"post\" action=\"/account/login/code\"><h2>Two-step sign-in</h2>"
+    static async Task<IResult> CodePage(HttpContext http, IAntiforgery af, string error = "", int status = 200)
+    {
+        var brand = await BrandingApi.LoadAsync(http.RequestServices.GetRequiredService<ISettings>(), http.RequestAborted);
+        return Results.Content(IdentityModule.Html("<form method=\"post\" action=\"/account/login/code\">" + BrandingApi.LoginParts(brand).Mark + "<h2>Two-step sign-in</h2>"
             + (error == "" ? "<p>Enter the 6-digit code from your authenticator app, or a recovery code.</p>" : "<p class=\"e\" role=\"alert\">" + WebUtility.HtmlEncode(error) + "</p>")
-            + Field(af, http) + "<input name=\"code\" autocomplete=\"one-time-code\" inputmode=\"numeric\" placeholder=\"Code\" required autofocus><button type=\"submit\">Continue</button></form>"),
+            + Field(af, http) + "<input name=\"code\" autocomplete=\"one-time-code\" inputmode=\"numeric\" placeholder=\"Code\" required autofocus><button type=\"submit\">Continue</button>" + BrandingApi.Footer(brand) + "</form>", brand),
             "text/html; charset=utf-8", Encoding.UTF8, status);
+    }
 
     /// <summary>The password was right: remember who for five minutes (sealed cookie) and ask for the code.</summary>
-    internal static IResult Pending(HttpContext http, IAntiforgery af, Guid userId, string returnUrl)
+    internal static Task<IResult> Pending(HttpContext http, IAntiforgery af, Guid userId, string returnUrl)
     {
         var tok = Protector(http).Protect(userId.ToString("N") + "|" + IdentityModule.LocalOrRoot(returnUrl), TimeSpan.FromMinutes(5));
         http.Response.Cookies.Append("dk.pending", tok, new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Lax, Secure = http.Request.IsHttps, MaxAge = TimeSpan.FromMinutes(5), Path = "/account" });
@@ -216,10 +219,10 @@ public static class TwoStepEndpoints
             catch (Exception) { return Results.Redirect("/account/login"); }   // missing, changed or older than five minutes: start again
             var uid = Guid.Parse(pending[0]); var returnUrl = pending[1];
             var key = "login|" + tenant.Require().Id + "|" + uid;
-            if (Locked(key)) return CodePage(http, af, "Too many attempts. Try again in a few minutes.", 429);
+            if (Locked(key)) return await CodePage(http, af, "Too many attempts. Try again in a few minutes.", 429);
             var code = (await http.Request.ReadFormAsync())["code"].ToString();
             var res = await svc.VerifyAsync(uid, code, ct);
-            if (res == StepResult.Bad) { Fail(key); return CodePage(http, af, "That code is not right.", 401); }
+            if (res == StepResult.Bad) { Fail(key); return await CodePage(http, af, "That code is not right.", 401); }
             fails.TryRemove(key, out _);
             var u = await db.Users.AsNoTracking().FirstAsync(x => x.Id == uid, ct);
             http.Response.Cookies.Delete("dk.pending", new CookieOptions { Path = "/account" });

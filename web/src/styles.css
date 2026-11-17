@@ -21,7 +21,7 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --base: #0e131a;
     --ink: #e4e9f0; --muted: #94a2b4;
     --aqua: #3fcfc0; --blue: #7d98ff; --rose: #ff8ac2;
@@ -35,6 +35,21 @@
     --nav: #0a111b; --nav-2: #16212f;
     color-scheme: dark;
   }
+}
+:root[data-theme='light'] { color-scheme: light; }
+:root[data-theme='dark'] {
+    --base: #0e131a;
+    --ink: #e4e9f0; --muted: #94a2b4;
+    --aqua: #3fcfc0; --blue: #7d98ff; --rose: #ff8ac2;
+    --accent: #3fcfc0; --accent-ink: #04201d; --accent-soft: rgba(63, 207, 192, .12);
+    --glass: #161d27; --glass-2: #1f2834; --glass-solid: #161d27;
+    --edge: #252f3c; --line: #2a3544;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .35); --shadow-pop: 0 14px 36px -8px rgba(0, 0, 0, .6);
+    --row: #1b232e; --head: #19212b; --field: #111820;
+    --ok: #5ad99a; --warn: #f3bf5a; --bad: #ff8a8a; --info: #8fb4ff;
+    --ok-bg: rgba(90, 217, 154, .12); --warn-bg: rgba(243, 191, 90, .13); --bad-bg: rgba(255, 138, 138, .13); --info-bg: rgba(143, 180, 255, .12);
+    --nav: #0a111b; --nav-2: #16212f;
+    color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html { background: var(--base); }
@@ -62,8 +77,8 @@ h1 { font-size: 22px; font-weight: 650; margin: 0 0 16px; } h2 { font-size: 15.5
 .side a:hover { background: var(--nav-2); color: var(--nav-hi); text-decoration: none; }
 .side a.brand, .side a.brand:hover { color: var(--nav-hi); background: none; }
 .side a.on { color: var(--nav-hi); background: var(--nav-2); }
-.side a.on::before { content: ''; position: absolute; left: -10px; top: 6px; bottom: 6px; width: 3px; border-radius: 0 3px 3px 0; background: #3fcfc0; }
-.side a.on .ico { color: #5fe0d2; }
+.side a.on::before { content: ''; position: absolute; left: -10px; top: 6px; bottom: 6px; width: 3px; border-radius: 0 3px 3px 0; background: var(--nav-bar, #3fcfc0); }
+.side a.on .ico { color: var(--nav-bar-ico, #5fe0d2); }
 .side span { opacity: .5; cursor: default; } .side span em { margin-left: auto; font: 500 10.5px var(--font); font-style: normal; padding: 1px 7px; border-radius: 99px; background: var(--nav-2); }
 .ico { flex: none; }
 .topbar { grid-column: 2; position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 16px; padding: 0 28px; background: var(--glass); border-bottom: 1px solid var(--edge); }
@@ -305,7 +320,9 @@ label.check input { width: auto; }
 .dash-head .badge { align-self: center; }
 /* charts: two categorical series (never the status colours), thin lines, a recessive grid */
 .chart { --s1: #3987e5; --s2: #d95926; --s3: #3987e5; margin: 0 0 18px; padding: 12px 14px; border-radius: var(--r-md); background: var(--glass); border: 1px solid var(--edge); }
-@media (prefers-color-scheme: light) { .chart { --s1: #2a78d6; --s2: #eb6834; --s3: #2a78d6; } }
+@media (prefers-color-scheme: light) { :root:not([data-theme='dark']) .chart { --s1: #2a78d6; --s2: #eb6834; --s3: #2a78d6; } }
+:root[data-theme='light'] .chart { --s1: #2a78d6; --s2: #eb6834; --s3: #2a78d6; }
+:root[data-theme='dark'] .chart { --s1: #3987e5; --s2: #d95926; --s3: #3987e5; }
 .chart figcaption { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-weight: 600; margin-bottom: 6px; }
 .chart figcaption .link { margin-left: auto; font-weight: 400; }
 .chart-legend { display: inline-flex; gap: 14px; font-weight: 400; font-size: 13px; color: var(--muted); }
@@ -509,3 +526,20 @@ button.primary.danger { background: var(--bad); color: #fff; }
 .calitem { display: block; font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 6px; padding: 2px 4px; background: var(--row); }
 .calitem.clash { box-shadow: inset 3px 0 0 var(--bad); } .calitem:hover { text-decoration: none; background: var(--glass-2); }
 pre.plaintext { white-space: pre-wrap; font: inherit; margin: 6px 0; }
+
+/* branding: the customer's logo, header text and footer */
+.brand .logo-chip { display: grid; place-items: center; height: 34px; min-width: 34px; max-width: 150px; padding: 3px 6px; border-radius: 8px; background: #fff; overflow: hidden; }
+.brand .logo-chip img { display: block; max-height: 28px; max-width: 138px; object-fit: contain; }
+.brand strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crumb-extra { color: var(--muted); font-size: 13.5px; padding-left: 14px; border-left: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-foot { margin-top: 36px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; text-align: center; }
+.brand-page { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); align-items: start; }
+@media (max-width: 960px) { .brand-page { grid-template-columns: minmax(0, 1fr); } }
+.swatch { display: flex; align-items: center; gap: 8px; } .swatch input[type=color] { width: 44px; height: 34px; padding: 2px; border-radius: 6px; }
+.logo-box { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; } .logo-box .logo-prev { display: grid; place-items: center; width: 150px; height: 64px; border: 1px dashed var(--line); border-radius: 8px; background: #fff; overflow: hidden; }
+.logo-box .logo-prev img { max-width: 140px; max-height: 56px; object-fit: contain; }
+.preview { border: 1px solid var(--edge); border-radius: var(--r-md); overflow: hidden; background: var(--base); }
+.preview .p-nav { padding: 12px 14px; background: var(--nav); color: var(--nav-hi); display: flex; align-items: center; gap: 10px; font-weight: 650; }
+.preview .p-nav .logo-chip { height: 28px; min-width: 28px; padding: 2px 5px; } .preview .p-nav img { max-height: 22px; max-width: 110px; }
+.preview .p-top { padding: 10px 14px; background: var(--glass); border-bottom: 1px solid var(--edge); font-weight: 600; font-size: 13.5px; display: flex; gap: 12px; }
+.preview .p-body { padding: 14px; display: grid; gap: 10px; } .preview .p-foot { padding: 10px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; text-align: center; }

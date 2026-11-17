@@ -134,6 +134,7 @@ public sealed class IdentityModule : IPlatformModule
         GoogleSso.Map(r);
         AdEndpoints.Map(r);
         UsersEndpoints.Map(r);
+        BrandingApi.Map(r);
         r.MapPost("/api/platform/identity/keys/rotate", async (ITenantContext t, TenantKeys keys, IAuditLog audit, CancellationToken ct) =>
         {
             if (keys.Shared) return Results.Conflict(new { error = "This server uses one fixed key (Identity:SigningKeyPem); rotate it in the configuration." });
@@ -269,8 +270,12 @@ public sealed class IdentityModule : IPlatformModule
         + ".sso{display:block;text-align:center;padding:11px 14px;border-radius:12px;border:1px solid var(--line);color:inherit;text-decoration:none;font-weight:600;background:var(--field)}.sso:hover{border-color:#2fe0cf}"
         + ".e{color:var(--bad);margin:0 0 8px}.m{display:flex;align-items:center;gap:10px;margin:0 0 18px;color:var(--muted);font-weight:600}.m i{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#2fe0cf,#5b6bff)}";
 
-    internal static string Html(string body) => "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"dark light\"><title>Sign in</title>"
-        + "<style>" + PageCss + "</style></head><body>" + body + "</body></html>";
+    internal static string Html(string body, Brand? brand = null)
+    {
+        var (css, _) = BrandingApi.LoginParts(brand ?? Brand.Default);
+        return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"dark light\"><title>" + WebUtility.HtmlEncode(brand?.Name ?? "DeskAsk") + " - Sign in</title>"
+            + "<style>" + PageCss + css + "</style></head><body>" + body + "</body></html>";
+    }
 
     internal static string LocalOrRoot(string? url) =>
         !string.IsNullOrEmpty(url) && url[0] == '/' && !url.StartsWith("//") && !url.StartsWith("/\\") ? url : "/";
@@ -280,7 +285,8 @@ public sealed class IdentityModule : IPlatformModule
         var sso = await SsoEndpoints.EnabledAsync(http);
         var google = await GoogleSso.EnabledAsync(http);
         var t = af.GetAndStoreTokens(http);
-        var body = "<form method=\"post\" action=\"/account/login\"><div class=\"m\"><i></i>DeskAsk</div><h2>Sign in</h2>"
+        var brand = await BrandingApi.LoadAsync(http.RequestServices.GetRequiredService<ISettings>(), http.RequestAborted);
+        var body = "<form method=\"post\" action=\"/account/login\">" + BrandingApi.LoginParts(brand).Mark + "<h2>Sign in</h2>"
             + (error == "" ? "" : "<p class=\"e\" role=\"alert\">" + WebUtility.HtmlEncode(error) + "</p>")
             + "<input type=\"hidden\" name=\"" + t.FormFieldName + "\" value=\"" + WebUtility.HtmlEncode(t.RequestToken) + "\">"
             + "<input type=\"hidden\" name=\"returnUrl\" value=\"" + WebUtility.HtmlEncode(LocalOrRoot(returnUrl)) + "\">"
@@ -290,8 +296,8 @@ public sealed class IdentityModule : IPlatformModule
             + (sso || google ? "<p class=\"m\" style=\"margin:14px 0 0;justify-content:center\">or</p>" : "")
             + (sso ? "<a class=\"sso\" href=\"/account/sso/microsoft?returnUrl=" + Uri.EscapeDataString(LocalOrRoot(returnUrl)) + "\">Sign in with Microsoft</a>" : "")
             + (google ? "<a class=\"sso\" style=\"margin-top:8px\" href=\"/account/sso/google?returnUrl=" + Uri.EscapeDataString(LocalOrRoot(returnUrl)) + "\">Sign in with Google</a>" : "")
-            + "</form>";
-        return Results.Content(Html(body), "text/html; charset=utf-8", Encoding.UTF8, status);
+            + BrandingApi.Footer(brand) + "</form>";
+        return Results.Content(Html(body, brand), "text/html; charset=utf-8", Encoding.UTF8, status);
     }
 
     static Task<IResult> LoginPage(HttpContext http, IAntiforgery af, string? returnUrl) =>
@@ -327,7 +333,7 @@ public sealed class IdentityModule : IPlatformModule
             return await Page(http, af, returnUrl, "Email or password is not correct.", StatusCodes.Status401Unauthorized);
         }
         fails.TryRemove(key, out _);
-        if (user.TotpEnabled) return TwoStepEndpoints.Pending(http, af, user.Id, returnUrl);   // password was right; the session starts after the second step
+        if (user.TotpEnabled) return await TwoStepEndpoints.Pending(http, af, user.Id, returnUrl);   // password was right; the session starts after the second step
         await audit.WriteAsync("auth.login", target: email, actor: email);
         if (res == PasswordVerificationResult.SuccessRehashNeeded) { user.PasswordHash = hasher.HashPassword(user, f["password"].ToString()); await db.SaveChangesAsync(http.RequestAborted); }
         await http.SignInAsync(CookieName, new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", user.Id.ToString()) }, CookieName)));
