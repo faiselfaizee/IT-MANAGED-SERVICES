@@ -22,6 +22,7 @@ public static class TestSupport
         b.UseSetting("Platform:BootstrapAdmin:Password", "Correct-Horse-9");
         b.UseSetting("Platform:Roles", "web");   // no background worker unless a test asks for it
         b.UseSetting("Identity:AllowInsecureHttp", "true");
+        b.UseSetting("Security:RateLimits", "off");   // SecurityTests turns them on
         b.UseSetting("Identity:Clients:0:Id", "web");
         b.UseSetting("Identity:Clients:0:RedirectUris:0", Redirect);
         // Every host built by the tests reads the same fake mailbox: hosts of earlier tests keep their workers running and would otherwise take a mail.fetch job and read a real (empty) one.

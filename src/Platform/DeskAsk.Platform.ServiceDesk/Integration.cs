@@ -372,7 +372,7 @@ public sealed class WebhookJob : IJobHandler
     public string Type => JobType;
     public static readonly string[] KnownEvents = { "ticket.created", "ticket.updated", "ticket.status", "ticket.comment", "ticket.note" };
     const int MaxAttempts = 6;
-    static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
+    static readonly HttpClient Http = new(OutboundGuard.Handler()) { Timeout = TimeSpan.FromSeconds(10) };
 
     public async Task RunAsync(JobContext job, CancellationToken ct)
     {

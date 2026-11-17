@@ -31,6 +31,7 @@ if (trustProxy) builder.Services.Configure<ForwardedHeadersOptions>(o =>
     o.KnownNetworks.Clear(); o.KnownProxies.Clear();
 });
 
+HostSecurity.Add(builder);
 var (roles, modules) = PlatformSetup.Add(builder);
 builder.Services.AddResponseCompression(o => o.MimeTypes = Microsoft.AspNetCore.ResponseCompression.ResponseCompressionDefaults.MimeTypes.Concat(new[] { "image/svg+xml" }));
 
@@ -45,12 +46,16 @@ if (trustProxy) app.Use((ctx, next) =>
         ctx.Request.Scheme = "https";
     return next(ctx);
 });
+HostSecurity.Use(app);
 app.UseResponseCompression();
 app.UseTenancy();
 app.UseTenantSchemas();
 app.UseIdentity();
 
-app.MapGet("/health", (HttpContext c) => Results.Ok(new { status = "ok", version = typeof(Program).Assembly.GetName().Version?.ToString(), roles = roles.ToString(), host = c.Request.Host.Host }));
+// The version and roles are given only to a caller on this computer asking for localhost (the installer and updater); anyone else gets "ok".
+app.MapGet("/health", (HttpContext c) => c.Request.Host.Host is "localhost" or "127.0.0.1" or "[::1]" && c.Connection.RemoteIpAddress is { } ip && System.Net.IPAddress.IsLoopback(ip)
+    ? Results.Ok(new { status = "ok", version = typeof(Program).Assembly.GetName().Version?.ToString(), roles = roles.ToString(), host = c.Request.Host.Host })
+    : Results.Ok(new { status = "ok" }));
 app.MapGet("/api/platform/whoami", (ITenantContext t) => Results.Ok(new { tenant = t.Require().Id, name = t.Require().Name }));
 foreach (var m in modules) m.MapEndpoints(app);
 

@@ -14,7 +14,7 @@ namespace DeskAsk.Platform.Monitoring;
 public static class Teams
 {
     public const string Purpose = "dk.monitoring";
-    static readonly HttpClient Http = new(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(10) }) { Timeout = TimeSpan.FromSeconds(15) };
+    static readonly HttpClient Http = new(OutboundGuard.Handler()) { Timeout = TimeSpan.FromSeconds(15) };
 
     /// <summary>Why a webhook address cannot be used, or null. Plain http is allowed only on this computer (for testing).</summary>
     public static string? Check(string url)
