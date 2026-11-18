@@ -106,7 +106,8 @@ Run-Native 'sc.exe' @('config', $PlatformService, 'obj=', 'NT AUTHORITY\LocalSer
 # start after the other services have come up (delayed automatic), after a local PostgreSQL if there is one, and keep trying: the last
 # action repeats, and failureflag makes a start that ends with an error (database not ready yet) count as a failure too
 Run-Native 'sc.exe' @('config', $PlatformService, 'start=', 'delayed-auto')
-$pgSvc = @(Get-Service -Name 'postgresql*' -ErrorAction SilentlyContinue | Select-Object -First 1)
+# only a PostgreSQL that is running now (a stopped or unused copy must not keep the platform from starting)
+$pgSvc = @(Get-Service -Name 'postgresql*' -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Running' } | Select-Object -First 1)
 if ($pgSvc.Count -gt 0) { Run-Native 'sc.exe' @('config', $PlatformService, 'depend=', $pgSvc[0].Name) }
 Run-Native 'sc.exe' @('failure', $PlatformService, 'reset=', '86400', 'actions=', 'restart/5000/restart/15000/restart/30000')
 Run-Native 'sc.exe' @('failureflag', $PlatformService, '1')
