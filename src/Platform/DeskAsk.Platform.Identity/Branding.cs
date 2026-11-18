@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Routing;
 namespace DeskAsk.Platform.Identity;
 
 /// <summary>What a customer's installation looks like: name, logo, header and footer text, colours and theme. Read by anyone (the sign-in page needs it), changed by administrators.</summary>
-public sealed record Brand(string Name, string HeaderText, string FooterText, string Accent, string Nav, string Theme, bool HasLogo, long LogoVersion)
+public sealed record Brand(string Name, string HeaderText, string FooterText, string Accent, string Nav, string Theme, bool HasLogo, long LogoVersion, string Accent2 = "")
 {
     public static readonly Brand Default = new("DeskAsk", "", "", "", "", "auto", false, 0);
 }
@@ -30,9 +30,9 @@ public static class BrandingApi
     // Things that make an SVG do more than draw: scripts, embedded pages, outside addresses, event handlers.
     static readonly string[] SvgBad = { "<script", "<foreignobject", "<iframe", "<object", "<embed", "<!entity", "<!doctype", "javascript:", "<animate", "<set ", "@import", "href=\"http", "href='http", "url(http", "url(\"http", "url('http", "<audio", "<video" };
 
-    sealed record Stored(string? Name, string? HeaderText, string? FooterText, string? Accent, string? Nav, string? Theme, long LogoVersion);
+    sealed record Stored(string? Name, string? HeaderText, string? FooterText, string? Accent, string? Nav, string? Theme, long LogoVersion, string? Accent2 = null);
     sealed record Logo(string Type, string Data);
-    sealed record Update(string? Name, string? HeaderText, string? FooterText, string? Accent, string? Nav, string? Theme);
+    sealed record Update(string? Name, string? HeaderText, string? FooterText, string? Accent, string? Nav, string? Theme, string? Accent2 = null);
 
     public static async Task<Brand> LoadAsync(ISettings s, CancellationToken ct)
     {
@@ -42,7 +42,7 @@ public static class BrandingApi
             var o = JsonSerializer.Deserialize<Stored>(raw, J) ?? new Stored(null, null, null, null, null, null, 0);
             var name = Clean(o.Name, 60); if (name == "") name = "DeskAsk";
             var theme = Themes.Contains(o.Theme ?? "") ? o.Theme! : "auto";
-            return new Brand(name, Clean(o.HeaderText, 120), Clean(o.FooterText, 300), Colour(o.Accent), Colour(o.Nav), theme, o.LogoVersion > 0, o.LogoVersion);
+            return new Brand(name, Clean(o.HeaderText, 120), Clean(o.FooterText, 300), Colour(o.Accent), Colour(o.Nav), theme, o.LogoVersion > 0, o.LogoVersion, Colour(o.Accent2));
         }
         catch { return Brand.Default; }   // a damaged setting must never stop the sign-in page
     }
@@ -93,12 +93,13 @@ public static class BrandingApi
         g.MapPut("", async (Update b, ISettings s, IAuditLog audit, CancellationToken ct) =>
         {
             if (b.Accent is { Length: > 0 } a && !Hex.IsMatch(a.Trim())) return Results.BadRequest(new { error = "bad_colour", detail = "The accent colour must be like #0d8a7f." });
+            if (b.Accent2 is { Length: > 0 } a2 && !Hex.IsMatch(a2.Trim())) return Results.BadRequest(new { error = "bad_colour", detail = "The second colour must be like #c31528." });
             if (b.Nav is { Length: > 0 } n && !Hex.IsMatch(n.Trim())) return Results.BadRequest(new { error = "bad_colour", detail = "The menu colour must be like #0f1c2e." });
             if (b.Theme is { Length: > 0 } t && !Themes.Contains(t)) return Results.BadRequest(new { error = "bad_theme", detail = "The theme must be auto, light or dark." });
             var cur = await LoadAsync(s, ct);
-            var next = new Stored(Clean(b.Name, 60), Clean(b.HeaderText, 120), Clean(b.FooterText, 300), Colour(b.Accent), Colour(b.Nav), string.IsNullOrEmpty(b.Theme) ? "auto" : b.Theme, cur.LogoVersion);
+            var next = new Stored(Clean(b.Name, 60), Clean(b.HeaderText, 120), Clean(b.FooterText, 300), Colour(b.Accent), Colour(b.Nav), string.IsNullOrEmpty(b.Theme) ? "auto" : b.Theme, cur.LogoVersion, Colour(b.Accent2));
             await s.SetAsync(Key, JsonSerializer.Serialize(next, J), ct);
-            await audit.WriteAsync("branding.updated", detail: $"name={next.Name}; accent={next.Accent}; nav={next.Nav}; theme={next.Theme}", ct: ct);
+            await audit.WriteAsync("branding.updated", detail: $"name={next.Name}; accent={next.Accent}; accent2={next.Accent2}; nav={next.Nav}; theme={next.Theme}", ct: ct);
             return Results.Ok(await LoadAsync(s, ct));
         });
 
@@ -134,7 +135,7 @@ public static class BrandingApi
     static async Task SetVersion(ISettings s, long v, CancellationToken ct)
     {
         var cur = await LoadAsync(s, ct);
-        await s.SetAsync(Key, JsonSerializer.Serialize(new Stored(cur.Name, cur.HeaderText, cur.FooterText, cur.Accent, cur.Nav, cur.Theme, v), J), ct);
+        await s.SetAsync(Key, JsonSerializer.Serialize(new Stored(cur.Name, cur.HeaderText, cur.FooterText, cur.Accent, cur.Nav, cur.Theme, v, cur.Accent2), J), ct);
     }
 
     // ---- the server-made pages (sign-in, two-step) ----
@@ -156,6 +157,9 @@ public static class BrandingApi
         }
         if (b.Theme == "light") css.Append(":root{--ink:#0f1b2d;--muted:#4c5d75;--base:#e8f0fb;--glass:rgba(255,255,255,.62);--edge:rgba(255,255,255,.9);--line:rgba(30,60,120,.22);--field:rgba(255,255,255,.75);--bad:#b3261e;color-scheme:light}");
         if (b.Theme == "dark") css.Append(":root{--ink:#eaf1fb;--muted:#a8b7cc;--base:#0a1322;--glass:rgba(255,255,255,.08);--edge:rgba(255,255,255,.18);--line:rgba(255,255,255,.22);--field:rgba(6,12,24,.4);--bad:#ff8a8a;color-scheme:dark}");
+        // the brand stripe across the top of the sign-in box
+        var s1 = Hx.IsMatch(b.Accent) ? b.Accent : "#2fe0cf"; var s2 = Hx.IsMatch(b.Accent2) ? b.Accent2 : "#5b6bff";
+        css.Append($"form{{position:relative;overflow:hidden}}form::before{{content:'';position:absolute;left:0;right:0;top:0;height:5px;background:linear-gradient(90deg,{s1} 0 72%,{s2} 72% 100%)}}");
         css.Append(".lg{display:block;max-width:100%;max-height:56px;margin:0 0 14px;object-fit:contain}.ft{margin:18px 0 0;color:var(--muted);font-size:12.5px;text-align:center}");
         var name = WebUtility.HtmlEncode(b.Name);
         var mark = b.HasLogo ? $"<img class=\"lg\" src=\"/api/branding/logo?v={b.LogoVersion}\" alt=\"{name}\">" + $"<div class=\"m\" style=\"margin-bottom:10px\">{name}</div>"

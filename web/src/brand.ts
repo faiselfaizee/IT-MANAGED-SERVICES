@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 
 /** How this customer's DeskAsk looks: set by an administrator under Administration › Branding. */
-export type Brand = { name: string; headerText: string; footerText: string; accent: string; nav: string; theme: string; hasLogo: boolean; logoVersion: number };
-export const DEFAULT_BRAND: Brand = { name: 'DeskAsk', headerText: '', footerText: '', accent: '', nav: '', theme: 'auto', hasLogo: false, logoVersion: 0 };
+export type Brand = { name: string; headerText: string; footerText: string; accent: string; accent2: string; nav: string; theme: string; hasLogo: boolean; logoVersion: number };
+export const DEFAULT_BRAND: Brand = { name: 'DeskAsk', headerText: '', footerText: '', accent: '', accent2: '', nav: '', theme: 'auto', hasLogo: false, logoVersion: 0 };
 
 let current: Brand = DEFAULT_BRAND;
 const subs = new Set<(b: Brand) => void>();
@@ -16,7 +16,7 @@ export const contrast = (a: string, b: string) => { const x = luminance(a), y = 
 export const inkOn = (bg: string) => (contrast(bg, '#ffffff') >= contrast(bg, '#101820') ? '#ffffff' : '#101820');
 export const mix = (a: string, b: string, t: number) => { const [r1, g1, b1] = rgb(a), [r2, g2, b2] = rgb(b); return hex(r1 + (r2 - r1) * t, g1 + (g2 - g1) * t, b1 + (b2 - b1) * t); };
 
-const VARS = ['--accent', '--accent-ink', '--accent-soft', '--nav', '--nav-2', '--nav-ink', '--nav-hi', '--nav-line', '--nav-bar', '--nav-bar-ico'];
+const VARS = ['--accent-2', '--side-bg', '--side-ink', '--side-hi', '--side-line', '--side-hover', '--side-grp', '--accent', '--accent-ink', '--accent-soft', '--nav', '--nav-2', '--nav-ink', '--nav-hi', '--nav-line', '--nav-bar', '--nav-bar-ico'];
 
 /** Puts a brand on the page: colours as CSS variables, the theme as an attribute, the name in the tab title. */
 export function applyBrand(b: Brand, root: HTMLElement = document.documentElement): void {
@@ -25,8 +25,13 @@ export function applyBrand(b: Brand, root: HTMLElement = document.documentElemen
     const [r, g, bl] = rgb(b.accent);
     st.setProperty('--accent', b.accent); st.setProperty('--accent-ink', inkOn(b.accent)); st.setProperty('--accent-soft', `rgba(${r}, ${g}, ${bl}, .13)`);
   }
+  if (isHex(b.accent2)) st.setProperty('--accent-2', b.accent2);
   if (isHex(b.nav)) {
     const light = luminance(b.nav) > 0.45;
+    // the left menu takes this colour; its text turns light or dark to stay readable
+    st.setProperty('--side-bg', b.nav); st.setProperty('--side-ink', light ? '#33495a' : '#c3cfdc'); st.setProperty('--side-hi', light ? '#0e2433' : '#ffffff');
+    st.setProperty('--side-line', light ? 'rgba(0, 0, 0, .08)' : 'rgba(255, 255, 255, .08)'); st.setProperty('--side-grp', light ? '#8597a6' : '#8296aa');
+    st.setProperty('--side-hover', light ? 'rgba(0, 0, 0, .05)' : 'rgba(255, 255, 255, .08)');
     st.setProperty('--nav', b.nav); st.setProperty('--nav-2', mix(b.nav, light ? '#000000' : '#ffffff', light ? 0.07 : 0.09));
     st.setProperty('--nav-ink', light ? '#33415a' : '#b9c5d6'); st.setProperty('--nav-hi', light ? '#0b1220' : '#ffffff');
     st.setProperty('--nav-line', light ? 'rgba(0, 0, 0, .1)' : 'rgba(255, 255, 255, .08)');

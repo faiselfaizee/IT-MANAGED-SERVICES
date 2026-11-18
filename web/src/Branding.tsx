@@ -15,7 +15,7 @@ export default function Branding() {
   useEffect(() => { if (!loaded.current) { loaded.current = true; setF(saved); } }, [saved]);
   const set = (p: Partial<Brand>) => { setF({ ...f, ...p }); setOk(''); };
 
-  const accentOk = !f.accent || isHex(f.accent); const navOk = !f.nav || isHex(f.nav);
+  const accentOk = (!f.accent || isHex(f.accent)) && (!f.accent2 || isHex(f.accent2)); const navOk = !f.nav || isHex(f.nav);
   const warn = isHex(f.accent) && contrast(f.accent, '#ffffff') < 3 && contrast(f.accent, '#101820') < 3 ? 'This accent colour is hard to read on both light and dark backgrounds.' : '';
 
   const run = async (fn: () => Promise<Brand>, done: string) => {
@@ -23,7 +23,7 @@ export default function Branding() {
     try { const b = await fn(); setBrand({ ...DEFAULT_BRAND, ...b }); setF({ ...DEFAULT_BRAND, ...b }); setOk(done); }
     catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
-  const save = () => run(() => api<Brand>('/api/branding', { method: 'PUT', body: { name: f.name, headerText: f.headerText, footerText: f.footerText, accent: f.accent, nav: f.nav, theme: f.theme } }), 'Saved. Everyone sees the new look after their next page load.');
+  const save = () => run(() => api<Brand>('/api/branding', { method: 'PUT', body: { name: f.name, headerText: f.headerText, footerText: f.footerText, accent: f.accent, accent2: f.accent2, nav: f.nav, theme: f.theme } }), 'Saved. Everyone sees the new look after their next page load.');
   const reset = () => { if (confirm('Go back to the standard DeskAsk look? The logo is removed too.')) void run(() => api<Brand>('/api/branding/reset', { method: 'POST', body: {} }), 'The standard look is back.'); };
   const removeLogo = () => run(() => api<Brand>('/api/branding/logo', { method: 'DELETE' }), 'The logo is removed.');
   const upload = (file: File | undefined) => {
@@ -38,7 +38,7 @@ export default function Branding() {
     }, 'The logo is saved.');
   };
 
-  const pvAccent = isHex(f.accent) ? f.accent : '#0d8a7f'; const pvNav = isHex(f.nav) ? f.nav : '#0f1c2e';
+  const pvAccent = isHex(f.accent) ? f.accent : '#0d8a7f'; const pvNav = isHex(f.nav) ? f.nav : '#ffffff'; const pvA2 = isHex(f.accent2) ? f.accent2 : '#5b6bff';
   return <>
     <h1>Branding</h1>
     <p className="muted">How DeskAsk looks for everyone at this customer: the sign-in page and the web app. Only administrators can change it.</p>
@@ -67,9 +67,14 @@ export default function Branding() {
               <input type="text" aria-label="Accent colour" placeholder="#0d8a7f" value={f.accent} maxLength={7} onChange={(e) => set({ accent: e.target.value.trim() })} />
               {f.accent && <button type="button" onClick={() => set({ accent: '' })}>Standard</button>}</div></div>
           {!accentOk && <Err text="The accent colour must be like #0d8a7f." />}{warn && <p className="muted" role="note">{warn}</p>}
-          <div className="fld"><span className="cap">Menu colour (left side)</span>
-            <div className="colour-row"><input type="color" aria-label="Menu colour picker" value={isHex(f.nav) ? f.nav : '#0f1c2e'} onChange={(e) => set({ nav: e.target.value })} />
-              <input type="text" aria-label="Menu colour" placeholder="#0f1c2e" value={f.nav} maxLength={7} onChange={(e) => set({ nav: e.target.value.trim() })} />
+          <div className="fld"><span className="cap">Second colour (the short end of the stripe at the top of the menu)</span>
+            <div className="colour-row"><input type="color" aria-label="Second colour picker" value={isHex(f.accent2) ? f.accent2 : '#5b6bff'} onChange={(e) => set({ accent2: e.target.value })} />
+              <input type="text" aria-label="Second colour" placeholder="#5b6bff" value={f.accent2} maxLength={7} onChange={(e) => set({ accent2: e.target.value.trim() })} />
+              {f.accent2 && <button type="button" onClick={() => set({ accent2: '' })}>Standard</button>}</div></div>
+          {f.accent2 && !isHex(f.accent2) && <Err text="The second colour must be like #c31528." />}
+          <div className="fld"><span className="cap">Menu colour (left side; empty = white)</span>
+            <div className="colour-row"><input type="color" aria-label="Menu colour picker" value={isHex(f.nav) ? f.nav : '#ffffff'} onChange={(e) => set({ nav: e.target.value })} />
+              <input type="text" aria-label="Menu colour" placeholder="white" value={f.nav} maxLength={7} onChange={(e) => set({ nav: e.target.value.trim() })} />
               {f.nav && <button type="button" onClick={() => set({ nav: '' })}>Standard</button>}</div></div>
           {!navOk && <Err text="The menu colour must be like #0f1c2e." />}
           <Field label="Theme"><select value={f.theme} onChange={(e) => set({ theme: e.target.value })}>
@@ -79,7 +84,8 @@ export default function Branding() {
           <button type="button" disabled={busy} onClick={reset}>Reset to standard</button></p>
       </div>
       <div className="preview" aria-label="Preview">
-        <div className="p-nav" style={{ background: pvNav }}>{f.hasLogo ? <span className="logo-chip"><img src={logoUrl(f)} alt="" /></span> : null}<span>{f.name || 'DeskAsk'}</span></div>
+        <div style={{ height: 5, background: `linear-gradient(90deg, ${pvAccent} 0 72%, ${pvA2} 72% 100%)` }} />
+        <div className="p-nav" style={{ background: pvNav, color: inkOn(pvNav) }}>{f.hasLogo ? <span className="logo-chip"><img src={logoUrl(f)} alt="" /></span> : null}<span>{f.name || 'DeskAsk'}</span></div>
         <div className="p-top"><span>Home</span>{f.headerText && <span className="muted">{f.headerText}</span>}</div>
         <div className="p-body"><span>Preview</span><button type="button" style={{ background: pvAccent, color: inkOn(pvAccent), justifySelf: 'start' }} tabIndex={-1}>Button</button></div>
         {f.footerText && <div className="p-foot">{f.footerText}</div>}

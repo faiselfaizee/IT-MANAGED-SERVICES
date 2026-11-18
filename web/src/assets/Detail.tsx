@@ -1,6 +1,7 @@
 import { PurchaseFields, purchaseBody } from './Purchase';
 import { useState } from 'react';
 import { usePerms } from '../perms';
+import { Icon } from '../chrome';
 import { api, go, openPage, saveFile, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Empty, Err, Field, Loading, Meter, Modal, ago, fmtBytes, fmtDate, fmtDay, fmtUptime, useSubmit } from '../ui';
 import { Checks, Commands, Ise, RemoteControl, Shell, Tickets } from './DetailOps';
@@ -25,6 +26,18 @@ function tabsFor(d: Rec): (readonly [string, string])[] {
   return t;
 }
 
+/** The kind of device, for the coloured tile at the top of the page. */
+function heroKind(d: Rec): 'server' | 'linux' | 'network' | 'printer' | 'phone' | 'pc' {
+  const t = `${d.category ?? ''} ${d.type ?? ''} ${d.identity?.model ?? ''}`.toLowerCase(); const os = String(d.system?.osFamily ?? '').toLowerCase();
+  if (d.watch?.mode === 'network' || d.watch?.mode === 'snmp' || /switch|router|firewall|access point|network/.test(t)) return 'network';
+  if (/printer/.test(t)) return 'printer';
+  if (/phone|mobile|tablet/.test(t)) return 'phone';
+  if (os === 'linux') return 'linux';
+  if (/server|poweredge|proliant|thinksystem|esxi/.test(t) || /server/.test(String(d.system?.os ?? '').toLowerCase())) return 'server';
+  return 'pc';
+}
+const HERO_ICON = { server: 'server', linux: 'server', network: 'network', printer: 'printer', phone: 'phone', pc: 'Assets' } as const;
+
 export default function Detail({ id, tab }: { id: string; tab: string }) {
   const { data: d, error, loading, reload } = useLoad<Rec>(`/api/assets/${id}/device`);
   const perms = usePerms('assets'); const approval = useLoad<Rec>('/api/assets/delete-approval');
@@ -35,8 +48,21 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
   const online = d.agent.online as boolean, hasAgent = !!d.agent.id; const quiet = !!att.data?.peripheral && !hasAgent;
   return <div>
     <p><a href="#/assets">← All assets</a></p>
-    <h1>{d.name} <span className="muted mono">{d.tag}</span> {hasAgent && <Badge tone={online ? 'ok' : 'bad'}>{online ? 'Online' : 'Offline'}</Badge>} {d.ownership.underAmc && <Badge tone="ok">AMC</Badge>} {d.ownership.rented && <Badge>Rented</Badge>}</h1>
-    <div className="tools">
+    <section className="asset-hero">
+      <span className={'hero-ico ' + heroKind(d)}><Icon name={HERO_ICON[heroKind(d)]} size={30} /></span>
+      <div className="hero-main">
+        <h1>{d.name} <span className="muted mono">{d.tag}</span> {hasAgent && <Badge tone={online ? 'ok' : 'bad'}>{online ? 'Online' : 'Offline'}</Badge>} {d.ownership.underAmc && <Badge tone="ok">AMC</Badge>} {d.ownership.rented && <Badge>Rented</Badge>}</h1>
+        <div className="hero-meta">
+          {d.company && <span><b>Customer</b>{d.company}</span>}
+          {d.identity?.serial && <span><b>Serial</b>{d.identity.serial}</span>}
+          {d.system?.ip && <span><b>IP</b>{d.system.ip}</span>}
+          {(d.system?.os || d.identity?.model) && <span><b>{d.system?.os ? 'OS' : 'Model'}</b>{d.system?.os || [d.identity?.make, d.identity?.model].filter(Boolean).join(' ')}</span>}
+          {d.ownership?.assignedTo && <span><b>Holder</b>{d.ownership.assignedTo}</span>}
+          {d.ownership?.location && <span><b>Room</b>{d.ownership.location}</span>}
+        </div>
+      </div>
+    </section>
+    <div className="tools hero-tools">
       {perms.admin && <button onClick={() => setModal('ownership')}>Customer &amp; category</button>}
       {perms.admin && <button onClick={() => setModal('handover')}>{d.ownership.assignedTo ? 'Hand over' : 'Allocate'}</button>}
       <button onClick={() => setModal('qr')}>QR label</button>

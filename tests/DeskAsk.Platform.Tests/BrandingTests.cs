@@ -46,13 +46,14 @@ public class BrandingTests : IClassFixture<WebApplicationFactory<Program>>
         // bad values are refused
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/branding", Json(new { name = "X", accent = "red" }))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/branding", Json(new { name = "X", theme = "neon" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/branding", Json(new { name = "X", accent2 = "crimson" }))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/branding/logo", Raw(Encoding.UTF8.GetBytes("<svg><script>1</script></svg>"), "image/svg+xml"))).StatusCode);
 
         // an administrator sets it; the signed-out sign-in page then shows it
-        var ok = await admin.PutAsync("/api/branding", Json(new { name = "Acme <IT>", headerText = "Acme IT desk", footerText = "Call 100 for help", accent = "#0D8A7F", nav = "#112233", theme = "light" }));
+        var ok = await admin.PutAsync("/api/branding", Json(new { name = "Acme <IT>", headerText = "Acme IT desk", footerText = "Call 100 for help", accent = "#0D8A7F", accent2 = "#C31528", nav = "#112233", theme = "light" }));
         Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
         var now = await J(await anon.GetAsync("/api/branding"));
-        Assert.Equal("Acme <IT>", now.GetProperty("name").GetString()); Assert.Equal("#0d8a7f", now.GetProperty("accent").GetString()); Assert.Equal("light", now.GetProperty("theme").GetString());
+        Assert.Equal("Acme <IT>", now.GetProperty("name").GetString()); Assert.Equal("#0d8a7f", now.GetProperty("accent").GetString()); Assert.Equal("light", now.GetProperty("theme").GetString()); Assert.Equal("#c31528", now.GetProperty("accent2").GetString());
 
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/branding/logo", Raw(Png, "image/png"))).StatusCode);
         Assert.True((await J(await anon.GetAsync("/api/branding"))).GetProperty("hasLogo").GetBoolean());
@@ -62,7 +63,7 @@ public class BrandingTests : IClassFixture<WebApplicationFactory<Program>>
 
         var page = await anon.GetStringAsync("/account/login");
         Assert.Contains("Acme &lt;IT&gt;", page); Assert.DoesNotContain("Acme <IT>", page);
-        Assert.Contains("Call 100 for help", page); Assert.Contains("/api/branding/logo?v=", page); Assert.Contains("#0d8a7f", page);
+        Assert.Contains("Call 100 for help", page); Assert.Contains("/api/branding/logo?v=", page); Assert.Contains("#0d8a7f", page); Assert.Contains("#c31528", page);
 
         // removing the logo and resetting
         Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync("/api/branding/logo")).StatusCode);

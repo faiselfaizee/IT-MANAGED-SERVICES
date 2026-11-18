@@ -207,7 +207,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   return (
     <div className="shell">
       <nav aria-label="Modules" className="side">
-        <a className="brand" href="#/" aria-label={brand.name + ' home'}>{brand.hasLogo ? <span className="logo-chip"><img src={logoUrl(brand)} alt="" /></span> : <Logo size={30} />}<strong>{brand.name}</strong></a>
+        <a className="brand" href="#/" aria-label={brand.name + ' home'}>{brand.hasLogo ? <span className="logo-chip"><img src={logoUrl(brand)} alt="" /></span> : <Logo size={38} />}<span className="brand-text"><strong>{brand.name}</strong><small>{brand.headerText || 'IT managed services'}</small></span></a>
         <div className="side-group">
           <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inBranding && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
           {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
@@ -233,8 +233,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
         </div> : null}
       </nav>
       <header className="topbar">
-        <div className="crumb">{SECTION[parts[0] ?? ''] ?? 'Home'}</div>
-        {brand.headerText ? <div className="crumb-extra">{brand.headerText}</div> : null}
+        <nav className="crumb" aria-label="You are here">{who?.name ? <><span>{who.name}</span><b aria-hidden>›</b></> : null}{(SECTION[parts[0] ?? ''] ?? 'Home').split(' › ').map((x, i, all) => <span key={x} className={i === all.length - 1 ? 'here' : ''}>{x}{i < all.length - 1 ? <b aria-hidden> › </b> : null}</span>)}</nav>
         <UserMenu name={String(me.data?.name ?? who?.name ?? '')} role={String(me.data?.role ?? '')} look={look} onLook={(v) => { setLook(v); setLookState(v); }} live={!fetcher} />
       </header>
       <main className="main">

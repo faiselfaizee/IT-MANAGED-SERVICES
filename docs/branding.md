@@ -17,7 +17,8 @@ Administration › Branding lets a customer's administrators make DeskAsk look l
 | Header text | 120 characters | Top bar of every page |
 | Footer text | 300 characters | Bottom of every page, sign-in page |
 | Accent colour | `#rrggbb` | Buttons, links, focus rings, the marker beside the open menu entry |
-| Menu colour | `#rrggbb` | Left-hand menu (text colour is chosen automatically for contrast) |
+| Second colour | `#rrggbb` | The short end of the stripe across the top of the menu and the sign-in box |
+| Menu colour | `#rrggbb` | Left-hand menu; empty means white (text colour is chosen automatically for contrast) |
 | Theme | auto, light, dark | Auto follows each person's computer; light or dark forces it for everyone |
 
 Text colour on the accent is chosen automatically (black or white, whichever reads better). The page warns when an accent colour is hard to read on both light and dark backgrounds.
