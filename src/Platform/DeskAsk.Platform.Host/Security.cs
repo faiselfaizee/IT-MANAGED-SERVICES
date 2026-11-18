@@ -1,3 +1,4 @@
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("DeskAsk.Platform.Tests")]
 using System.Threading.RateLimiting;
 
 namespace DeskAsk.Platform;
@@ -31,12 +32,35 @@ static class HostSecurity
             {
                 var kind = off ? null : Kind(ctx.Request.Path.Value ?? "", ctx.Request.Method);
                 if (kind == null) return RateLimitPartition.GetNoLimiter("none");
-                var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "local";
+                var ip = ClientKey(ctx);
                 // many computers installing at once share an office address, so enrolment gets a wider allowance
                 var limit = kind == "enroll" ? perMinute * 4 : perMinute;
                 return RateLimitPartition.GetFixedWindowLimiter(kind + "|" + ip, _ => new FixedWindowRateLimiterOptions { PermitLimit = limit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 });
             });
         });
+    }
+
+    /// <summary>The address to count a visitor by. Behind HAProxy and IIS the connection comes from the proxy, so every outside visitor would
+    /// share one allowance (and the web app's token refreshes would use it up). When the connection is from a private or loopback
+    /// address, the visitor is the nearest public address the proxies recorded in X-Forwarded-For, read from the right so a value the
+    /// visitor wrote themselves on the left is never used while the edge proxy appends the real one.</summary>
+    internal static string ClientKey(HttpContext ctx)
+    {
+        var remote = ctx.Connection.RemoteIpAddress;
+        if (remote != null && OutboundGuard.IsPublic(remote)) return remote.ToString();
+        var xff = ctx.Request.Headers["X-Forwarded-For"].ToString();
+        if (xff.Length > 0)
+            foreach (var part in xff.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Reverse())
+                if (TryIp(part, out var a)) { if (OutboundGuard.IsPublic(a)) return a.ToString(); }
+                else break;   // something that is not an address: stop rather than trust what is further left
+        return remote?.ToString() ?? "local";
+    }
+
+    static bool TryIp(string s, out System.Net.IPAddress a)
+    {
+        if (System.Net.IPAddress.TryParse(s, out a!)) return true;
+        if (System.Net.IPEndPoint.TryParse(s, out var ep)) { a = ep.Address; return true; }   // "1.2.3.4:5678", "[2001:db8::1]:443"
+        return false;
     }
 
     public static void Use(WebApplication app)

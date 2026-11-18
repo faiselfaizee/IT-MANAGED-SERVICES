@@ -62,4 +62,21 @@ public class SecurityTests : IClassFixture<WebApplicationFactory<Program>>
     [InlineData("::1", false)] [InlineData("fe80::1", false)] [InlineData("fd00::1", false)] [InlineData("::ffff:10.0.0.1", false)]
     [InlineData("8.8.8.8", true)] [InlineData("52.96.0.1", true)] [InlineData("2606:4700::1111", true)]
     public void OnlyPublicAddressesAreReachableByWebHooks(string ip, bool pub) => Assert.Equal(pub, DeskAsk.Platform.OutboundGuard.IsPublic(IPAddress.Parse(ip)));
+
+    // Behind HAProxy and IIS the connection is the proxy; each outside visitor must still get their own sign-in allowance.
+    [Theory]
+    [InlineData("127.0.0.1", "", "127.0.0.1")]                                     // nothing recorded: the connection itself
+    [InlineData("127.0.0.1", "203.0.113.9", "203.0.113.9")]                        // the visitor, as recorded by the edge proxy
+    [InlineData("127.0.0.1", "203.0.113.9, 192.168.0.1", "203.0.113.9")]           // proxy chain: skip our own private hops
+    [InlineData("127.0.0.1", "198.51.100.7, 203.0.113.9, 10.0.0.2", "203.0.113.9")] // a value the visitor wrote on the left is ignored
+    [InlineData("127.0.0.1", "203.0.113.9:51234", "203.0.113.9")]                 // address with port
+    [InlineData("127.0.0.1", "10.0.0.5", "127.0.0.1")]                             // internal user: no public address
+    [InlineData("203.0.113.50", "198.51.100.7", "203.0.113.50")]                   // reached directly: header not believed
+    public void VisitorsAreCountedByTheirOwnAddress(string remote, string xff, string expected)
+    {
+        var ctx = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        ctx.Connection.RemoteIpAddress = IPAddress.Parse(remote);
+        if (xff != "") ctx.Request.Headers["X-Forwarded-For"] = xff;
+        Assert.Equal(expected, DeskAsk.Platform.HostSecurity.ClientKey(ctx));
+    }
 }

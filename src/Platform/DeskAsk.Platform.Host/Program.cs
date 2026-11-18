@@ -66,9 +66,10 @@ app.UseStaticFiles(new StaticFileOptions
     // Files in /assets have a fingerprint in their name, so the browser may keep them for good; the page itself is always fetched fresh.
     OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = ctx.Context.Request.Path.StartsWithSegments("/assets") ? "public,max-age=31536000,immutable" : "no-cache",
 });
+// Not for any path with a segment starting with "." (/.git/..., /.env, /.well-known/...): those answer 404 instead of the app page.
 // Not for addresses that end in a file name (.js, .css, .ico, ...): once an endpoint matches, the static file middleware steps aside,
 // so a script request would be answered with the page instead of the script.
-app.MapFallbackToFile("/{*path:regex(^(?!api/|connect/|account/|\\.well-known/|health)(?!.*\\.[A-Za-z0-9]+$).*$)}", "index.html");
+app.MapFallbackToFile("/{*path:regex(^(?!api/|connect/|account/|health)(?!(?:.*/)?\\.)(?!.*\\.[A-Za-z0-9]+$).*$)}", "index.html");
 
 app.Run();
 
