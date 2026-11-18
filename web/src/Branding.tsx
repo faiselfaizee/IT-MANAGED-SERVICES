@@ -62,15 +62,15 @@ export default function Branding() {
           <Field label="Footer text (shown at the bottom of every page and on the sign-in page)"><textarea rows={2} value={f.footerText} maxLength={300} onChange={(e) => set({ footerText: e.target.value })} /></Field>
         </div></Card>
         <Card title="Colours and theme"><div className="form">
-          <Field label="Accent colour (buttons and links)">
-            <span className="swatch"><input type="color" aria-label="Accent colour picker" value={isHex(f.accent) ? f.accent : '#0d8a7f'} onChange={(e) => set({ accent: e.target.value })} />
-              <input aria-label="Accent colour" placeholder="#0d8a7f" value={f.accent} maxLength={7} onChange={(e) => set({ accent: e.target.value.trim() })} />
-              {f.accent && <button type="button" onClick={() => set({ accent: '' })}>Standard</button>}</span></Field>
+          <div className="fld"><span className="cap">Accent colour (buttons and links)</span>
+            <div className="colour-row"><input type="color" aria-label="Accent colour picker" value={isHex(f.accent) ? f.accent : '#0d8a7f'} onChange={(e) => set({ accent: e.target.value })} />
+              <input type="text" aria-label="Accent colour" placeholder="#0d8a7f" value={f.accent} maxLength={7} onChange={(e) => set({ accent: e.target.value.trim() })} />
+              {f.accent && <button type="button" onClick={() => set({ accent: '' })}>Standard</button>}</div></div>
           {!accentOk && <Err text="The accent colour must be like #0d8a7f." />}{warn && <p className="muted" role="note">{warn}</p>}
-          <Field label="Menu colour (left side)">
-            <span className="swatch"><input type="color" aria-label="Menu colour picker" value={isHex(f.nav) ? f.nav : '#0f1c2e'} onChange={(e) => set({ nav: e.target.value })} />
-              <input aria-label="Menu colour" placeholder="#0f1c2e" value={f.nav} maxLength={7} onChange={(e) => set({ nav: e.target.value.trim() })} />
-              {f.nav && <button type="button" onClick={() => set({ nav: '' })}>Standard</button>}</span></Field>
+          <div className="fld"><span className="cap">Menu colour (left side)</span>
+            <div className="colour-row"><input type="color" aria-label="Menu colour picker" value={isHex(f.nav) ? f.nav : '#0f1c2e'} onChange={(e) => set({ nav: e.target.value })} />
+              <input type="text" aria-label="Menu colour" placeholder="#0f1c2e" value={f.nav} maxLength={7} onChange={(e) => set({ nav: e.target.value.trim() })} />
+              {f.nav && <button type="button" onClick={() => set({ nav: '' })}>Standard</button>}</div></div>
           {!navOk && <Err text="The menu colour must be like #0f1c2e." />}
           <Field label="Theme"><select value={f.theme} onChange={(e) => set({ theme: e.target.value })}>
             <option value="auto">Follow each person's computer (light or dark)</option><option value="light">Always light</option><option value="dark">Always dark</option></select></Field>
