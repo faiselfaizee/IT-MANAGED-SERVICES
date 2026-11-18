@@ -14,3 +14,11 @@ test('unknown address shows a message', async () => {
   await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('not set up'));
 });
 test('lists all six modules', () => { expect(MODULES.length).toBe(6); });
+
+test('customers see no placeholder tiles for products they cannot open', async () => {
+  const { Home } = await import('./App');
+  const { container } = render(<Home who={{ tenant: 'acme', name: 'Acme' }} live={false} assets={true} customer={true} />);
+  expect(container.querySelectorAll('.tile-soon').length).toBe(0);
+  const staff = render(<Home who={{ tenant: 'acme', name: 'Acme' }} live={false} assets={true} />);
+  expect(staff.container.querySelectorAll('.tile-soon').length).toBeGreaterThan(0);
+});

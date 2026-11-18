@@ -61,7 +61,7 @@ function UserMenu({ name, role, look, onLook, live }: { name: string; role: stri
   </div>;
 }
 
-export function Home({ who, live, assets, monitoring = false, vault = false, adm = false, backup = false }: { who: WhoAmI | null; live: boolean; assets: boolean; monitoring?: boolean; vault?: boolean; adm?: boolean; backup?: boolean }) {
+export function Home({ who, live, assets, monitoring = false, vault = false, adm = false, backup = false, customer = false }: { who: WhoAmI | null; live: boolean; assets: boolean; monitoring?: boolean; vault?: boolean; adm?: boolean; backup?: boolean; customer?: boolean }) {
   const bk = useLoad<Rec>(live && backup ? '/api/backup/dashboard' : null);
   const b = (bk.data?.all ?? null) as Rec | null;
   const mon = useLoad<Rec>(live && monitoring ? '/api/monitoring/dashboard' : null);
@@ -165,7 +165,7 @@ export function Home({ who, live, assets, monitoring = false, vault = false, adm
           <div><h2 id="t-ad"><a href="#/admanager">AD Manager</a></h2><p className="muted">Look up and manage your customers' Active Directory accounts and groups</p></div>
           <a className="open" href="#/admanager">Open AD Manager</a></div>
       </section>}
-      {MODULES.filter((m) => m !== 'Assets' && m !== 'Service Desk' && (m !== 'Monitoring' || !monitoring) && (m !== 'Vault' || !vault) && (m !== 'AD Manager' || !adm) && (m !== 'Backup' || !backup)).map((m) => <div key={m} className="tile tile-soon" aria-disabled="true">
+      {!customer && MODULES.filter((m) => m !== 'Assets' && m !== 'Service Desk' && (m !== 'Monitoring' || !monitoring) && (m !== 'Vault' || !vault) && (m !== 'AD Manager' || !adm) && (m !== 'Backup' || !backup)).map((m) => <div key={m} className="tile tile-soon" aria-disabled="true">
         <span className="chip"><Icon name={m} size={22} /></span>
         <h2>{m}</h2>
         <p className="muted">{ABOUT[m]}</p>
@@ -183,6 +183,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   useEffect(() => { whoAmI(fetcher).then(setWho, (e: Error) => setErr(e.message)); }, [fetcher]);
   const me = useLoad<Rec>(fetcher ? null : '/api/platform/me');
   const isAdmin = me.data?.role === 'admin';
+  const isCustomer = me.data?.role === 'customer';
   // every time DeskAsk shows comes from the server's clock; tell an administrator when it disagrees with this computer's
   const skewMin = useMemo(() => (me.data?.serverTime ? Math.round((new Date(me.data.serverTime as string).getTime() - Date.now()) / 60000) : 0), [me.data]);
   const mine = useLoad<Rec>(fetcher ? null : '/api/platform/access/mine');
@@ -222,6 +223,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
               ? <a key={m} href="#/backup" className={inBackup ? 'on' : ''}><Icon name={m} />{m}</a>
             : m === 'Vault' && canVault
               ? <a key={m} href="#/vault" className={inVault ? 'on' : ''}><Icon name={m} />{m}</a>
+              : isCustomer ? null   // customers only see what they can open
               : <span key={m} title="Not built yet"><Icon name={m} />{m}<em>Soon</em></span>)}
         </div>
         {isAdmin ? <div className="side-group"><h4>Administration</h4>
@@ -251,7 +253,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           : inBranding ? <Suspense fallback={<p className="muted">Loading…</p>}><Branding /></Suspense>
           : inLicence ? <Suspense fallback={<p className="muted">Loading…</p>}><Licence /></Suspense>
           : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><UsersArea meId={me.data?.sub} tab={parts[0] === 'access' ? 'groups' : (parts[1] ?? '')} /></Suspense>
-          : !err ? <Home who={who} live={!fetcher} assets={canAssets} monitoring={canMon && !fetcher} vault={canVault} adm={canAd} backup={canBackup} /> : null}
+          : !err ? <Home who={who} live={!fetcher} assets={canAssets} monitoring={canMon && !fetcher} vault={canVault} adm={canAd} backup={canBackup} customer={isCustomer} /> : null}
         {brand.footerText ? <footer className="site-foot">{brand.footerText}</footer> : null}
       </main>
     </div>
