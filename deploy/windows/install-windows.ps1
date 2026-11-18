@@ -103,7 +103,13 @@ if (-not (Get-Service -Name $PlatformService -ErrorAction SilentlyContinue)) {
         -Description 'DeskAsk Platform: help desk, service desk, assets, monitoring and more.' | Out-Null
 }
 Run-Native 'sc.exe' @('config', $PlatformService, 'obj=', 'NT AUTHORITY\LocalService')
-Run-Native 'sc.exe' @('failure', $PlatformService, 'reset=', '86400', 'actions=', 'restart/5000/restart/5000/restart/30000')
+# start after the other services have come up (delayed automatic), after a local PostgreSQL if there is one, and keep trying: the last
+# action repeats, and failureflag makes a start that ends with an error (database not ready yet) count as a failure too
+Run-Native 'sc.exe' @('config', $PlatformService, 'start=', 'delayed-auto')
+$pgSvc = @(Get-Service -Name 'postgresql*' -ErrorAction SilentlyContinue | Select-Object -First 1)
+if ($pgSvc.Count -gt 0) { Run-Native 'sc.exe' @('config', $PlatformService, 'depend=', $pgSvc[0].Name) }
+Run-Native 'sc.exe' @('failure', $PlatformService, 'reset=', '86400', 'actions=', 'restart/5000/restart/15000/restart/30000')
+Run-Native 'sc.exe' @('failureflag', $PlatformService, '1')
 # settings of this service only (not the whole machine). The secrets are in the configuration file, which only administrators and the service can read.
 $envValues = @("DESKASK_CONFIG=$cfgPath", "ASPNETCORE_URLS=$Urls", 'ASPNETCORE_ENVIRONMENT=Production', 'DOTNET_ENVIRONMENT=Production')
 New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$PlatformService" -Name Environment -PropertyType MultiString -Value $envValues -Force | Out-Null
