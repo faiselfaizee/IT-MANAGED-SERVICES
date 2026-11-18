@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeskAsk security scanner</title>
+<style>
+  :root { --blue:#07a1e2; --red:#c31528; --ink:#0e2433; --muted:#6b7f8e; --line:#e2eaf0; --bg:#f2f6f9; --card:#fff;
+    --critical:#9e0f20; --high:#c31528; --medium:#d98e04; --low:#0583ba; --info:#12a150; --pass:#12a150; --fail:#c31528; --warn:#d98e04;
+    --font:"Segoe UI Variable","Segoe UI",system-ui,Roboto,Arial,sans-serif; --mono:"Cascadia Mono",Consolas,monospace; }
+  * { box-sizing:border-box; } html,body { margin:0; height:100%; }
+  body { font-family:var(--font); font-size:14px; color:var(--ink); background:var(--bg); }
+  .top { background:#fff; border-bottom:1px solid var(--line); }
+  .top::before { content:""; display:block; height:5px; background:linear-gradient(90deg,var(--blue) 0 72%,var(--red) 72% 100%); }
+  .top .in { max-width:1180px; margin:0 auto; padding:16px 22px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .top h1 { font-size:18px; margin:0; } .top .tag { color:var(--muted); font-size:12px; letter-spacing:.04em; }
+  .wrap { max-width:1180px; margin:0 auto; padding:18px 22px 60px; }
+  .bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; background:#fff; border:1px solid var(--line); border-radius:14px; padding:14px 16px; box-shadow:0 6px 24px rgba(14,36,51,.06); }
+  input[type=text] { flex:1; min-width:280px; height:42px; padding:0 14px; border:1px solid #d3dee6; border-radius:10px; font:inherit; }
+  input:focus { outline:none; border-color:var(--blue); box-shadow:0 0 0 4px rgba(7,161,226,.14); }
+  button { height:42px; padding:0 20px; border:0; border-radius:10px; background:var(--blue); color:#fff; font:inherit; font-weight:650; cursor:pointer; }
+  button.ghost { background:#fff; color:var(--ink); border:1px solid var(--line); }
+  button:disabled { opacity:.5; cursor:default; }
+  .note { color:var(--muted); font-size:12.5px; margin:10px 2px 0; }
+  .counts { display:flex; gap:10px; flex-wrap:wrap; margin:18px 0; }
+  .pill { background:#fff; border:1px solid var(--line); border-radius:999px; padding:7px 14px; font-weight:650; font-size:13px; display:flex; gap:8px; align-items:center; }
+  .pill b { font-size:15px; } .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .d-critical{background:var(--critical)}.d-high{background:var(--high)}.d-medium{background:var(--medium)}.d-low{background:var(--low)}.d-info{background:var(--info)}
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; } @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card { background:#fff; border:1px solid var(--line); border-radius:14px; box-shadow:0 6px 24px rgba(14,36,51,.06); }
+  .card h2 { font-size:14px; margin:0; padding:13px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+  .prog { height:6px; background:#e9eff3; border-radius:999px; overflow:hidden; margin:0 0 4px; }
+  .prog > span { display:block; height:100%; width:0; background:linear-gradient(90deg,var(--blue),var(--red)); transition:width .3s; }
+  .log { font-family:var(--mono); font-size:12px; line-height:1.55; background:#0b1c28; color:#cfe3ee; padding:12px 14px; height:360px; overflow:auto; border-radius:0 0 14px 14px; white-space:pre-wrap; }
+  .log .error { color:#ff8a8a; } .log .t { color:#6e8fa3; }
+  .findings { padding:6px 0; max-height:none; }
+  .f { border-bottom:1px solid var(--line); padding:12px 16px; }
+  .f:last-child { border-bottom:0; }
+  .f .h { display:flex; gap:10px; align-items:center; cursor:pointer; }
+  .f .sev { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; padding:3px 8px; border-radius:6px; color:#fff; flex:none; }
+  .s-critical{background:var(--critical)}.s-high{background:var(--high)}.s-medium{background:var(--medium)}.s-low{background:var(--low)}.s-info{background:#8aa0b0}
+  .f .st { font-size:11px; font-weight:700; padding:2px 7px; border-radius:999px; flex:none; }
+  .st-pass{background:#e5f6ec;color:#0b7a3c}.st-fail{background:#fce9eb;color:var(--red)}.st-warn{background:#fff4dc;color:#8a5a00}.st-info{background:#eef2f5;color:var(--muted)}.st-error{background:#fce9eb;color:var(--red)}
+  .f .ttl { font-weight:600; flex:1; } .f .ev { color:var(--muted); font-size:12.5px; margin:8px 0 0 0; font-family:var(--mono); word-break:break-word; }
+  .f .fix { margin:8px 0 0; padding:10px 12px; background:#f7fbfe; border-left:3px solid var(--blue); border-radius:8px; font-size:13px; }
+  .f .fix b { color:var(--blue); } .hidden { display:none; }
+  .empty { padding:40px 16px; text-align:center; color:var(--muted); }
+  footer { color:var(--muted); font-size:12px; text-align:center; margin-top:26px; }
+</style>
+</head>
+<body>
+  <div class="top"><div class="in">
+    <div><h1>DeskAsk security scanner</h1><div class="tag">Safe, read-only checks · live log · mitigation plan</div></div>
+  </div></div>
+  <div class="wrap">
+    <div class="bar">
+      <input id="target" type="text" placeholder="https://platform.deskask.in" autocomplete="off" />
+      <button id="start">Start scan</button>
+      <button id="stop" class="ghost hidden">Stop</button>
+      <button id="dl" class="ghost" disabled>Download report</button>
+    </div>
+    <div class="note">Enter the public address of a DeskAsk server <b>you own or are authorised to test</b>. The scan sends only safe, read-only requests — it never signs in with real passwords and never creates, changes or deletes anything. A short burst of ~20 bad sign-in attempts is sent on purpose to check the rate limit.</div>
+
+    <div class="counts" id="counts"></div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Live log <span class="tag" id="progtxt"></span></h2>
+        <div class="prog"><span id="progbar"></span></div>
+        <div class="log" id="log"></div>
+      </div>
+      <div class="card">
+        <h2>Findings &amp; mitigation <span class="tag" id="fcount"></span></h2>
+        <div class="findings" id="findings"><div class="empty">Findings appear here as the scan runs. Click one to see the fix.</div></div>
+      </div>
+    </div>
+    <footer>DeskAsk security scanner · runs locally on your computer · results are not sent anywhere.</footer>
+  </div>
+
+<script>
+const SEV = ['info','low','medium','high','critical'];
+let findings = [], es = null, target = '';
+const $ = (id) => document.getElementById(id);
+
+function tstamp(){ return new Date().toLocaleTimeString(); }
+function addLog(text, level){ const el = $('log'); const line = document.createElement('div'); if(level) line.className = level;
+  line.innerHTML = '<span class="t">'+tstamp()+'</span>  '+esc(text); el.appendChild(line); el.scrollTop = el.scrollHeight; }
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function renderCounts(){
+  const by = {critical:0,high:0,medium:0,low:0,info:0};
+  for(const f of findings){ if(f.status==='pass'||f.status==='info') { if(f.sev==='info') by.info++; else by[f.sev]++; } else by[f.sev]++; }
+  // count by severity but only problems (fail/warn/error) for the top four; info/pass counted as info
+  const prob = {critical:0,high:0,medium:0,low:0,ok:0};
+  for(const f of findings){ if(f.status==='fail'||f.status==='warn'||f.status==='error'){ prob[f.sev] = (prob[f.sev]||0)+1; } else prob.ok++; }
+  $('counts').innerHTML =
+    pill('critical', prob.critical, 'Critical') + pill('high', prob.high, 'High') +
+    pill('medium', prob.medium, 'Medium') + pill('low', prob.low, 'Low') +
+    '<span class="pill"><span class="dot d-info"></span>Passed <b>'+prob.ok+'</b></span>';
+}
+function pill(sev,n,label){ return '<span class="pill"><span class="dot d-'+sev+'"></span>'+label+' <b>'+n+'</b></span>'; }
+
+function renderFindings(){
+  const order = {fail:0,error:0,warn:1,info:2,pass:2};
+  const sorted = [...findings].sort((a,b)=> (order[a.status]-order[b.status]) || (b.sevRank-a.sevRank));
+  if(!sorted.length){ $('findings').innerHTML = '<div class="empty">No findings yet.</div>'; return; }
+  $('findings').innerHTML = sorted.map((f,i)=>{
+    const open = (f.status==='fail'||f.status==='error');
+    return '<div class="f"><div class="h" onclick="this.parentNode.querySelector(\'.body\').classList.toggle(\'hidden\')">'
+      + '<span class="sev s-'+f.sev+'">'+f.sev+'</span>'
+      + '<span class="st st-'+f.status+'">'+f.status+'</span>'
+      + '<span class="ttl">'+esc(f.title)+'</span></div>'
+      + '<div class="body'+(open?'':' hidden')+'">'
+      + (f.evidence?'<div class="ev">'+esc(f.evidence)+'</div>':'')
+      + (f.fix?'<div class="fix"><b>Mitigation:</b> '+esc(f.fix)+'</div>':'')
+      + '</div></div>';
+  }).join('');
+  $('fcount').textContent = findings.length + ' checks';
+}
+
+function start(){
+  target = $('target').value.trim();
+  if(!target){ alert('Enter the DeskAsk URL first.'); return; }
+  if(!/^https?:\/\//i.test(target)) target = 'https://'+target;
+  findings = []; $('log').innerHTML=''; renderFindings(); renderCounts();
+  $('start').disabled = true; $('stop').classList.remove('hidden'); $('dl').disabled = true;
+  es = new EventSource('/run?target='+encodeURIComponent(target));
+  es.onmessage = (e)=>{ const m = JSON.parse(e.data);
+    if(m.type==='log') addLog(m.text, m.level==='error'?'error':'');
+    else if(m.type==='finding'){ findings.push(m.finding); renderFindings(); renderCounts(); }
+    else if(m.type==='progress'){ const pct = m.total? Math.round(m.done/m.total*100):0; $('progbar').style.width = pct+'%'; $('progtxt').textContent = m.done+' / '+m.total+' checks'; }
+    else if(m.type==='done'){ finish(); }
+  };
+  es.onerror = ()=>{ addLog('Connection to the scanner closed.', 'error'); finish(); };
+}
+function finish(){ if(es){ es.close(); es=null; } $('start').disabled=false; $('stop').classList.add('hidden'); $('dl').disabled = findings.length===0; }
+function stop(){ if(es){ es.close(); es=null; } addLog('Scan stopped by you.', 'error'); finish(); }
+
+function download(){
+  const order = {fail:0,error:0,warn:1,info:2,pass:2};
+  const sorted = [...findings].sort((a,b)=> (order[a.status]-order[b.status]) || (b.sevRank-a.sevRank));
+  const rows = sorted.map(f=>`<tr class="r-${f.status}"><td><span class="sev s-${f.sev}">${f.sev}</span></td><td>${f.status}</td><td>${esc(f.title)}</td><td class="ev">${esc(f.evidence||'')}</td><td>${esc(f.fix||'—')}</td></tr>`).join('');
+  const prob = findings.filter(f=>f.status==='fail'||f.status==='warn'||f.status==='error');
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>DeskAsk security report</title><style>
+    body{font-family:Segoe UI,system-ui,Arial,sans-serif;color:#0e2433;max-width:1100px;margin:24px auto;padding:0 20px}
+    h1{border-bottom:4px solid #07a1e2;padding-bottom:8px} .meta{color:#6b7f8e;font-size:13px}
+    table{border-collapse:collapse;width:100%;font-size:13px;margin-top:16px} th,td{border:1px solid #e2eaf0;padding:8px 10px;text-align:left;vertical-align:top}
+    th{background:#f8fafc;text-transform:uppercase;font-size:11px;letter-spacing:.05em;color:#6b7f8e}
+    .sev{color:#fff;padding:2px 7px;border-radius:5px;font-size:11px;font-weight:700;text-transform:uppercase}
+    .s-critical{background:#9e0f20}.s-high{background:#c31528}.s-medium{background:#d98e04}.s-low{background:#0583ba}.s-info{background:#8aa0b0}
+    .ev{font-family:Consolas,monospace;color:#4a5a68;font-size:12px} .r-fail,.r-error{background:#fdf3f4}.r-warn{background:#fffaf0}
+    .sum{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.chip{border:1px solid #e2eaf0;border-radius:999px;padding:6px 12px;font-weight:650;font-size:13px}
+  </style></head><body>
+    <h1>DeskAsk security assessment</h1>
+    <p class="meta">Target: <b>${esc(target)}</b> · Generated: ${new Date().toLocaleString()} · ${findings.length} checks, ${prob.length} issue(s) to review.</p>
+    <p class="meta">Produced by the DeskAsk security scanner — safe, read-only external checks. Not a substitute for a full manual penetration test.</p>
+    <div class="sum">
+      <span class="chip">Critical: ${prob.filter(f=>f.sev==='critical').length}</span>
+      <span class="chip">High: ${prob.filter(f=>f.sev==='high').length}</span>
+      <span class="chip">Medium: ${prob.filter(f=>f.sev==='medium').length}</span>
+      <span class="chip">Low: ${prob.filter(f=>f.sev==='low').length}</span>
+      <span class="chip">Passed: ${findings.length-prob.length}</span>
+    </div>
+    <h2>Findings &amp; mitigation plan</h2>
+    <table><thead><tr><th>Severity</th><th>Status</th><th>Finding</th><th>Evidence</th><th>Mitigation</th></tr></thead><tbody>${rows}</tbody></table>
+  </body></html>`;
+  const blob = new Blob([html], {type:'text/html'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'deskask-security-report-'+new Date().toISOString().slice(0,10)+'.html'; a.click();
+}
+
+$('start').onclick = start; $('stop').onclick = stop; $('dl').onclick = download;
+$('target').addEventListener('keydown', e=>{ if(e.key==='Enter') start(); });
+renderCounts();
+</script>
+</body>
+</html>
