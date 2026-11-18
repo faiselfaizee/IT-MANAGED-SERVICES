@@ -1,5 +1,6 @@
-[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("DeskAsk.Platform.Tests")]
 using System.Threading.RateLimiting;
+
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("DeskAsk.Platform.Tests")]
 
 namespace DeskAsk.Platform;
 
