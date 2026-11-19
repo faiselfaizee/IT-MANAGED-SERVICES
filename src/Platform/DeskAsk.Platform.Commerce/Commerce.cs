@@ -316,5 +316,6 @@ public sealed class CommerceModule : IPlatformModule
         StoreApi.Map(r);
         StoreFront.Map(r);
         StoreConsole.Map(r);
+        Pages.Map(r);
     }
 }

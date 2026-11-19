@@ -11,7 +11,7 @@ const quote = { currency: 'INR', kind: 'saas', period: 'year', lines: [{ module:
 test('a size is priced with GST on the server and the store footer names the seller', async () => {
   const fetch = vi.fn(async (u: string, _o?: RequestInit) => new Response(JSON.stringify(String(u).includes("/info") ? info : String(u).includes("/plans") ? plans : quote), { status: 200 }));
   vi.stubGlobal('fetch', fetch);
-  render(<StorePage path={[]} />);
+  render(<StorePage path={['pricing']} />);
   await waitFor(() => expect(screen.getByLabelText('Service Desk size')).toBeTruthy());
   fireEvent.change(screen.getByLabelText('Service Desk size'), { target: { value: '2' } });
   await waitFor(() => expect(screen.getByText('₹80,240')).toBeTruthy());
@@ -19,7 +19,7 @@ test('a size is priced with GST on the server and the store footer names the sel
   const q = fetch.mock.calls.find((c) => String(c[0]).endsWith('/api/store/quote'))!;
   expect(JSON.parse(String((q[1] as RequestInit).body))).toMatchObject({ kind: 'saas', plans: { servicedesk: 2 }, country: 'IN', stateCode: '33' });
   expect(screen.getByText(/DamazeTech Solutions/)).toBeTruthy();
-  expect(screen.getByText('Terms of Service')).toBeTruthy();
+  expect(screen.getAllByText('Terms of Service').length).toBeGreaterThan(0);
   expect(screen.getByText(/Test mode/)).toBeTruthy();
 });
 
@@ -40,4 +40,27 @@ test('a free trial checks the address and starts', async () => {
   await waitFor(() => expect(screen.getByText('https://acme.deskask.in is free')).toBeTruthy(), { timeout: 2000 });
   fireEvent.click(screen.getByText('Start free trial'));
   await waitFor(() => expect(screen.getByText('Your trial is ready')).toBeTruthy());
+});
+
+test('the home page tells the story, switches modules and links the policy pages', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (u: string) => new Response(JSON.stringify(String(u).includes('/info') ? info : plans), { status: 200 })));
+  render(<StorePage path={[]} />);
+  await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toMatch(/One desk/));
+  expect(screen.getByText('INC-0142 opened, priority P2')).toBeTruthy();
+  await waitFor(() => expect(screen.getByText('₹68,000')).toBeTruthy());   // "from" price of the first module
+  fireEvent.click(screen.getByRole('tab', { name: /Vault/ }));
+  expect(screen.getByRole('tabpanel').textContent).toMatch(/encrypted in the browser/i);
+  expect(screen.getByText('Privacy Policy').getAttribute('href')).toBe('#/store/privacy');
+  expect(screen.getByText('Terms of Service').getAttribute('href')).toBe('https://www.deskask.in/terms');   // a link set in Business details wins
+});
+
+test('a policy page is drawn from its markdown without passing HTML through', async () => {
+  const page = { slug: 'refund', title: 'Cancellation and Refund Policy', markdown: '*Last updated: today*\n\n| Situation | Refund |\n| --- | --- |\n| Free trial | Nothing to pay |\n\n**How refunds are paid.** Write to servicedesk@deskask.in. <script>x</script>' };
+  vi.stubGlobal('fetch', vi.fn(async (u: string) => new Response(JSON.stringify(String(u).includes('/info') ? info : page), { status: 200 })));
+  const { container } = render(<StorePage path={['refund']} />);
+  await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Cancellation and Refund Policy' })).toBeTruthy());
+  expect(screen.getByRole('columnheader', { name: 'Refund' })).toBeTruthy();
+  expect(screen.getByText('How refunds are paid.').tagName).toBe('STRONG');
+  expect(screen.getByText('servicedesk@deskask.in', { selector: '.md a' }).getAttribute('href')).toBe('mailto:servicedesk@deskask.in');
+  expect(container.querySelector('script')).toBeNull();
 });

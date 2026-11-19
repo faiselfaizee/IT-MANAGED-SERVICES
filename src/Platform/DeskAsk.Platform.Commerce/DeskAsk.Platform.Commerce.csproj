@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <EmbeddedResource Include="Pages\*.md" LogicalName="DeskAsk.Platform.Commerce.Pages.%(Filename).md" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\DeskAsk.Platform.Abstractions\DeskAsk.Platform.Abstractions.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.Licensing\DeskAsk.Platform.Licensing.csproj" />

@@ -10,15 +10,55 @@ using Npgsql;
 
 namespace DeskAsk.Platform.Licensing;
 
-/// <summary>The vendor's public key (Licensing:VendorPublicKeyPem). Without it no licence can be trusted.</summary>
+/// <summary>
+/// The vendor's public key: every licence is checked against it. Built into the release (VendorPublicKey.pem, embedded); Licensing:VendorPublicKeyPem
+/// (or Licensing:VendorPublicKeyFile) replaces it. A key in the configuration that cannot be read never stops the server: it is ignored,
+/// the built-in key is used, and <see cref="Problem"/> says what is wrong (shown on Administration › Licence and in the vendor console).
+/// </summary>
 public sealed class VendorKey
 {
     public ECDsa? Public { get; }
+    public string? Problem { get; }
+    public string Source { get; } = "none";
+
     public VendorKey(IConfiguration cfg)
     {
-        var pem = cfg["Licensing:VendorPublicKeyPem"];
-        if (string.IsNullOrWhiteSpace(pem)) return;
-        var k = ECDsa.Create(); k.ImportFromPem(pem); Public = k;
+        var text = cfg["Licensing:VendorPublicKeyPem"];
+        var file = cfg["Licensing:VendorPublicKeyFile"];
+        if (string.IsNullOrWhiteSpace(text) && !string.IsNullOrWhiteSpace(file))
+        {
+            try { text = File.ReadAllText(file); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Problem = "Licensing:VendorPublicKeyFile could not be read (" + e.Message + "). The built-in key is used."; }
+        }
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            if (Read(text) is { } k) { Public = k; Source = "configuration"; return; }
+            Problem = "Licensing:VendorPublicKeyPem in the configuration is not a valid public key, so it is ignored and the built-in key is used. Remove the line, or paste the whole key with \\n between its lines.";
+        }
+        if (Read(BuiltIn()) is { } b) { Public = b; Source = "built-in"; }
+    }
+
+    /// <summary>Reads a PEM public key; also accepts it with literal \n, with real line breaks, or only the base64 body. Null when it is not a P-256 public key.</summary>
+    public static ECDsa? Read(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var t = text.Replace("\\r", "").Replace("\\n", "\n").Trim();
+        if (!t.Contains("-----BEGIN")) t = "-----BEGIN PUBLIC KEY-----\n" + t + "\n-----END PUBLIC KEY-----";
+        var k = ECDsa.Create();
+        try { k.ImportFromPem(t); if (k.KeySize == 256 && !HasPrivate(k)) return k; }
+        catch (Exception e) when (e is ArgumentException or CryptographicException) { }
+        k.Dispose();
+        return null;
+    }
+
+    static bool HasPrivate(ECDsa k) { try { k.ExportParameters(true); return true; } catch (CryptographicException) { return false; } }
+
+    static string BuiltIn()
+    {
+        using var st = typeof(VendorKey).Assembly.GetManifestResourceStream("DeskAsk.Platform.Licensing.VendorPublicKey.pem");
+        if (st == null) return "";
+        using var r = new StreamReader(st);
+        return r.ReadToEnd();
     }
 }
 
@@ -34,6 +74,7 @@ public sealed class LicenseResolver : IEntitlements
     public LicenseResolver(IConfiguration cfg, ITenantContext tenant, ISettings settings, IMemoryCache cache, VendorKey vendor)
     { this.cfg = cfg; this.tenant = tenant; this.settings = settings; this.cache = cache; this.vendor = vendor; }
 
+    public VendorKey Vendor => vendor;
     string CacheKey => "license|" + tenant.Require().Id;
     public void Invalidate() => cache.Remove(CacheKey);
 
@@ -129,7 +170,7 @@ public sealed class LicensingModule : IPlatformModule
         s.AddSingleton(new RecurringJob("licensing.refresh", LicenseRefreshJob.JobType, TimeSpan.FromHours(24)));
     }
 
-    internal static object Summary(License l, ITenantContext t) => new
+    internal static object Summary(License l, ITenantContext t, VendorKey vendor) => new
     {
         state = l.State.ToString().ToLowerInvariant(), reason = l.Reason, tenant = t.Require().Id,
         plan = l.Payload?.Plan,
@@ -138,11 +179,12 @@ public sealed class LicensingModule : IPlatformModule
         modules = l.InForce ? l.Payload!.Modules.Select(m => new { key = m.Key, limits = m.Value.Limits ?? new Dictionary<string, int>() }).ToArray() : Array.Empty<object>().Select(_ => new { key = "", limits = new Dictionary<string, int>() }).ToArray(),
         readOnly = l.State == LicenseState.Expired && l.Payload != null ? l.Payload.Modules.Keys.ToArray() : Array.Empty<string>(),
         boundToInstallation = !string.IsNullOrEmpty(l.Payload?.Installation),
+        vendorKey = new { source = vendor.Source, problem = vendor.Problem },
     };
 
     public void MapEndpoints(IEndpointRouteBuilder r)
     {
-        r.MapGet("/api/platform/license", async (IEntitlements e, ITenantContext t, CancellationToken ct) => Results.Ok(Summary(await e.CurrentAsync(ct), t))).RequireAuthorization();
+        r.MapGet("/api/platform/license", async (IEntitlements e, ITenantContext t, VendorKey vendor, CancellationToken ct) => Results.Ok(Summary(await e.CurrentAsync(ct), t, vendor))).RequireAuthorization();
 
         Activation.Map(r);
 
@@ -164,7 +206,7 @@ public sealed class LicensingModule : IPlatformModule
         r.MapGet("/api/platform/license/check/{module}", async (string module, IEntitlements e, CancellationToken ct) =>
             (await e.CurrentAsync(ct)).Has(module) ? Results.Ok(new { licensed = true }) : Results.Json(new { error = "module_not_licensed", module }, statusCode: 402)).RequireAuthorization();
 
-        r.MapPut("/api/platform/license", async (HttpRequest req, LicenseResolver res, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
+        r.MapPut("/api/platform/license", async (HttpRequest req, LicenseResolver res, ITenantContext t, VendorKey vendor, IAuditLog audit, CancellationToken ct) =>
         {
             JsonElement body;
             try { body = await req.ReadFromJsonAsync<JsonElement>(ct); } catch (JsonException) { return Results.BadRequest(new { error = "bad_json" }); }
@@ -173,7 +215,7 @@ public sealed class LicensingModule : IPlatformModule
             if (await res.InstallAsync(token, "upload", ct) is { } refused) return Results.Json(refused.Body, statusCode: refused.Status);
             var l = await res.CurrentAsync(ct);
             await audit.WriteAsync("license.installed", l.Payload?.Plan ?? "", "expires " + (l.Payload == null ? "" : DateTimeOffset.FromUnixTimeSeconds(l.Payload.Expires).UtcDateTime.ToString("yyyy-MM-dd")) + "; modules " + string.Join(",", l.Payload?.Modules.Keys ?? Enumerable.Empty<string>()), ct: ct);
-            return Results.Ok(Summary(l, t));
+            return Results.Ok(Summary(l, t, vendor));
         }).RequireAuthorization(p => p.RequireRole("admin"));
     }
 }

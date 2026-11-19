@@ -43,6 +43,7 @@ export default function Licence() {
       {l.expires && <p className="muted">Valid until {fmtDay(l.expires)}{l.state === 'grace' ? `. Modules stop on ${fmtDay(l.graceUntil)}.` : '.'}</p>}
       <p className="muted">Customer id: {l.tenant}</p>
     </Card>}
+    {l?.vendorKey?.problem ? <p role="alert" className="err">{String(l.vendorKey.problem)}</p> : null}
     {l && (l.readOnly ?? []).length > 0 && <p role="alert" className="err">The licence has ended. The modules stay visible with all their data, but nothing can be changed and their background work (monitoring, backups, reminders) has stopped. Renew the licence to switch them back on.</p>}
     {l && <Card title="Included modules">
       <table><thead><tr><th>Module</th><th>Included</th><th>Used / allowed</th></tr></thead><tbody>

@@ -1,4 +1,7 @@
 using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using DeskAsk.Platform.Licensing;
 using System.Text.RegularExpressions;
 using DeskAsk.Platform.Identity;
 using DeskAsk.Platform.Tenancy;
@@ -15,6 +18,8 @@ namespace DeskAsk.Platform;
 ///   tenant list | enable --id X | disable --id X
 ///   tenant reset-admin --id acme [--email a@acme.com] [--password-env VAR]   new password for a customer's administrator
 ///   tenant migrate                                bring every active customer's database up to this version
+///   tenant store-enable --id damazetech [--config FILE]   turn the store on for the vendor's own customer (edits the configuration file)
+///   tenant store-disable [--config FILE]          turn the store off
 /// Needs Platform:CatalogConnection. "create" also needs a database login that may create databases (Platform:ProvisionConnection, default: the catalog login).
 /// </summary>
 public static class TenantCli
@@ -38,6 +43,8 @@ public static class TenantCli
                 "migrate" => await Migrate(builder, catalogConn, o, ct),
                 "create" => await Create(builder, catalogConn, opt, o, ct),
                 "reset-admin" => await ResetAdmin(builder, catalogConn, opt, o, ct),
+                "store-enable" => await Store(catalogConn, opt, true, o, ct),
+                "store-disable" => await Store(catalogConn, opt, false, o, ct),
                 _ => Unknown(cmd, o),
             };
         }
@@ -53,7 +60,9 @@ tenant list
 tenant enable --id acme
 tenant disable --id acme
 tenant reset-admin --id acme [--email admin@acme.com] [--password-env VAR]
-tenant migrate");
+tenant migrate
+tenant store-enable --id damazetech [--config FILE]
+tenant store-disable [--config FILE]");
 
     static Dictionary<string, string> Parse(string[] a)
     {
@@ -98,6 +107,49 @@ tenant migrate");
         cmd.Parameters.AddWithValue("a", active); cmd.Parameters.AddWithValue("i", id);
         if (await cmd.ExecuteNonQueryAsync(ct) == 0) { await o.WriteLineAsync("No customer '" + id + "'."); return 1; }
         await o.WriteLineAsync("Customer '" + id + "' is now " + (active ? "active." : "disabled. Its data is kept; its address stops answering."));
+        return 0;
+    }
+
+    /// <summary>
+    /// Turns the store on (or off) in the server's configuration file: DESKASK_CONFIG, or --config. Sets Commerce:Enabled and Commerce:VendorTenant,
+    /// and removes a Licensing:VendorPublicKeyPem that cannot be read (the built-in key is used instead). Keeps every other setting and a copy of the old file.
+    /// </summary>
+    static async Task<int> Store(string catalogConn, Dictionary<string, string> opt, bool on, TextWriter o, CancellationToken ct)
+    {
+        var path = opt.TryGetValue("config", out var c) && c != "" ? c : Environment.GetEnvironmentVariable("DESKASK_CONFIG");
+        if (string.IsNullOrWhiteSpace(path)) { await o.WriteLineAsync("No configuration file: run this through deskask-tenant.cmd, or add --config <path to the settings file>."); return 2; }
+        if (!File.Exists(path)) { await o.WriteLineAsync("The configuration file " + path + " does not exist."); return 2; }
+        string? id = null;
+        if (on)
+        {
+            id = Need(opt, "id");
+            await using var db = new NpgsqlConnection(catalogConn); await db.OpenAsync(ct);
+            await using var cmd = new NpgsqlCommand("select active from platform.tenants where id = @i", db);
+            cmd.Parameters.AddWithValue("i", id);
+            var active = await cmd.ExecuteScalarAsync(ct);
+            if (active is not bool a) { await o.WriteLineAsync("No customer '" + id + "'. Run 'tenant list' to see the customer ids."); return 1; }
+            if (!a) { await o.WriteLineAsync("Customer '" + id + "' is disabled. Enable it first."); return 1; }
+        }
+        var text = await File.ReadAllTextAsync(path, ct);
+        JsonObject root;
+        try { root = JsonNode.Parse(text, documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject ?? throw new JsonException("not an object"); }
+        catch (JsonException e) { await o.WriteLineAsync("The configuration file is not valid JSON (" + e.Message + "). Nothing was changed."); return 1; }
+        var commerce = root["Commerce"] as JsonObject ?? new JsonObject();
+        root["Commerce"] = commerce;
+        commerce["Enabled"] = on;
+        if (id != null) commerce["VendorTenant"] = id;
+        var notes = new List<string>();
+        if (root["Licensing"] is JsonObject lic && lic["VendorPublicKeyPem"] is JsonNode pem)
+        {
+            using var k = VendorKey.Read(pem.GetValueKind() == JsonValueKind.String ? pem.GetValue<string>() : null);
+            if (k == null) { lic.Remove("VendorPublicKeyPem"); notes.Add("Removed Licensing:VendorPublicKeyPem: it was not a valid public key. The key built into this release is used."); }
+        }
+        var backup = path + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        File.Copy(path, backup);
+        await File.WriteAllTextAsync(path, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), ct);   // the file keeps its permissions
+        await o.WriteLineAsync(on ? "The store is on for customer '" + id + "'." : "The store is off.");
+        foreach (var n in notes) await o.WriteLineAsync(n);
+        await o.WriteLineAsync("The old file was kept as " + backup + ". Restart the DeskAsk service (Restart-Service DeskAskPlatform) for it to take effect.");
         return 0;
     }
 

@@ -101,6 +101,23 @@ public class ProvisioningTests
             var mig = await Cli("migrate");
             Assert.True(mig.Code == 0, mig.Out);
             Assert.Contains("ok      " + id, mig.Out);
+
+            // the store switch edits the configuration file, keeps the other settings and drops a broken vendor key
+            var cfg = Path.Combine(Path.GetTempPath(), "deskask-" + id + ".json");
+            await File.WriteAllTextAsync(cfg, "{ \"Platform\": { \"DataProtectionPath\": \"E:\\\\keys\" }, \"Licensing\": { \"AllowUnlicensed\": true, \"VendorPublicKeyPem\": \"-----BEGIN PUBLIC KEY-----\\nMFkw....\\n-----END PUBLIC KEY-----\" } }");
+            Assert.NotEqual(0, (await Cli("store-enable", "--id", "nobody" + id, "--config", cfg)).Code);
+            var on = await Cli("store-enable", "--id", id, "--config", cfg);
+            Assert.True(on.Code == 0, on.Out);
+            Assert.Contains("Removed Licensing:VendorPublicKeyPem", on.Out);
+            var j = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(cfg))!;
+            Assert.True(j["Commerce"]!["Enabled"]!.GetValue<bool>());
+            Assert.Equal(id, j["Commerce"]!["VendorTenant"]!.GetValue<string>());
+            Assert.Equal("E:\\keys", j["Platform"]!["DataProtectionPath"]!.GetValue<string>());
+            Assert.True(j["Licensing"]!["AllowUnlicensed"]!.GetValue<bool>());
+            Assert.Null(j["Licensing"]!["VendorPublicKeyPem"]);
+            Assert.Equal(0, (await Cli("store-disable", "--config", cfg)).Code);
+            Assert.False(System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(cfg))!["Commerce"]!["Enabled"]!.GetValue<bool>());
+            foreach (var f in Directory.GetFiles(Path.GetTempPath(), "deskask-" + id + ".json*")) File.Delete(f);
         }
         finally
         {

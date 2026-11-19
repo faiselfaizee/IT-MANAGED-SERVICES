@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <EmbeddedResource Include="VendorPublicKey.pem" LogicalName="DeskAsk.Platform.Licensing.VendorPublicKey.pem" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\DeskAsk.Platform.Abstractions\DeskAsk.Platform.Abstractions.csproj" />
     <PackageReference Include="Npgsql" />

@@ -91,6 +91,21 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.False(Razorpay.PaymentSignatureOk("s", "order_1", "pay_2", Razorpay.Sign("s", "order_1|pay_1")));
     }
 
+    [Fact]
+    public void AVendorKeyThatCannotBeReadNeverStopsTheServer()
+    {
+        var pem = Vendor.ExportSubjectPublicKeyInfoPem();
+        var body = string.Concat(pem.Split('\n').Where(l => !l.StartsWith("-----")));
+        foreach (var form in new[] { pem, pem.Replace("\n", "\\n"), body })
+            using (var k = VendorKey.Read(form)) Assert.Equal(LicenseCodec.KeyId(Vendor), LicenseCodec.KeyId(k!));
+        Assert.Null(VendorKey.Read("-----BEGIN PUBLIC KEY-----\\nMFkw....\\n-----END PUBLIC KEY-----"));
+        Assert.Null(VendorKey.Read(Vendor.ExportPkcs8PrivateKeyPem()));   // not a public key
+        var cfg = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Licensing:VendorPublicKeyPem"] = "MFkw...." }).Build();
+        var v = new VendorKey(cfg);
+        Assert.NotNull(v.Problem);
+        Assert.NotEqual("configuration", v.Source);
+    }
+
     [PgFact]
     public async Task Store_OrdersTrialsAndInvoices_EndToEnd()
     {
@@ -224,6 +239,18 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
             Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/commerce/subscriptions/" + tsId + "/delete-customer", Json(new { confirm = trial }))).StatusCode);
             Assert.Null(await Scalar("select 1 from platform.tenants where id = @i", ("i", trial)));
             Assert.Null(await Scalar("select 1 from pg_database where datname = @n", ("n", new NpgsqlConnectionStringBuilder(tconn).Database!)));
+
+            // website pages: the built-in draft, edited in the console, back to the draft
+            var terms = await J(await anon.GetAsync("/api/store/pages/terms"));
+            Assert.Equal("Terms of Service", terms.GetProperty("title").GetString());
+            Assert.Contains("Law and disputes", terms.GetProperty("markdown").GetString());
+            Assert.Equal(HttpStatusCode.NotFound, (await anon.GetAsync("/api/store/pages/secret")).StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anon.PutAsync("/api/commerce/pages/terms", Json(new { markdown = "x" }))).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/commerce/pages/terms", Json(new { markdown = "### New terms\n\nReviewed by counsel." }))).StatusCode);
+            Assert.Contains("Reviewed by counsel", (await J(await anon.GetAsync("/api/store/pages/terms"))).GetProperty("markdown").GetString());
+            Assert.Equal(5, (await J(await admin.GetAsync("/api/commerce/pages"))).GetArrayLength());
+            Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/commerce/pages/terms", Json(new { markdown = "" }))).StatusCode);
+            Assert.Contains("Law and disputes", (await J(await anon.GetAsync("/api/store/pages/terms"))).GetProperty("markdown").GetString());
 
             // the vendor console stays closed to everyone else
             Assert.Equal(HttpStatusCode.Unauthorized, (await anon.GetAsync("/api/commerce/business")).StatusCode);

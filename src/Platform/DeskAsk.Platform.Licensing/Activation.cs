@@ -119,7 +119,7 @@ public static class Activation
             if (await res.InstallAsync(token, "activation", ct) is { } refused && refused.Status != 409) return Results.Json(refused.Body, statusCode: refused.Status);
             await SaveAsync(s, dp, new ActivationState(url, id, secret, key[^4..], DateTime.UtcNow, DateTime.UtcNow, "Activated."), ct);
             await audit.WriteAsync("license.activated", "key ending " + key[^4..], "installation " + installation, ct: ct);
-            return Results.Ok(LicensingModule.Summary(await res.CurrentAsync(ct), t));
+            return Results.Ok(LicensingModule.Summary(await res.CurrentAsync(ct), t, res.Vendor));
         }).RequireAuthorization(p => p.RequireRole("admin"));
 
         r.MapPost("/api/platform/license/refresh", async (HttpContext http, IAuditLog audit, CancellationToken ct) =>
