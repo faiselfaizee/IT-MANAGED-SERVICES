@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using DeskAsk.Platform;
 using DeskAsk.Platform.Commerce;
+using DeskAsk.Platform.Licensing;
 using DeskAsk.Platform.Tenancy;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
