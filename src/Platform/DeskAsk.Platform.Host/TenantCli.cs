@@ -144,8 +144,8 @@ tenant store-disable [--config FILE]");
             using var k = VendorKey.Read(pem.GetValueKind() == JsonValueKind.String ? pem.GetValue<string>() : null);
             if (k == null) { lic.Remove("VendorPublicKeyPem"); notes.Add("Removed Licensing:VendorPublicKeyPem: it was not a valid public key. The key built into this release is used."); }
         }
-        var backup = path + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
-        File.Copy(path, backup);
+        var backup = path + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
+        File.Copy(path, backup, overwrite: true);
         await File.WriteAllTextAsync(path, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), ct);   // the file keeps its permissions
         await o.WriteLineAsync(on ? "The store is on for customer '" + id + "'." : "The store is off.");
         foreach (var n in notes) await o.WriteLineAsync(n);
