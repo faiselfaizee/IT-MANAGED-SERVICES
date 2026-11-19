@@ -7,6 +7,7 @@ using DeskAsk.Platform.Commerce;
 using DeskAsk.Platform.Licensing;
 using DeskAsk.Platform.Tenancy;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Xunit;
@@ -100,7 +101,7 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
             using (var k = VendorKey.Read(form)) Assert.Equal(LicenseCodec.KeyId(Vendor), LicenseCodec.KeyId(k!));
         Assert.Null(VendorKey.Read("-----BEGIN PUBLIC KEY-----\\nMFkw....\\n-----END PUBLIC KEY-----"));
         Assert.Null(VendorKey.Read(Vendor.ExportPkcs8PrivateKeyPem()));   // not a public key
-        var cfg = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Licensing:VendorPublicKeyPem"] = "MFkw...." }).Build();
+        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Licensing:VendorPublicKeyPem"] = "MFkw...." }).Build();
         var v = new VendorKey(cfg);
         Assert.NotNull(v.Problem);
         Assert.NotEqual("configuration", v.Source);
