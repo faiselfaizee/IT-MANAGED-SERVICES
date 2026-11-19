@@ -67,7 +67,6 @@ public static class StoreApi
             var (signKey, _) = await signer.LoadAsync(ct);
             using (signKey)
             {
-                if (signKey == null || !signer.Matches(signKey)) return No("unavailable", "Licences cannot be issued right now. Try again later or contact your supplier.", 503);
                 await using var db = await CommerceDb.OpenAsync(o, ct);
                 await using var tx = await db.BeginTransactionAsync(ct);
                 Guid keyId, subId; int max; bool revoked;
@@ -92,6 +91,7 @@ public static class StoreApi
                     sub = sub with { TenantId = tenant };
                 }
 
+                if (signKey == null || !signer.Matches(signKey)) return No("unavailable", "Licences cannot be issued right now. Try again later or contact your supplier.", 503);
                 var secret = Licences.Secret();
                 Guid activationId;
                 // the same installation activating again (settings lost, reinstalled): keep its place, give it a new secret

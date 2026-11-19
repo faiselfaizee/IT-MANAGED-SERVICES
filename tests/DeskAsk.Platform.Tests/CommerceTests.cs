@@ -63,10 +63,11 @@ public class CommerceTests : IClassFixture<WebApplicationFactory<Program>>
     [PgFact]
     public async Task VendorConsole_SaasAndOnPremLicensing_EndToEnd()
     {
-        await PrepareCatalogAsync();
         Activation.TestHandler = factory.Server.CreateHandler();
         var admin = await TestSupport.AdminClient(factory);
+        await SchemaMigrator.RunAsync(Pg, "catalog", CatalogSchema.Migrations, CancellationToken.None);
         await CleanAsync(admin);
+        await PrepareCatalogAsync();
         try
         {
             // 1. the console is on, but cannot sign until the key is imported; a key that does not match the trusted public key is refused
