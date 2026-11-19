@@ -91,7 +91,7 @@ public sealed class IdentitySchema : ITenantSchema
     {
         var email = (cfg["Platform:BootstrapAdmin:Email"] ?? "").Trim().ToLowerInvariant();
         var pw = cfg["Platform:BootstrapAdmin:Password"] ?? "";
-        if (email == "" || pw == "" || await db.Users.AnyAsync(ct)) return;
+        if (email == "" || pw == "" || ProvisioningScope.NoBootstrapAdmin.Value || await db.Users.AnyAsync(ct)) return;
         var u = new UserAccount { Email = email, Name = cfg["Platform:BootstrapAdmin:Name"] ?? "Administrator", Role = "admin" };
         u.PasswordHash = hasher.HashPassword(u, pw);
         db.Users.Add(u);

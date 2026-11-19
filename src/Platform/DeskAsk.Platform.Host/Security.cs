@@ -65,8 +65,12 @@ static class HostSecurity
         return false;
     }
 
+    /// <summary>On the vendor platform (Commerce:Enabled) the page may load Razorpay Checkout.</summary>
+    const string StoreCsp = "default-src 'self'; script-src 'self' https://checkout.razorpay.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.razorpay.com; font-src 'self' data:; connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com; frame-src https://api.razorpay.com https://checkout.razorpay.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'";
+
     public static void Use(WebApplication app)
     {
+        var store = app.Configuration.GetValue<bool>("Commerce:Enabled");
         app.Use((ctx, next) =>
         {
             var h = ctx.Response.Headers;
@@ -75,9 +79,9 @@ static class HostSecurity
                 h["X-Content-Type-Options"] = "nosniff";
                 h["X-Frame-Options"] = "DENY";
                 h["Referrer-Policy"] = "no-referrer";
-                h["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()";
-                h["Cross-Origin-Opener-Policy"] = "same-origin";
-                if (!h.ContainsKey("Content-Security-Policy")) h["Content-Security-Policy"] = Csp;
+                h["Permissions-Policy"] = store ? "camera=(), microphone=(), geolocation=(), payment=(self \"https://api.razorpay.com\" \"https://checkout.razorpay.com\")" : "camera=(), microphone=(), geolocation=(), payment=()";
+                h["Cross-Origin-Opener-Policy"] = store ? "same-origin-allow-popups" : "same-origin";   // Razorpay opens bank and UPI pages in pop-ups
+                if (!h.ContainsKey("Content-Security-Policy")) h["Content-Security-Policy"] = store ? StoreCsp : Csp;
                 if (ctx.Request.IsHttps) h["Strict-Transport-Security"] = "max-age=31536000";
                 var p = ctx.Request.Path;
                 if ((p.StartsWithSegments("/api") || p.StartsWithSegments("/connect") || p.StartsWithSegments("/account")) && !h.ContainsKey("Cache-Control")) h["Cache-Control"] = "no-store";

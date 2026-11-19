@@ -34,6 +34,7 @@ public sealed class CommerceOptions
 
     /// <summary>True for requests to the vendor's own customer on an installation where the store is turned on.</summary>
     public bool For(ITenantContext t) => Enabled && t.Current?.Id == VendorTenant;
+    public bool ForId(string tenantId) => Enabled && tenantId == VendorTenant;
 }
 
 /// <summary>The commerce schema. Made the first time it is needed (not per customer: there is only one).</summary>
@@ -117,7 +118,40 @@ public static class CommerceDb
             ('backup',      '50 devices',        '{""max_devices"":50}',    '{""saas"":{""usd"":{""year"":1195,""month"":120},""inr"":{""year"":68500}},""onprem"":{""usd"":{""year"":960}}}', 61),
             ('backup',      '200 devices',       '{""max_devices"":200}',   '{""saas"":{""usd"":{""year"":3995,""month"":400},""inr"":{""year"":228000}},""onprem"":{""usd"":{""year"":3200}}}', 62)
             on conflict (module, size_label) do nothing;"),
+        new(3, "store: trials, orders paid online, invoices, payment events", @"
+            alter table commerce.subscriptions drop constraint if exists subscriptions_state_check;
+            alter table commerce.subscriptions add constraint subscriptions_state_check check (state in ('trial', 'active', 'cancelled', 'ended'));
+            alter table commerce.subscriptions add column trial_warned_at timestamptz;
+            alter table commerce.accounts add column phone text not null default '', add column state_code text not null default '';
+            alter table commerce.orders add column access_hash bytea, add column quote jsonb not null default '{}', add column buyer jsonb not null default '{}',
+              add column tenant_id text not null default '', add column paid_at timestamptz, add column fulfilled_at timestamptz, add column error text not null default '',
+              add column payment_ref text not null default '', add column result text not null default '', add column invoice_id bigint;
+            create unique index on commerce.orders (gateway, gateway_ref) where gateway_ref <> '';
+            create table commerce.invoice_series (fy text primary key, next int not null);
+            create table commerce.invoices (
+              id bigserial primary key, number text not null unique, order_id uuid references commerce.orders(id), account_id uuid references commerce.accounts(id),
+              issued_at timestamptz not null default now(), currency text not null, subtotal numeric(12,2) not null, tax numeric(12,2) not null, total numeric(12,2) not null,
+              buyer jsonb not null default '{}', lines jsonb not null default '[]', pdf bytea not null);
+            create table commerce.gateway_events (id text primary key, gateway text not null, type text not null, ok boolean not null, received_at timestamptz not null default now());
+            create table commerce.trials (id uuid primary key default gen_random_uuid(), email text not null, domain text not null, ip text not null, tenant_id text not null, created_at timestamptz not null default now());
+            create index on commerce.trials (created_at);"),
     };
+
+    public static async Task<string?> GetSettingAsync(CommerceOptions o, string key, CancellationToken ct)
+    {
+        await using var db = await OpenAsync(o, ct);
+        await using var q = new NpgsqlCommand("select value from commerce.settings where key = @k", db);
+        q.Parameters.AddWithValue("k", key);
+        return await q.ExecuteScalarAsync(ct) as string;
+    }
+
+    public static async Task SetSettingAsync(CommerceOptions o, string key, string value, CancellationToken ct)
+    {
+        await using var db = await OpenAsync(o, ct);
+        await using var up = new NpgsqlCommand("insert into commerce.settings (key, value) values (@k, @v) on conflict (key) do update set value = excluded.value, updated_at = now()", db);
+        up.Parameters.AddWithValue("k", key); up.Parameters.AddWithValue("v", value);
+        await up.ExecuteNonQueryAsync(ct);
+    }
 }
 
 /// <summary>
@@ -272,11 +306,15 @@ public sealed class CommerceModule : IPlatformModule
     {
         s.AddSingleton<CommerceOptions>();
         s.AddSingleton<Signer>();
+        s.AddSingleton<IJobHandler, TrialsJob>();
+        s.AddSingleton(new RecurringJob("commerce.trials", TrialsJob.JobType, TimeSpan.FromHours(6)));
     }
 
     public void MapEndpoints(IEndpointRouteBuilder r)
     {
         VendorConsole.Map(r);
         StoreApi.Map(r);
+        StoreFront.Map(r);
+        StoreConsole.Map(r);
     }
 }

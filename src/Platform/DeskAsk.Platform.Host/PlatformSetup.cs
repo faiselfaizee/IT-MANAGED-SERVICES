@@ -29,6 +29,7 @@ public static class PlatformSetup
             ? new InMemoryTenantCatalog(new[] { new TenantInfo("dev", "Development", "localhost", builder.Configuration["Platform:DevTenantConnection"] ?? "") })   // local development only
             : new PgTenantCatalog(catalogConn);
         builder.Services.AddTenancy(catalog);
+        builder.Services.AddSingleton<ITenantProvisioner, TenantProvisioner>();   // used by the store (needs the catalog); refuses when there is none
 
         // Modules register here as they are built (Phase 1 onward).
         var modules = new List<IPlatformModule> { new CoreModule(), new IdentityModule(), new AccessModule(), new ConnectModule(), new LicensingModule(), new UpdatesModule(), new JobsModule(), new AssetsModule(), new MailModule(), new ServiceDeskModule(), new MonitoringModule(), new BackupModule(), new VaultModule(), new AdModule(), new CommerceModule() };

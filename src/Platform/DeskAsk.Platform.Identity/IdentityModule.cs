@@ -57,6 +57,7 @@ public sealed class IdentityModule : IPlatformModule
         s.AddSingleton<ILdapClient, LdapClient>();
         s.AddScoped<TwoStepService>();
         s.AddScoped<IUserDirectory, UserDirectory>();
+        s.AddScoped<IFirstAdmin, FirstAdmin>();
         s.AddScoped<ILicenseUsage, IdentityLicenseUsage>();
         s.AddSingleton<IJobHandler, IdentityPruneJob>();
         s.AddSingleton(new RecurringJob("identity.prune", IdentityPruneJob.JobType, TimeSpan.FromHours(24)));
@@ -130,6 +131,7 @@ public sealed class IdentityModule : IPlatformModule
         r.MapGet("/account/login", LoginPage).AllowAnonymous();
         r.MapPost("/account/login", LoginPost).AllowAnonymous();
         TwoStepEndpoints.Map(r);
+        FirstAdmin.Map(r);
         SsoEndpoints.Map(r);
         GoogleSso.Map(r);
         AdEndpoints.Map(r);

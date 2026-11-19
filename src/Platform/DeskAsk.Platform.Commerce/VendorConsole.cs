@@ -239,7 +239,7 @@ public static class VendorConsole
             var grace = Int(b, "graceDays") ?? s.GraceDays;
             if (grace is < 0 or > 90) return Bad("grace", "Grace days are between 0 and 90.");
             var plan = Str(b, "plan", s.Plan); if (plan.Length is < 1 or > 40) return Bad("plan", "The plan name has 1 to 40 characters.");
-            var state = Str(b, "state", s.State); if (state is not ("active" or "cancelled" or "ended")) return Bad("state", "The state is active, cancelled or ended.");
+            var state = Str(b, "state", s.State); if (state is not ("trial" or "active" or "cancelled" or "ended")) return Bad("state", "The state is trial, active, cancelled or ended.");
             var notes = Str(b, "notes", s.Notes); if (notes.Length > 2000) return Bad("notes", "Notes are at most 2,000 characters.");
             var (key, _) = await signer.LoadAsync(ct);
             using (key)
