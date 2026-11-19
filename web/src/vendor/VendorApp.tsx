@@ -20,7 +20,7 @@ const linesText = (l: Lines) => MODS.filter((m) => l?.[m.key]).map((m) => { cons
 export default function VendorApp({ path }: { path: string[] }) {
   const status = useLoad<Rec>('/api/commerce/status');
   const tab = path[0] ?? '';
-  const tabs: [string, string][] = [['', 'Subscriptions'], ['orders', 'Orders'], ['invoices', 'Invoices'], ['new', 'New subscription'], ['unlinked', 'Not linked yet'], ['prices', 'Price list'], ['business', 'Business details'], ['payments', 'Payments'], ['key', 'Signing key']];
+  const tabs: [string, string][] = [['', 'Subscriptions'], ['orders', 'Orders'], ['invoices', 'Invoices'], ['new', 'New subscription'], ['unlinked', 'Not linked yet'], ['prices', 'Price list'], ['business', 'Business details'], ['pages', 'Website pages'], ['payments', 'Payments'], ['key', 'Signing key']];
   const ready = !!status.data?.signing?.ready;
   return <>
     <h1>Vendor console</h1>
@@ -33,6 +33,7 @@ export default function VendorApp({ path }: { path: string[] }) {
       : tab === 'orders' ? <Orders />
       : tab === 'invoices' ? <InvoiceList />
       : tab === 'business' ? <BusinessDetails />
+      : tab === 'pages' ? <WebsitePages slug={path[1]} />
       : tab === 'payments' ? <Payments />
       : tab === 'key' ? <SigningKey status={status.data} reload={status.reload} />
       : <SubList />}
@@ -296,7 +297,8 @@ function SigningKey({ status, reload }: { status: Rec | null; reload: () => void
   };
   return <Card title="Licence signing key">
     <Dl rows={[['State', sg.ready ? <Badge key="r" tone="ok">Ready</Badge> : <Badge key="r" tone="bad">Not set up</Badge>], ['Kept in', sg.source === 'configuration' ? 'the server configuration (Commerce:SigningKeyPem)' : sg.source === 'stored' ? 'this platform, sealed' : sg.source],
-      ['Key id', sg.kid ? <Copy key="k" text={String(sg.kid)} /> : ''], ['Vendor public key configured', status?.vendorKey ? 'Yes' : 'No (Licensing:VendorPublicKeyPem is missing)']]} />
+      ['Key id', sg.kid ? <Copy key="k" text={String(sg.kid)} /> : ''], ['Vendor public key', status?.vendorKey ? (status?.vendorKeySource === 'configuration' ? 'From the configuration' : 'Built in') : 'Missing']]} />
+      {status?.vendorKeyProblem ? <p role="alert" className="err">{String(status.vendorKeyProblem)}</p> : null}
     {sg.source !== 'configuration' && <div className="form">
       <p className="muted">Paste the private key made with the licence tool (vendor-private.pem). It must belong to the vendor public key every installation trusts. It is sealed on this server and never shown again; keep your own offline copy in a safe place.</p>
       <Field label="Private key"><textarea rows={6} value={pem} onChange={(e) => setPem(e.target.value)} spellCheck={false} placeholder="-----BEGIN PRIVATE KEY-----" autoComplete="off" /></Field>
@@ -349,6 +351,28 @@ const BIZ_FIELDS: [string, string, string?][] = [['legalName', 'Legal name'], ['
   ['gstin', 'GSTIN'], ['cin', 'CIN'], ['pan', 'PAN'], ['sac', 'SAC code', 'number'], ['lut', 'LUT reference (exports)'], ['supportEmail', 'Support email'], ['supportPhone', 'Support phone'],
   ['grievanceName', 'Grievance officer'], ['grievanceDesignation', 'Designation'], ['grievanceEmail', 'Grievance email'], ['invoicePrefix', 'Invoice prefix'],
   ['termsUrl', 'Terms of Service link'], ['privacyUrl', 'Privacy Policy link'], ['refundUrl', 'Cancellation and Refund link'], ['deliveryUrl', 'Delivery policy link'], ['tenantDomain', 'Domain for customer addresses']];
+
+function WebsitePages({ slug }: { slug?: string }) {
+  const list = useLoad<Rec[]>('/api/commerce/pages');
+  const [text, setText] = useState<string | null>(null); const [err, setErr] = useState(''); const [ok, setOk] = useState('');
+  const pages = list.data ?? [];
+  const cur = pages.find((p) => p.slug === slug) ?? pages[0];
+  useEffect(() => { setText(null); setOk(''); setErr(''); }, [cur?.slug]);
+  if (!cur) return <Loading loading={list.loading} error={list.error} />;
+  const value = text ?? String(cur.markdown ?? '');
+  const save = async (md: string) => { setErr(''); setOk(''); try { await api('/api/commerce/pages/' + cur.slug, { method: 'PUT', body: { markdown: md } }); setText(null); list.reload(); setOk(md ? 'Saved. The website shows it now.' : 'Back to the draft built into the release.'); } catch (e) { setErr((e as Error).message); } };
+  return <Card title="Website pages">
+    <p className="muted">The text pages of the store website. Each starts as the draft from the legal review document; edit it here when your lawyer sends changes. Write in Markdown: <code>### Heading</code>, <code>**bold**</code>, lists with <code>-</code> or <code>1.</code>, and tables with <code>|</code>.</p>
+    <nav className="sub" aria-label="Pages">{pages.map((p) => <a key={p.slug} href={'#/vendor/pages/' + p.slug} className={p.slug === cur.slug ? 'on' : ''}>{p.title}{p.edited ? '' : ' (draft)'}</a>)}</nav>
+    <Field label={cur.title}><textarea rows={24} value={value} onChange={(e) => setText(e.target.value)} style={{ width: '100%', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 13 }} /></Field>
+    <div className="actions">
+      <button className="primary" disabled={text == null} onClick={() => void save(value)}>Save page</button>
+      <a className="btn" href={'#/store/' + cur.slug} target="_blank" rel="noreferrer">View on the website</a>
+      {cur.edited && <button onClick={() => void save('')}>Go back to the draft</button>}
+    </div>
+    <Err text={err} />{ok && <p role="status">{ok}</p>}
+  </Card>;
+}
 
 function BusinessDetails() {
   const d = useLoad<Rec>('/api/commerce/business');

@@ -69,3 +69,22 @@ The trial form creates the customer at once with the smallest size of each chose
 ## Mail
 
 The vendor customer's mail settings send the store's messages (templates `store_welcome`, `store_trial`, `store_licence_key`, `store_invoice` with the PDF, `store_trial_ending`).
+
+# Release 6.2: the website, the built-in key and the store switch
+
+## Turning the store on
+The vendor licence public key is built into every release (`src/Platform/DeskAsk.Platform.Licensing/VendorPublicKey.pem`), so no key goes in the configuration. `Licensing:VendorPublicKeyPem` (or `Licensing:VendorPublicKeyFile`) still replaces it when set; a value that cannot be read is ignored, the built-in key is used, and Administration › Licence and Vendor console › Signing key say what is wrong. The server never stops because of it.
+
+Turn the store on for the vendor's own customer with one command on the server (Windows, from the install folder):
+
+```
+deskask-tenant.cmd store-enable --id damazetech
+Restart-Service DeskAskPlatform
+```
+
+It checks the customer exists, sets `Commerce:Enabled` and `Commerce:VendorTenant` in the configuration file (DESKASK_CONFIG, or `--config <file>`), removes a `Licensing:VendorPublicKeyPem` that cannot be read, keeps every other setting, and saves the old file next to it as `.bak-<date>`. `store-disable` turns it off.
+
+## The website
+`https://<vendor platform>/#/store` is now a website: home, Products (one page per module with its sizes and prices), Pricing (the checkout), Free trial, FAQ, About, Contact and the policy pages (Terms, Privacy, Cancellation and refunds, Delivery). The module texts are in `web/src/store/content.ts`.
+
+The About and policy pages start as the draft from the legal review and are edited in **Vendor console › Website pages** (Markdown). "Go back to the draft" restores the built-in text. A link set under Business details (Terms URL and so on) replaces the built-in page in the footer.

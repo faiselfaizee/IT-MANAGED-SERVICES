@@ -58,7 +58,7 @@ public static class VendorConsole
             using (key)
                 return Results.Ok(new
                 {
-                    enabled = true, vendorTenant = o.VendorTenant, catalog = o.Catalog != "", vendorKey = vendor.Public != null,
+                    enabled = true, vendorTenant = o.VendorTenant, catalog = o.Catalog != "", vendorKey = vendor.Public != null, vendorKeySource = vendor.Source, vendorKeyProblem = vendor.Problem,
                     signing = new { ready = key != null && signer.Matches(key), source, kid = key == null ? null : LicenseCodec.KeyId(key), matches = key != null && signer.Matches(key) },
                 });
         }).RequireAuthorization();
