@@ -13,6 +13,7 @@
     <Project Path="src/Platform/DeskAsk.Platform.Jobs/DeskAsk.Platform.Jobs.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Updates/DeskAsk.Platform.Updates.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Licensing/DeskAsk.Platform.Licensing.csproj" />
+    <Project Path="src/Platform/DeskAsk.Platform.Commerce/DeskAsk.Platform.Commerce.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Connect/DeskAsk.Platform.Connect.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Core/DeskAsk.Platform.Core.csproj" />
     <Project Path="src/Platform/DeskAsk.Platform.Identity/DeskAsk.Platform.Identity.csproj" />

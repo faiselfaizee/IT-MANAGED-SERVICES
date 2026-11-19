@@ -22,6 +22,7 @@ const Licence = lazy(() => import('./Licence'));
 const Branding = lazy(() => import('./Branding'));
 const Mail = lazy(() => import('./Mail'));
 const Updates = lazy(() => import('./Updates'));
+const VendorApp = lazy(() => import('./vendor/VendorApp'));
 const ServiceDeskApp = lazy(() => import('./servicedesk/ServiceDeskApp'));
 const MonitoringApp = lazy(() => import('./monitoring/MonitoringApp'));
 const VaultApp = lazy(() => import('./vault/VaultApp'));
@@ -43,7 +44,7 @@ function UsersArea({ meId, tab }: { meId?: string; tab: string }) {
 }
 
 const SECTION: Record<string, string> = { '': 'Home', servicedesk: 'Service Desk', assets: 'Assets', monitoring: 'Monitoring', admanager: 'AD Manager', vault: 'Vault', backup: 'Backup',
-  users: 'Administration › Users', access: 'Administration › Users', mail: 'Administration › Mail', updates: 'Administration › Updates', licence: 'Administration › Licence', branding: 'Administration › Branding' };
+  users: 'Administration › Users', access: 'Administration › Users', mail: 'Administration › Mail', updates: 'Administration › Updates', licence: 'Administration › Licence', branding: 'Administration › Branding', vendor: 'Administration › Vendor console' };
 const ROLE: Record<string, string> = { admin: 'Administrator', engineer: 'Engineer', viewer: 'Viewer', cadmin: 'Customer administrator', customer: 'Customer' };
 
 /** The signed-in person: name and role, appearance, two-step sign-in and signing out. */
@@ -193,11 +194,11 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const canMon = !!fetcher || (!!mine.data?.monitoring?.read && mine.data.monitoring.read !== 'none');
   const inMon = parts[0] === 'monitoring' && canMon;
   const mods = useLoad<Rec[]>(fetcher ? null : '/api/platform/modules');
-  const canVault = !fetcher && !!me.data && me.data.role !== 'customer' && !!(Array.isArray(mods.data) && mods.data.find((m) => m.key === 'vault')?.licensed);
+  const canVault = !fetcher && !!me.data && me.data.role !== 'customer' && !!(Array.isArray(mods.data) && (mods.data.find((m) => m.key === 'vault')?.licensed || mods.data.find((m) => m.key === 'vault')?.readOnly));
   const inVault = parts[0] === 'vault' && canVault;
-  const canAd = !fetcher && !!me.data && me.data.role !== 'customer' && !!(Array.isArray(mods.data) && mods.data.find((m) => m.key === 'adsuite')?.licensed);
+  const canAd = !fetcher && !!me.data && me.data.role !== 'customer' && !!(Array.isArray(mods.data) && (mods.data.find((m) => m.key === 'adsuite')?.licensed || mods.data.find((m) => m.key === 'adsuite')?.readOnly));
   const inAd = parts[0] === 'admanager' && canAd;
-  const canBackup = !fetcher && !!(Array.isArray(mods.data) && mods.data.find((m) => m.key === 'backup')?.licensed) && !!mine.data?.backup?.read && mine.data.backup.read !== 'none';
+  const canBackup = !fetcher && !!(Array.isArray(mods.data) && (mods.data.find((m) => m.key === 'backup')?.licensed || mods.data.find((m) => m.key === 'backup')?.readOnly)) && !!mine.data?.backup?.read && mine.data.backup.read !== 'none';
   const inBackup = parts[0] === 'backup' && canBackup;
   const inUsers = (parts[0] === 'users' || parts[0] === 'access') && isAdmin;
   const inLicence = parts[0] === 'licence' && isAdmin;
@@ -205,12 +206,16 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const brand = useBrand();
   const inMail = parts[0] === 'mail' && isAdmin;
   const inUpdates = parts[0] === 'updates' && isAdmin;
+  const commerce = useLoad<Rec>(fetcher || !isAdmin ? null : '/api/commerce/status', [isAdmin]);
+  const isVendor = isAdmin && !!commerce.data?.enabled;
+  const inVendor = parts[0] === 'vendor' && isVendor;
+  const readOnly = Array.isArray(mods.data) ? mods.data.filter((m) => m.readOnly).length > 0 : false;
   return (
     <div className="shell">
       <nav aria-label="Modules" className="side">
         <a className="brand" href="#/" aria-label={brand.name + ' home'}>{brand.hasLogo ? <span className="logo-chip"><img src={logoUrl(brand)} alt="" /></span> : <Logo size={38} />}<span className="brand-text"><strong>{brand.name}</strong><small>{brand.headerText || 'IT managed services'}</small></span></a>
         <div className="side-group">
-          <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inBranding && !inMail && !inUpdates ? 'on' : ''}><Icon name="home" />Home</a>
+          <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inBranding && !inMail && !inUpdates && !inVendor ? 'on' : ''}><Icon name="home" />Home</a>
           {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
             ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
             : m === 'Service Desk'
@@ -232,6 +237,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           <a href="#/updates" className={inUpdates ? 'on' : ''}><Icon name="updates" />Updates</a>
           <a href="#/licence" className={inLicence ? 'on' : ''}><Icon name="licence" />Licence</a>
           <a href="#/branding" className={inBranding ? 'on' : ''}><Icon name="branding" />Branding</a>
+          {isVendor ? <a href="#/vendor" className={inVendor ? 'on' : ''}><Icon name="store" />Vendor console</a> : null}
         </div> : null}
       </nav>
       <header className="topbar">
@@ -240,6 +246,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
       </header>
       <main className="main">
         {err ? <p role="alert" className="err">{err}</p> : null}
+        {readOnly ? <p role="alert" className="err">The licence has ended, so DeskAsk is read-only: everything stays visible, but nothing can be changed.{isAdmin ? <> <a href="#/licence">Renew or install a licence</a>.</> : ' Ask your administrator to renew the licence.'}</p> : null}
         {isAdmin && Math.abs(skewMin) >= 3 ? <p role="alert" className="err">The server's clock is about {Math.floor(Math.abs(skewMin) / 60)} h {Math.abs(skewMin) % 60} min {skewMin > 0 ? 'ahead of' : 'behind'} this computer, so times shown here and written to logs are wrong. On the server, set the correct time zone first (Windows: <code>Set-TimeZone -Id "India Standard Time"</code> for India), then correct the time (<code>w32tm /resync</code>).</p> : null}
         {inAssets
           ? <Suspense fallback={<p className="muted">Loading…</p>}><AssetsApp /></Suspense>
@@ -252,6 +259,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           : inMail ? <Suspense fallback={<p className="muted">Loading…</p>}><Mail /></Suspense>
           : inBranding ? <Suspense fallback={<p className="muted">Loading…</p>}><Branding /></Suspense>
           : inLicence ? <Suspense fallback={<p className="muted">Loading…</p>}><Licence /></Suspense>
+          : inVendor ? <Suspense fallback={<p className="muted">Loading…</p>}><VendorApp path={parts.slice(1)} /></Suspense>
           : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><UsersArea meId={me.data?.sub} tab={parts[0] === 'access' ? 'groups' : (parts[1] ?? '')} /></Suspense>
           : !err ? <Home who={who} live={!fetcher} assets={canAssets} monitoring={canMon && !fetcher} vault={canVault} adm={canAd} backup={canBackup} customer={isCustomer} /> : null}
         {brand.footerText ? <footer className="site-foot">{brand.footerText}</footer> : null}

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ApiError, api, useLoad, type Rec } from './http';
-import { Badge, Card, Err, Field, Loading, fmtDay } from './ui';
+import { Act, Badge, Card, Copy, Err, Field, Loading, fmtDate, fmtDay } from './ui';
 
 const NAMES: Record<string, string> = { servicedesk: 'Service Desk', assets: 'Asset management', monitoring: 'Monitoring', adsuite: 'AD Manager', vault: 'Vault', backup: 'Backup' };
 /** What each limit counts, by module and limit name (as written in the licence). */
@@ -16,7 +16,16 @@ const STATE: Record<string, [string, 'ok' | 'warn' | 'bad' | undefined]> = {
 export default function Licence() {
   const lic = useLoad<Rec>('/api/platform/license');
   const usage = useLoad<Record<string, number>>('/api/platform/license/usage');
+  const act = useLoad<Rec>('/api/platform/license/activation');
   const [token, setToken] = useState(''); const [err, setErr] = useState(''); const [ok, setOk] = useState(''); const [busy, setBusy] = useState(false);
+  const [key, setKey] = useState(''); const [keyErr, setKeyErr] = useState(''); const [keyOk, setKeyOk] = useState('');
+  const a = act.data?.activation as Rec | undefined;
+  const activate = async () => {
+    setBusy(true); setKeyErr(''); setKeyOk('');
+    try { await api('/api/platform/license/activate', { body: { key: key.trim() } }); setKey(''); setKeyOk('Activated. Renewals and changes now arrive by themselves.'); lic.reload(); act.reload(); usage.reload(); }
+    catch (e) { setKeyErr((e as Error).message); }
+    finally { setBusy(false); }
+  };
   const l = lic.data; const [label, tone] = STATE[l?.state ?? ''] ?? [l?.state ?? '', undefined];
   const mods = (l?.modules ?? []) as Rec[];
   const install = async () => {
@@ -34,6 +43,7 @@ export default function Licence() {
       {l.expires && <p className="muted">Valid until {fmtDay(l.expires)}{l.state === 'grace' ? `. Modules stop on ${fmtDay(l.graceUntil)}.` : '.'}</p>}
       <p className="muted">Customer id: {l.tenant}</p>
     </Card>}
+    {l && (l.readOnly ?? []).length > 0 && <p role="alert" className="err">The licence has ended. The modules stay visible with all their data, but nothing can be changed and their background work (monitoring, backups, reminders) has stopped. Renew the licence to switch them back on.</p>}
     {l && <Card title="Included modules">
       <table><thead><tr><th>Module</th><th>Included</th><th>Used / allowed</th></tr></thead><tbody>
         {Object.keys(NAMES).map((k) => {
@@ -48,6 +58,23 @@ export default function Licence() {
         })}
       </tbody></table>
     </Card>}
+    <Card title="Licence key (online activation)">
+      {a?.activated ? <>
+        <p><Badge tone="ok">Activated</Badge> <span className="muted">Key ending <b>{a.keyHint}</b>, activated {fmtDay(a.activatedAt)}.</span></p>
+        <p className="muted">This installation asks the licence server once a day for a newer licence, so renewals, upgrades and changes arrive by themselves.
+          Last check: {a.lastCheck ? fmtDate(a.lastCheck) : 'not yet'}{a.lastResult ? ' (' + a.lastResult + ')' : ''}.</p>
+        <div className="actions">
+          <Act label="Check now" primary run={async () => { await api('/api/platform/license/refresh', { method: 'POST' }); lic.reload(); act.reload(); }} />
+          <Act label="Release this installation" danger confirm="Release the licence key from this installation? Use this before moving DeskAsk to another server. The current licence keeps working until it ends, but renewals stop arriving here." run={async () => { await api('/api/platform/license/release', { method: 'POST' }); act.reload(); }} />
+        </div>
+      </> : <div className="form">
+        <p className="muted">Type the licence key from your order (DKA-…). The installation fetches its licence from the licence server and keeps it up to date.</p>
+        <Field label="Licence key"><input value={key} onChange={(e) => setKey(e.target.value)} placeholder="DKA-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" spellCheck={false} autoComplete="off" /></Field>
+        <Err text={keyErr} />{keyOk && <p role="status">{keyOk}</p>}
+        <div className="actions"><button className="primary" disabled={busy || key.trim().length < 10} onClick={activate}>Activate</button></div>
+      </div>}
+      {act.data?.installation && <p className="muted small">No internet on this server? Give your supplier the customer id <Copy text={String(l?.tenant ?? '')} /> and installation id <Copy text={String(act.data.installation)} />; they can send a licence file to paste below.</p>}
+    </Card>
     <Card title="Install a new licence">
       <div className="form">
         <Field label="Licence token"><textarea rows={5} value={token} onChange={(e) => setToken(e.target.value)} spellCheck={false} placeholder="Paste the whole licence text here" /></Field>

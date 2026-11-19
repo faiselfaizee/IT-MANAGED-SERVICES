@@ -2,7 +2,9 @@
 
 A licence is signed with the vendor's private key and names the customer (or `*`), the plan, the dates and the **modules** it includes. A module that is not in the licence is switched off for that customer: its menus are hidden, its pages answer 402 and its background jobs do nothing.
 
-Issue a licence with the licence tool (`tools/DeskAsk.LicenseTool`) or the browser generator (`tools/licence-generator.html`):
+**From release 6.0, licences are issued from the vendor console** on the vendor platform (Administration › Vendor console, see [store.md](store.md)): SaaS customers are licensed directly, on-prem customers get a licence key. The licence tool stays for emergencies (the platform is down) and for making or changing the signing key. The browser generator (`tools/licence-generator.html`) is retired: it needs the private key loaded into a web page.
+
+The licence tool:
 
 ```
 deskask-license issue --key vendor-private.pem --tenant acme --plan business --days 365 \
@@ -28,3 +30,15 @@ A limit is written `module:limit=number`; several limits of one module are joine
 A refusal is HTTP 402 `{"error":"limit_reached","module":…,"limit":…,"allowed":…,"detail":…}`, shown in the page. Nothing already there is removed when a smaller licence is installed.
 
 Administrators see each module's **used / allowed** under Administration › Licence.
+
+## When a licence ends
+
+A licence works until its end date, then for its **grace days**. After that the modules it included turn **read-only**: menus and data stay, every change is refused (HTTP 402 `{"error":"license_expired","readOnly":true}`), and background work (monitoring, backups, reminders, automation) stops. A banner says so on every page. Nothing is deleted; installing a renewed licence switches everything back on.
+
+## Online activation (on-prem)
+
+Under Administration › Licence an administrator types the **licence key** (`DKA-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX`) from the order. The installation sends the key with its **installation id** (a random id made at first use, setting `license.installation`) and customer id to the licence server (`Licensing:ActivationUrl`, default `https://platform.deskask.in`) and receives a licence **bound to this installation**: a copy on another installation is refused. Once a day (job `licensing.refresh`), and on **Check now**, it asks for a newer licence, so renewals, upgrades and cancellations arrive by themselves. Only the activation id and its secret are sent; no usage or customer data.
+
+- **Moving to a new server:** **Release this installation** on the old one, then activate the new one with the same key. The vendor can also release it from the console.
+- **No internet:** the Licence page shows the customer id and installation id; the vendor issues a licence file for them, which is pasted under "Install a new licence".
+- The installation needs outbound HTTPS to the licence server for activation and the daily check. Without it the current licence keeps working until it ends.
