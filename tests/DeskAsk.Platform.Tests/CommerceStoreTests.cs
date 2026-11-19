@@ -196,7 +196,7 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
             await using (var tdb = new NpgsqlConnection(conn))
             {
                 await tdb.OpenAsync();
-                await using var u = new NpgsqlCommand("select role from identity.users where email = 'asha@acme.test'", tdb);
+                await using var u = new NpgsqlCommand("select \"Role\" from identity.users where \"Email\" = 'asha@acme.test'", tdb);
                 Assert.Equal("admin", await u.ExecuteScalarAsync());
                 await using var all = new NpgsqlCommand("select count(*) from identity.users", tdb);
                 Assert.Equal(1L, await all.ExecuteScalarAsync());   // the buyer only, never the platform's bootstrap administrator
