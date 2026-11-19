@@ -13,6 +13,7 @@
     <ProjectReference Include="..\DeskAsk.Platform.Jobs\DeskAsk.Platform.Jobs.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.Updates\DeskAsk.Platform.Updates.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.Licensing\DeskAsk.Platform.Licensing.csproj" />
+    <ProjectReference Include="..\DeskAsk.Platform.Commerce\DeskAsk.Platform.Commerce.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.Connect\DeskAsk.Platform.Connect.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.Core\DeskAsk.Platform.Core.csproj" />
     <ProjectReference Include="..\DeskAsk.Platform.Identity\DeskAsk.Platform.Identity.csproj" />

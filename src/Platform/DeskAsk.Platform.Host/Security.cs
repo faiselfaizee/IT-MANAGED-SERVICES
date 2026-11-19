@@ -17,6 +17,7 @@ static class HostSecurity
         if (path.StartsWith("/account/", StringComparison.OrdinalIgnoreCase) && method == "POST") return "signin";
         if (path.Equals("/connect/token", StringComparison.OrdinalIgnoreCase)) return "signin";
         if (path.StartsWith("/api/public/", StringComparison.OrdinalIgnoreCase)) return "public";
+        if (path.StartsWith("/api/store/", StringComparison.OrdinalIgnoreCase)) return "store";   // licence activation by on-prem installations
         if (path.Equals("/agent/v1/enroll", StringComparison.OrdinalIgnoreCase) || path.Equals("/collector/v1/enroll", StringComparison.OrdinalIgnoreCase)) return "enroll";
         return null;
     }

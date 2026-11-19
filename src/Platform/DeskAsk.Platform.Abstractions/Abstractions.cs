@@ -74,8 +74,9 @@ public static class Modules
 
 public sealed record ModuleGrant(Dictionary<string, int>? Limits = null);
 
-/// <summary>What the vendor signed: who, which plan, which modules (with limits), from when to when.</summary>
-public sealed record LicensePayload(int V, string Tenant, string Plan, long Issued, long NotBefore, long Expires, int GraceDays, Dictionary<string, ModuleGrant> Modules);
+/// <summary>What the vendor signed: who, which plan, which modules (with limits), from when to when.
+/// Installation, when set, binds the licence to one on-prem installation (issued by online activation); other copies of the same customer id refuse it.</summary>
+public sealed record LicensePayload(int V, string Tenant, string Plan, long Issued, long NotBefore, long Expires, int GraceDays, Dictionary<string, ModuleGrant> Modules, string? Installation = null);
 
 public enum LicenseState { Missing, Invalid, NotYetValid, Valid, Grace, Expired }
 
@@ -84,6 +85,8 @@ public sealed record License(LicenseState State, LicensePayload? Payload, string
     /// <summary>Valid, or expired but still inside the grace period.</summary>
     public bool InForce => State is LicenseState.Valid or LicenseState.Grace;
     public bool Has(string module) => InForce && Payload != null && Payload.Modules.ContainsKey(module);
+    /// <summary>The licence has ended (past its grace period) but included the module: its data stays readable, nothing may be changed and its background work stops.</summary>
+    public bool ReadOnly(string module) => State == LicenseState.Expired && Payload != null && Payload.Modules.ContainsKey(module);
     public int? Limit(string module, string name) =>
         Has(module) && Payload!.Modules[module].Limits is { } l && l.TryGetValue(name, out var v) ? v : null;
 }
@@ -133,7 +136,12 @@ public static class EntitlementExtensions
         b.AddEndpointFilter(async (ctx, next) =>
         {
             var lic = await ctx.HttpContext.RequestServices.GetRequiredService<IEntitlements>().CurrentAsync(ctx.HttpContext.RequestAborted);
-            return lic.Has(module) ? await next(ctx) : Results.Json(new { error = "module_not_licensed", module }, statusCode: 402);
+            if (lic.Has(module)) return await next(ctx);
+            if (lic.ReadOnly(module))   // ended licence: reading is still allowed, changes are not
+                return HttpMethods.IsGet(ctx.HttpContext.Request.Method) || HttpMethods.IsHead(ctx.HttpContext.Request.Method)
+                    ? await next(ctx)
+                    : Results.Json(new { error = "license_expired", module, readOnly = true, detail = "The licence has ended, so this module is read-only. Renew the licence to make changes again." }, statusCode: 402);
+            return Results.Json(new { error = "module_not_licensed", module }, statusCode: 402);
         });
 
     /// <summary>True when count is still below the licensed limit (no limit = unlimited). Call before creating the next item.</summary>

@@ -56,7 +56,7 @@ public sealed class LicenseResolver : IEntitlements
         if (up != null) try { tokens.Add(JsonSerializer.Deserialize<string>(up) ?? ""); } catch (JsonException) { }
         var file = cfg["Licensing:File"];
         if (!string.IsNullOrWhiteSpace(file) && File.Exists(file)) tokens.Add(await File.ReadAllTextAsync(file, ct));
-        var catalog = cfg["Platform:CatalogConnection"];
+        var catalog = cfg["Platform:CatalogConnection"] ?? cfg["Licensing:CatalogConnection"];
         if (!string.IsNullOrWhiteSpace(catalog))
         {
             try
@@ -71,9 +71,46 @@ public sealed class LicenseResolver : IEntitlements
         tokens = tokens.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
         if (tokens.Count == 0) return new License(LicenseState.Missing, null, "No licence is installed.");
         if (vendor.Public == null) return new License(LicenseState.Invalid, null, "This installation has no vendor key, so no licence can be checked.");
-        var all = tokens.Select(x => LicenseCodec.Verify(x, vendor.Public, t.Id, DateTimeOffset.UtcNow)).ToList();
+        var installation = await Installation.GetAsync(settings, create: false, ct);
+        var all = tokens.Select(x => Bound(LicenseCodec.Verify(x, vendor.Public, t.Id, DateTimeOffset.UtcNow), installation)).ToList();
         return all.Where(x => x.InForce).OrderByDescending(x => x.Payload!.Issued).FirstOrDefault()
             ?? all.OrderByDescending(x => x.Payload?.Issued ?? 0).First();
+    }
+
+    /// <summary>A licence made by online activation names the installation it was issued to; a copy on another installation is refused.</summary>
+    public static License Bound(License l, string? installation) =>
+        l.Payload?.Installation is { Length: > 0 } want && want != installation
+            ? new License(LicenseState.Invalid, l.Payload, "This licence was activated on another installation. Activate this one with its own licence key.")
+            : l;
+
+    /// <summary>Checks and stores a licence token (pasted by an administrator or fetched by activation). Returns null when installed, else the refusal.</summary>
+    public async Task<(int Status, object Body)?> InstallAsync(string token, string source, CancellationToken ct)
+    {
+        if (vendor.Public == null) return (400, new { error = "no_vendor_key", reason = "This installation has no vendor key configured." });
+        var installation = await Installation.GetAsync(settings, create: false, ct);
+        var l = Bound(LicenseCodec.Verify(token, vendor.Public, tenant.Require().Id, DateTimeOffset.UtcNow), installation);
+        if (!l.InForce) return (400, new { error = "license_rejected", state = l.State.ToString().ToLowerInvariant(), reason = l.Reason });
+        var current = await ComputeAsync(ct);
+        if (current.InForce && current.Payload!.Issued > l.Payload!.Issued)
+            return (409, new { error = "older_license", reason = "A newer licence is already installed." });
+        await settings.SetAsync(SettingKey, JsonSerializer.Serialize(token.Trim()), ct);
+        Invalidate();
+        return null;
+    }
+}
+
+/// <summary>A random id for this installation (per customer), made the first time it is needed. Online activation binds a licence to it.</summary>
+public static class Installation
+{
+    public const string SettingKey = "license.installation";
+    public static async Task<string?> GetAsync(ISettings s, bool create, CancellationToken ct)
+    {
+        var v = await s.GetAsync(SettingKey, ct);
+        if (v != null) try { if (JsonSerializer.Deserialize<string>(v) is { Length: > 0 } id) return id; } catch (JsonException) { }
+        if (!create) return null;
+        var fresh = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+        await s.SetAsync(SettingKey, JsonSerializer.Serialize(fresh), ct);
+        return fresh;
     }
 }
 
@@ -88,20 +125,26 @@ public sealed class LicensingModule : IPlatformModule
         s.AddSingleton<VendorKey>();
         s.AddScoped<LicenseResolver>();
         s.AddScoped<IEntitlements>(sp => sp.GetRequiredService<LicenseResolver>());
+        s.AddSingleton<IJobHandler, LicenseRefreshJob>();
+        s.AddSingleton(new RecurringJob("licensing.refresh", LicenseRefreshJob.JobType, TimeSpan.FromHours(24)));
     }
 
-    static object Summary(License l, ITenantContext t) => new
+    internal static object Summary(License l, ITenantContext t) => new
     {
         state = l.State.ToString().ToLowerInvariant(), reason = l.Reason, tenant = t.Require().Id,
         plan = l.Payload?.Plan,
         expires = l.Payload == null ? (DateTime?)null : DateTimeOffset.FromUnixTimeSeconds(Math.Min(l.Payload.Expires, 253370764800L)).UtcDateTime,
         graceUntil = l.Payload == null ? (DateTime?)null : DateTimeOffset.FromUnixTimeSeconds(Math.Min(l.Payload.Expires + l.Payload.GraceDays * 86400L, 253370764800L)).UtcDateTime,
         modules = l.InForce ? l.Payload!.Modules.Select(m => new { key = m.Key, limits = m.Value.Limits ?? new Dictionary<string, int>() }).ToArray() : Array.Empty<object>().Select(_ => new { key = "", limits = new Dictionary<string, int>() }).ToArray(),
+        readOnly = l.State == LicenseState.Expired && l.Payload != null ? l.Payload.Modules.Keys.ToArray() : Array.Empty<string>(),
+        boundToInstallation = !string.IsNullOrEmpty(l.Payload?.Installation),
     };
 
     public void MapEndpoints(IEndpointRouteBuilder r)
     {
         r.MapGet("/api/platform/license", async (IEntitlements e, ITenantContext t, CancellationToken ct) => Results.Ok(Summary(await e.CurrentAsync(ct), t))).RequireAuthorization();
+
+        Activation.Map(r);
 
         // how much of each licence limit is used ("module:limit" -> count), from every module that counts
         r.MapGet("/api/platform/license/usage", async (HttpContext http, CancellationToken ct) =>
@@ -115,28 +158,22 @@ public sealed class LicensingModule : IPlatformModule
         r.MapGet("/api/platform/modules", async (IEntitlements e, CancellationToken ct) =>
         {
             var l = await e.CurrentAsync(ct);
-            return Results.Ok(Modules.All.Select(m => new { key = m, licensed = l.Has(m) }));
+            return Results.Ok(Modules.All.Select(m => new { key = m, licensed = l.Has(m), readOnly = l.ReadOnly(m) }));
         }).RequireAuthorization();
 
         r.MapGet("/api/platform/license/check/{module}", async (string module, IEntitlements e, CancellationToken ct) =>
             (await e.CurrentAsync(ct)).Has(module) ? Results.Ok(new { licensed = true }) : Results.Json(new { error = "module_not_licensed", module }, statusCode: 402)).RequireAuthorization();
 
-        r.MapPut("/api/platform/license", async (HttpRequest req, LicenseResolver res, VendorKey vendor, ITenantContext t, ISettings settings, IAuditLog audit, CancellationToken ct) =>
+        r.MapPut("/api/platform/license", async (HttpRequest req, LicenseResolver res, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
         {
             JsonElement body;
             try { body = await req.ReadFromJsonAsync<JsonElement>(ct); } catch (JsonException) { return Results.BadRequest(new { error = "bad_json" }); }
-            var token = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("token", out var tk) ? tk.GetString() : null;
+            var token = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("token", out var tk) && tk.ValueKind == JsonValueKind.String ? tk.GetString() : null;
             if (string.IsNullOrWhiteSpace(token) || token.Length > 20000) return Results.BadRequest(new { error = "token_missing" });
-            if (vendor.Public == null) return Results.BadRequest(new { error = "no_vendor_key", reason = "This installation has no vendor key configured." });
-            var l = LicenseCodec.Verify(token, vendor.Public, t.Require().Id, DateTimeOffset.UtcNow);
-            if (!l.InForce) return Results.BadRequest(new { error = "license_rejected", state = l.State.ToString().ToLowerInvariant(), reason = l.Reason });
-            var current = await res.ComputeAsync(ct);
-            if (current.InForce && current.Payload!.Issued > l.Payload!.Issued)
-                return Results.Json(new { error = "older_license", reason = "A newer licence is already installed." }, statusCode: 409);
-            await settings.SetAsync(LicenseResolver.SettingKey, JsonSerializer.Serialize(token.Trim()), ct);
-            res.Invalidate();
-            await audit.WriteAsync("license.installed", l.Payload!.Plan, "expires " + DateTimeOffset.FromUnixTimeSeconds(l.Payload.Expires).UtcDateTime.ToString("yyyy-MM-dd") + "; modules " + string.Join(",", l.Payload.Modules.Keys), ct: ct);
-            return Results.Ok(Summary(await res.CurrentAsync(ct), t));
+            if (await res.InstallAsync(token, "upload", ct) is { } refused) return Results.Json(refused.Body, statusCode: refused.Status);
+            var l = await res.CurrentAsync(ct);
+            await audit.WriteAsync("license.installed", l.Payload?.Plan ?? "", "expires " + (l.Payload == null ? "" : DateTimeOffset.FromUnixTimeSeconds(l.Payload.Expires).UtcDateTime.ToString("yyyy-MM-dd")) + "; modules " + string.Join(",", l.Payload?.Modules.Keys ?? Enumerable.Empty<string>()), ct: ct);
+            return Results.Ok(Summary(l, t));
         }).RequireAuthorization(p => p.RequireRole("admin"));
     }
 }
