@@ -688,3 +688,27 @@ html[data-look='compact'] input:not([type=checkbox]):not([type=radio]):not([type
 .hero-tools { margin-bottom: 16px; }
 .kv { grid-template-columns: minmax(96px, 38%) 1fr; } .kv dd .badge { white-space: nowrap; }
 @media (max-width: 700px) { .asset-hero { flex-direction: column; align-items: flex-start; } }
+
+/* ---- the public store (#/store) ---- */
+.store { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; background: var(--bg); }
+.store-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 28px; background: var(--card, #fff); border-bottom: 1px solid var(--line); }
+.store-brand { display: flex; align-items: center; gap: 10px; color: inherit; text-decoration: none; font-size: 18px; }
+.store-head nav { display: flex; gap: 6px; } .store-head nav a { padding: 8px 14px; border-radius: 999px; color: inherit; text-decoration: none; font-weight: 600; }
+.store-head nav a.on { background: var(--accent); color: var(--accent-ink, #fff); }
+.store-body { width: min(1180px, 100%); margin: 24px auto; padding: 0 20px; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: start; }
+.store-body > .store-card:not(.store-sum) { grid-column: 1; } .store-sum { grid-column: 2; grid-row: 1 / span 2; position: sticky; top: 16px; }
+.store-body:has(> .store-card:only-child) { grid-template-columns: minmax(0, 720px); justify-content: center; }
+.store-card { background: var(--card, #fff); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; display: grid; gap: 12px; box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,.06)); }
+.store-card h1 { margin: 0; font-size: 22px; } .store-card h2 { margin: 0; font-size: 17px; } .store-card p { margin: 0; }
+.store-card label { display: grid; gap: 4px; font-size: 13px; font-weight: 600; } .store-card label.check { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.store-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.store-plans { width: 100%; } .store-plans select { width: 100%; }
+.store-addr { display: flex; align-items: center; gap: 6px; } .store-addr input { flex: 1; } .store-addr span { color: var(--muted); font-weight: 500; }
+.store-card small.ok { color: var(--ok, #15803d); } .store-card small.err { color: var(--bad, #b91c1c); }
+.store-sum table { width: 100%; } .store-sum td.num { text-align: right; white-space: nowrap; } .store-sum tr.total td { font-weight: 700; border-top: 1px solid var(--line); padding-top: 8px; }
+.store-sum button { width: 100%; }
+.store-mods { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 6px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.store-key { font: 600 20px ui-monospace, Consolas, monospace; letter-spacing: .04em; padding: 12px; border: 1px dashed var(--line); border-radius: 10px; text-align: center; }
+.store-foot { padding: 18px 28px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; display: grid; gap: 4px; }
+.store-foot p { margin: 0; } .store-foot .links { display: flex; gap: 14px; flex-wrap: wrap; }
+@media (max-width: 860px) { .store-body { grid-template-columns: 1fr; } .store-sum { grid-column: 1; grid-row: auto; position: static; } }

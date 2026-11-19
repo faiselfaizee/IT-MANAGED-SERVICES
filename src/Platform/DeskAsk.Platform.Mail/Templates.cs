@@ -24,6 +24,7 @@ public static class MailTemplates
     static readonly string[] ChangeAp = { "number", "title", "type", "risk", "owner", "start", "link", "site" };
     static readonly string[] BackupAl = { "result", "job", "tool", "device", "company", "message", "last_success", "ticket", "link", "site" };
     static readonly string[] Report = { "company", "month", "availability", "devices", "outages", "alerts", "link", "site" };
+    static readonly string[] Store = { "name", "company", "address", "password_link", "modules", "ends", "days", "key", "number", "total", "delete_date", "site" };
 
     public static readonly TemplateDef[] All =
     {
@@ -83,7 +84,27 @@ public static class MailTemplates
             "The scheduled password change for {{account}} on {{device}} (vault {{vault}}) did not work.\n\n{{error}}\n\nThe password in the vault has not changed. Open the account:\n{{link}}\n\n{{site}}"),
     };
 
-    public static TemplateDef? Find(string key) => All.FirstOrDefault(t => t.Key == key);
+    /// <summary>Messages of the DeskAsk store (vendor platform only): new customers, trials, licence keys, invoices.</summary>
+    public static readonly TemplateDef[] StoreAll =
+    {
+        new("store_welcome", "Store: new SaaS customer", "Sent to the buyer when a paid SaaS order has created their DeskAsk.", Store,
+            "Your DeskAsk is ready: {{address}}",
+            "Hello {{name}},\n\nThank you for choosing DeskAsk. Your DeskAsk for {{company}} is ready at:\n{{address}}\n\nChoose your password here (the link works once, for 72 hours):\n{{password_link}}\n\nIncluded: {{modules}}\nValid until: {{ends}}\n\nYour invoice follows in a separate email.\n\n{{site}}"),
+        new("store_trial", "Store: free trial started", "Sent when someone starts a free trial.", Store,
+            "Your {{days}}-day DeskAsk trial is ready",
+            "Hello {{name}},\n\nYour DeskAsk trial for {{company}} is ready at:\n{{address}}\n\nChoose your password here (the link works once, for 72 hours):\n{{password_link}}\n\nThe trial includes {{modules}} and runs until {{ends}}. Buy a plan at any time to keep everything you set up.\n\n{{site}}"),
+        new("store_licence_key", "Store: on-prem licence key", "Sent to the buyer of an on-prem plan with their licence key.", Store,
+            "Your DeskAsk licence key",
+            "Hello {{name}},\n\nThank you for your order. Your DeskAsk licence key for {{company}} is:\n\n{{key}}\n\nIn your DeskAsk, open Administration > Licence and type the key under Licence key. The installation fetches its licence and keeps it up to date.\n\nIncluded: {{modules}}\nValid until: {{ends}}\n\nKeep this key safe; it is not shown again.\n\n{{site}}"),
+        new("store_invoice", "Store: invoice", "Sent to the buyer with the invoice PDF when an order is paid.", Store,
+            "Invoice {{number}} from {{site}}",
+            "Hello {{name}},\n\nThank you for your payment of {{total}}. Your invoice {{number}} is attached.\n\n{{site}}"),
+        new("store_trial_ending", "Store: trial will be deleted", "Sent once, 7 days before an unconverted trial is deleted.", Store,
+            "Your DeskAsk trial will be deleted on {{delete_date}}",
+            "Hello {{name}},\n\nYour DeskAsk trial for {{company}} ({{address}}) has ended. Its data will be deleted on {{delete_date}}.\n\nTo keep it, buy a plan before then; everything you set up stays.\n\n{{site}}"),
+    };
+
+    public static TemplateDef? Find(string key) => All.FirstOrDefault(t => t.Key == key) ?? StoreAll.FirstOrDefault(t => t.Key == key);
 
     static readonly Regex Slot = new(@"\{\{\s*(\w+)\s*\}\}", RegexOptions.Compiled);
 

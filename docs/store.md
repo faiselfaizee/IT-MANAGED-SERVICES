@@ -40,3 +40,32 @@ No sign-in; limited per address like the other public addresses (`Security:AuthP
 ## Tables (schema `commerce`)
 
 `plans`, `accounts`, `subscriptions`, `licences` (every licence issued, with who and why), `licence_keys`, `activations`, `orders` (used from 6.1), `settings` (the sealed signing key).
+
+# Release 6.1: the store
+
+The public store is at `https://<vendor platform>/#/store` (no sign-in). On the development server it runs on damazetech.deskask.in with `Commerce:VendorTenant=damazetech`.
+
+## Before it opens
+
+1. **Vendor console › Business details**: legal name, address, GSTIN (needed), CIN, PAN, SAC (998315), LUT reference for exports, support email and phone, grievance officer, invoice prefix (default DA), links to the legal pages, the domain for customer addresses (default deskask.in), trial days (14) and how long unconverted trials are kept (45). Change the address here when the registrations change; invoices already issued keep their details.
+2. **Vendor console › Payments**: the Razorpay key id and key secret, and a webhook secret. In Razorpay add a webhook to `https://<vendor platform>/api/store/webhooks/razorpay` with the events `payment.captured` and `order.paid`. A `rzp_test_` key means test mode: no real money is taken.
+3. **Signing key** imported (6.0), and for SaaS customers the wildcard DNS and HAProxy rule (`*.deskask.in` to the platform).
+
+The store says "opens soon" until the business details and the Razorpay keys are set; trials need only the business details.
+
+## Buying
+
+- Prices come from the price list and are worked out on the server. India: rupees plus GST (CGST + SGST 9% each in Tamil Nadu, else IGST 18%; the state comes from the buyer's GSTIN, else the state chosen). Outside India: US dollars, no GST, "export under LUT" on the invoice. On-prem is 20% below SaaS, yearly only; monthly SaaS is the yearly price / 12 + 20%. 4 or more modules: 25% off. Monitoring needs Asset management.
+- Checkout makes the order and a Razorpay order, then opens Razorpay Checkout. The payment is accepted when the signed answer from Checkout (HMAC of order and payment id with the key secret) or the signed webhook arrives; whichever comes first completes the order, the other does nothing.
+- **SaaS**: the customer is created (database, catalog row, every module), licensed for the period (+7 grace days), and the buyer becomes the first administrator with a set-password link (works once, 72 hours). A buyer who is on a trial with the same email and address keeps their trial customer: it becomes the paid plan.
+- **On-prem**: a licence key, shown on the order page for 7 days and emailed.
+- **Invoice**: numbered `DA/2026-27/00001` (one series per financial year), PDF emailed and kept; Vendor console › Invoices.
+- An order that is paid but could not be completed shows as "Needs attention" under Orders with the reason; **Try again** repeats the work.
+
+## Free trials
+
+The trial form creates the customer at once with the smallest size of each chosen module for the trial days; the set-password email also proves the address. At most 3 trials a day per email, email domain or address; throwaway email domains are refused. In the console: **Extend 7 / 14 days**, or **Delete customer and data** (type the customer id). The job `commerce.trials` emails the trial's contact 7 days before deletion and deletes unconverted trials the set number of days after they end.
+
+## Mail
+
+The vendor customer's mail settings send the store's messages (templates `store_welcome`, `store_trial`, `store_licence_key`, `store_invoice` with the PDF, `store_trial_ending`).

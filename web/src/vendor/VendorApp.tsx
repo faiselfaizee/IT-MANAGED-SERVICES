@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, go, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Copy, Dl, Empty, Err, Field, Loading, Modal, copyText, fmtDate, fmtDay } from '../ui';
 
@@ -12,7 +12,7 @@ export const MODS: { key: string; name: string; limit: string; unit: string }[] 
   { key: 'backup', name: 'Backup', limit: 'max_devices', unit: 'devices' },
 ];
 type Lines = Record<string, Record<string, number>>;
-const STATE: Record<string, ['ok' | 'warn' | 'bad' | undefined, string]> = { active: ['ok', 'Active'], cancelled: ['warn', 'Cancelled (runs to its end)'], ended: ['bad', 'Ended'] };
+const STATE: Record<string, ['ok' | 'warn' | 'bad' | undefined, string]> = { trial: ['warn', 'Trial'], active: ['ok', 'Active'], cancelled: ['warn', 'Cancelled (runs to its end)'], ended: ['bad', 'Ended'] };
 const day = (d: number) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
 const linesText = (l: Lines) => MODS.filter((m) => l?.[m.key]).map((m) => { const v = l[m.key]?.[m.limit]; return m.name + (v != null ? ' ' + v : ' (no limit)'); }).join(', ');
 
@@ -20,7 +20,7 @@ const linesText = (l: Lines) => MODS.filter((m) => l?.[m.key]).map((m) => { cons
 export default function VendorApp({ path }: { path: string[] }) {
   const status = useLoad<Rec>('/api/commerce/status');
   const tab = path[0] ?? '';
-  const tabs: [string, string][] = [['', 'Subscriptions'], ['new', 'New subscription'], ['unlinked', 'Not linked yet'], ['prices', 'Price list'], ['key', 'Signing key']];
+  const tabs: [string, string][] = [['', 'Subscriptions'], ['orders', 'Orders'], ['invoices', 'Invoices'], ['new', 'New subscription'], ['unlinked', 'Not linked yet'], ['prices', 'Price list'], ['business', 'Business details'], ['payments', 'Payments'], ['key', 'Signing key']];
   const ready = !!status.data?.signing?.ready;
   return <>
     <h1>Vendor console</h1>
@@ -30,6 +30,10 @@ export default function VendorApp({ path }: { path: string[] }) {
       : tab === 'new' ? <NewSub />
       : tab === 'unlinked' ? <Unlinked />
       : tab === 'prices' ? <Prices />
+      : tab === 'orders' ? <Orders />
+      : tab === 'invoices' ? <InvoiceList />
+      : tab === 'business' ? <BusinessDetails />
+      : tab === 'payments' ? <Payments />
       : tab === 'key' ? <SigningKey status={status.data} reload={status.reload} />
       : <SubList />}
   </>;
@@ -140,6 +144,13 @@ function SubDetail({ id }: { id: string }) {
         {s.kind === 'saas'
           ? <Act label="Issue the licence again" run={async () => { await api('/api/commerce/subscriptions/' + id + '/licence', { body: {} }); d.reload(); }} />
           : <button onClick={() => setFileFor({ tenantId: s.tenantId ?? '', installation: '' })}>Licence file (offline site)</button>}
+        {s.state !== 'ended' && <Act label="Extend 7 days" run={async () => { await api('/api/commerce/subscriptions/' + id + '/extend', { body: { days: 7 } }); d.reload(); }} />}
+        {s.state !== 'ended' && <Act label="Extend 14 days" run={async () => { await api('/api/commerce/subscriptions/' + id + '/extend', { body: { days: 14 } }); d.reload(); }} />}
+        {s.kind === 'saas' && (s.state === 'trial' || s.state === 'ended') && s.tenantId && <Act label="Delete customer and data" danger run={async () => {
+          const typed = window.prompt('This deletes ' + s.tenantId + ' and its database. It cannot be undone. Type the customer id to confirm:');
+          if (typed !== s.tenantId) return;
+          await api('/api/commerce/subscriptions/' + id + '/delete-customer', { body: { confirm: typed } }); d.reload();
+        }} />}
         {s.state !== 'ended' && <Act label="End now" danger confirm="End this subscription now? SaaS: the customer's modules turn read-only at once. On-prem: renewals stop and the licence ends when the installation next checks." run={async () => { await api('/api/commerce/subscriptions/' + id + '/end', { method: 'POST' }); d.reload(); }} />}
       </div>
     </Card>
@@ -292,5 +303,89 @@ function SigningKey({ status, reload }: { status: Rec | null; reload: () => void
       <Err text={err} />{ok && <p role="status">{ok}</p>}
       <div className="actions"><button className="primary" disabled={pem.trim().length < 50} onClick={save}>{sg.ready ? 'Replace the key' : 'Store the key'}</button></div>
     </div>}
+  </Card>;
+}
+
+const ORDER: Record<string, ['ok' | 'warn' | 'bad' | undefined, string]> = { pending: [undefined, 'Waiting for payment'], paid: ['warn', 'Paid'], fulfilling: ['warn', 'Setting up'], fulfilled: ['ok', 'Done'], failed: ['bad', 'Needs attention'] };
+const cash = (v: number, c: string) => (c === 'INR' ? '₹' + v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '$' + v.toLocaleString('en-US', { maximumFractionDigits: 2 }));
+
+function Orders() {
+  const [status, setStatus] = useState('');
+  const list = useLoad<Rec[]>('/api/commerce/orders?status=' + status, [status]);
+  return <Card>
+    <div className="form"><Field label="Show"><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All orders</option><option value="failed">Needs attention</option><option value="fulfilled">Done</option><option value="pending">Waiting for payment</option></select></Field></div>
+    <Loading loading={list.loading && !list.data} error={list.error} />
+    {list.data && list.data.length === 0 ? <Empty>No orders yet. Orders from the store (#/store) appear here.</Empty> : null}
+    {list.data && list.data.length > 0 && <table><thead><tr><th>Date</th><th>Customer</th><th>Type</th><th>Total</th><th>State</th><th>Invoice</th><th></th></tr></thead><tbody>
+      {list.data.map((o) => { const [tone, label] = ORDER[o.status] ?? [undefined, o.status];
+        return <tr key={o.id}><td>{fmtDate(o.createdAt)}</td><td><b>{o.company}</b><div className="small muted">{o.email}</div></td><td>{o.kind === 'saas' ? 'SaaS ' + o.tenantId : 'On-prem'}</td>
+          <td>{cash(o.total, o.currency)}</td><td><Badge tone={tone}>{label}</Badge>{o.error && <div className="small err">{o.error}</div>}</td>
+          <td>{o.invoiceId ? <a href={'/api/commerce/invoices/' + o.invoiceId + '/pdf'} onClick={(e) => { e.preventDefault(); void download(o.invoiceId, o.invoice); }}>{o.invoice}</a> : ''}</td>
+          <td>{o.subscriptionId && <a href={'#/vendor/sub/' + o.subscriptionId}>Subscription</a>}{o.status === 'failed' && <Act label="Try again" run={async () => { await api('/api/commerce/orders/' + o.id + '/retry', { method: 'POST' }); list.reload(); }} />}</td></tr>; })}
+    </tbody></table>}
+  </Card>;
+}
+
+async function download(id: number, number: string) {
+  const { accessToken } = await import('../auth');
+  const r = await fetch('/api/commerce/invoices/' + id + '/pdf', { headers: { Authorization: 'Bearer ' + (accessToken() ?? '') } });
+  if (!r.ok) return;
+  const url = URL.createObjectURL(await r.blob()); const a = document.createElement('a'); a.href = url; a.download = 'Invoice-' + number.replaceAll('/', '-') + '.pdf'; a.click(); URL.revokeObjectURL(url);
+}
+
+function InvoiceList() {
+  const list = useLoad<Rec[]>('/api/commerce/invoices');
+  return <Card title="Invoices">
+    <Loading loading={list.loading && !list.data} error={list.error} />
+    {list.data && list.data.length === 0 ? <Empty>No invoices yet.</Empty> : null}
+    {list.data && list.data.length > 0 && <table><thead><tr><th>Number</th><th>Date</th><th>Customer</th><th>GSTIN</th><th>Taxable</th><th>Tax</th><th>Total</th></tr></thead><tbody>
+      {list.data.map((i) => <tr key={i.id}><td><a href="#" onClick={(e) => { e.preventDefault(); void download(i.id, i.number); }}>{i.number}</a></td><td>{fmtDay(i.issuedAt)}</td><td>{i.company}</td><td className="small">{i.gstin}</td>
+        <td>{cash(i.subtotal, i.currency)}</td><td>{cash(i.tax, i.currency)}</td><td><b>{cash(i.total, i.currency)}</b></td></tr>)}
+    </tbody></table>}
+  </Card>;
+}
+
+const BIZ_FIELDS: [string, string, string?][] = [['legalName', 'Legal name'], ['tradeName', 'Brand name'], ['address', 'Address'], ['city', 'City'], ['state', 'State'], ['pincode', 'PIN code'], ['country', 'Country'],
+  ['gstin', 'GSTIN'], ['cin', 'CIN'], ['pan', 'PAN'], ['sac', 'SAC code', 'number'], ['lut', 'LUT reference (exports)'], ['supportEmail', 'Support email'], ['supportPhone', 'Support phone'],
+  ['grievanceName', 'Grievance officer'], ['grievanceDesignation', 'Designation'], ['grievanceEmail', 'Grievance email'], ['invoicePrefix', 'Invoice prefix'],
+  ['termsUrl', 'Terms of Service link'], ['privacyUrl', 'Privacy Policy link'], ['refundUrl', 'Cancellation and Refund link'], ['deliveryUrl', 'Delivery policy link'], ['tenantDomain', 'Domain for customer addresses']];
+
+function BusinessDetails() {
+  const d = useLoad<Rec>('/api/commerce/business');
+  const [v, setV] = useState<Rec | null>(null); const [err, setErr] = useState(''); const [ok, setOk] = useState('');
+  useEffect(() => { if (d.data && !v) setV(d.data); }, [d.data, v]);
+  if (!v) return <Loading loading={d.loading} error={d.error} />;
+  const save = async () => { setErr(''); setOk(''); try { setV(await api('/api/commerce/business', { method: 'PUT', body: v })); setOk('Saved. New invoices and the store pages use these details.'); } catch (e) { setErr((e as Error).message); } };
+  return <Card title="Business details">
+    <p className="muted">Shown on invoices and in the store. Change the address here once your registrations are updated; invoices already issued keep the details they were made with.</p>
+    <div className="form"><div className="row">
+      {BIZ_FIELDS.map(([k, label]) => <Field key={k} label={label}><input value={v[k] ?? ''} onChange={(e) => setV({ ...v, [k]: e.target.value })} /></Field>)}
+      <Field label="Trial days"><input type="number" min={1} max={90} value={v.trialDays ?? 14} onChange={(e) => setV({ ...v, trialDays: Number(e.target.value) })} /></Field>
+      <Field label="Keep unconverted trials (days)"><input type="number" min={8} max={365} value={v.trialKeepDays ?? 45} onChange={(e) => setV({ ...v, trialKeepDays: Number(e.target.value) })} /></Field>
+    </div>
+    <Err text={err} />{ok && <p role="status">{ok}</p>}
+    <div className="actions"><button className="primary" onClick={() => void save()}>Save</button></div></div>
+  </Card>;
+}
+
+function Payments() {
+  const d = useLoad<Rec>('/api/commerce/payments');
+  const [keyId, setKeyId] = useState(''); const [secret, setSecret] = useState(''); const [hook, setHook] = useState(''); const [err, setErr] = useState(''); const [ok, setOk] = useState('');
+  const rz = (d.data?.razorpay ?? {}) as Rec;
+  useEffect(() => { if (rz.keyId) setKeyId(String(rz.keyId)); }, [rz.keyId]);
+  const save = async () => { setErr(''); setOk(''); try { await api('/api/commerce/payments', { method: 'PUT', body: { keyId: keyId.trim(), keySecret: secret, webhookSecret: hook } }); setSecret(''); setHook(''); setOk('Saved.'); d.reload(); } catch (e) { setErr((e as Error).message); } };
+  return <Card title="Razorpay">
+    <Dl rows={[['Mode', rz.mode === 'live' ? <Badge key="m" tone="ok">Live</Badge> : rz.mode === 'test' ? <Badge key="m" tone="warn">Test (no real money)</Badge> : <Badge key="m">Off</Badge>],
+      ['Key secret', rz.hasSecret ? 'Saved' : 'Not saved'], ['Webhook secret', rz.hasWebhookSecret ? 'Saved' : 'Not saved'], ['Webhook address', location.origin + (rz.webhookPath ?? '/api/store/webhooks/razorpay')]]} />
+    <div className="form">
+      <p className="muted">In the Razorpay dashboard: Account &amp; Settings › API keys for the key id and secret; Webhooks › Add new webhook with the address above, events payment.captured and order.paid, and a secret you choose. Secrets are sealed and never shown again; leave a box empty to keep the saved one.</p>
+      <div className="row">
+        <Field label="Key id"><input value={keyId} onChange={(e) => setKeyId(e.target.value)} placeholder="rzp_test_…" spellCheck={false} /></Field>
+        <Field label="Key secret"><input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} autoComplete="off" placeholder={rz.hasSecret ? 'saved' : ''} /></Field>
+        <Field label="Webhook secret"><input type="password" value={hook} onChange={(e) => setHook(e.target.value)} autoComplete="off" placeholder={rz.hasWebhookSecret ? 'saved' : ''} /></Field>
+      </div>
+      <Err text={err} />{ok && <p role="status">{ok}</p>}
+      <div className="actions"><button className="primary" onClick={() => void save()}>Save</button><a href="#/store" target="_blank" rel="noreferrer">Open the store</a></div>
+    </div>
   </Card>;
 }

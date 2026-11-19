@@ -432,3 +432,26 @@ public interface IControllerRelay
     /// <summary>Queues the job for the controller and waits up to the timeout for its answer.</summary>
     Task<RelayReply> CallAsync(string controllerId, string kind, object payload, TimeSpan timeout, CancellationToken ct = default);
 }
+
+/// <summary>Creates and removes customers on this platform (catalog row, database, every module's schema). Only where a platform catalog is configured.</summary>
+public interface ITenantProvisioner
+{
+    /// <summary>Makes the database and the catalog row, prepares every module and switches the customer on. Refuses an id or address already in use.</summary>
+    Task<TenantInfo> CreateAsync(string id, string name, string host, CancellationToken ct = default);
+    /// <summary>Switches the customer off, removes it from the catalog and drops its database. Cannot be undone.</summary>
+    Task DeleteAsync(string id, CancellationToken ct = default);
+    /// <summary>True when the id or the address is already used by a customer.</summary>
+    Task<bool> ExistsAsync(string id, string host, CancellationToken ct = default);
+}
+
+/// <summary>The first administrator of a new customer. Runs in that customer's scope; returns the one-time path (for example "/account/set-password?t=...") where they choose a password.</summary>
+public interface IFirstAdmin
+{
+    Task<string> CreateAsync(string email, string name, CancellationToken ct = default);
+}
+
+/// <summary>Set while the store creates a customer: the configured bootstrap administrator (Platform:BootstrapAdmin) is not added to it; the buyer becomes the first administrator.</summary>
+public static class ProvisioningScope
+{
+    public static readonly AsyncLocal<bool> NoBootstrapAdmin = new();
+}
