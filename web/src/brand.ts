@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 
 /** How this customer's DeskAsk looks: set by an administrator under Administration › Branding. */
-export type Brand = { name: string; headerText: string; footerText: string; accent: string; accent2: string; nav: string; theme: string; hasLogo: boolean; logoVersion: number };
-export const DEFAULT_BRAND: Brand = { name: 'DeskAsk', headerText: '', footerText: '', accent: '', accent2: '', nav: '', theme: 'auto', hasLogo: false, logoVersion: 0 };
+export type Brand = { name: string; headerText: string; footerText: string; accent: string; accent2: string; nav: string; theme: string; hasLogo: boolean; logoVersion: number; hasFavicon?: boolean; faviconVersion?: number };
+export const DEFAULT_BRAND: Brand = { name: 'DeskAsk', headerText: '', footerText: '', accent: '', accent2: '', nav: '', theme: 'auto', hasLogo: false, logoVersion: 0, hasFavicon: false, faviconVersion: 0 };
 
 let current: Brand = DEFAULT_BRAND;
 const subs = new Set<(b: Brand) => void>();
@@ -43,7 +43,19 @@ export function applyBrand(b: Brand, root: HTMLElement = document.documentElemen
     st.setProperty('--nav-bar', bar); st.setProperty('--nav-bar-ico', bar);
   }
   if (b.theme === 'light' || b.theme === 'dark') root.setAttribute('data-theme', b.theme); else root.removeAttribute('data-theme');
-  if (root === document.documentElement) document.title = b.name || 'DeskAsk';
+  if (root === document.documentElement) { document.title = b.name || 'DeskAsk'; applyIcon(b); }
+}
+
+let standardIcon: string | null = null;
+/** The browser-tab icon: the uploaded favicon, else the logo, else the standard DeskAsk icon. */
+export const iconUrl = (b: Brand) => b.hasFavicon ? `/api/branding/favicon?v=${b.faviconVersion ?? 0}` : b.hasLogo ? logoUrl(b) : null;
+function applyIcon(b: Brand): void {
+  let link = document.querySelector<HTMLLinkElement>('link[rel~="icon"]');
+  if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+  if (standardIcon == null) standardIcon = link.getAttribute('href') ?? '';
+  const url = iconUrl(b);
+  link.href = url ?? standardIcon;
+  if (url) link.removeAttribute('type');
 }
 
 export function getBrand(): Brand { return current; }

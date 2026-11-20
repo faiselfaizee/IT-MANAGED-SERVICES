@@ -24,6 +24,15 @@ public class BrandingTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Null(DeskAsk.Platform.Identity.BrandingApi.CheckLogo("image/svg+xml", Encoding.UTF8.GetBytes("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"><rect width=\"10\" height=\"10\" fill=\"#0d8a7f\"/></svg>")));
         foreach (var bad in new[] { "<svg><script>alert(1)</script></svg>", "<svg onload=\"x()\"></svg>", "<svg><foreignObject/></svg>", "<svg><a href=\"javascript:x()\"/></svg>", "<svg><image href=\"http://evil.test/x.png\"/></svg>", "<svg><style>@import 'x';</style></svg>" })
             Assert.NotNull(DeskAsk.Platform.Identity.BrandingApi.CheckLogo("image/svg+xml", Encoding.UTF8.GetBytes(bad)));
+        // the browser-tab icon: PNG, SVG or ICO, at most 128 KB; an ICO is not a logo
+        var ico = new byte[] { 0, 0, 1, 0, 1, 0, 16, 16 };
+        Assert.Null(DeskAsk.Platform.Identity.BrandingApi.CheckPicture("image/x-icon", ico, true));
+        Assert.Null(DeskAsk.Platform.Identity.BrandingApi.CheckPicture("image/vnd.microsoft.icon", ico, true));
+        Assert.NotNull(DeskAsk.Platform.Identity.BrandingApi.CheckPicture("image/x-icon", ico, false));
+        Assert.NotNull(DeskAsk.Platform.Identity.BrandingApi.CheckPicture("image/x-icon", Png, true));
+        Assert.NotNull(DeskAsk.Platform.Identity.BrandingApi.CheckPicture("image/jpeg", new byte[] { 0xFF, 0xD8, 0xFF, 0 }, true));
+        Assert.NotNull(DeskAsk.Platform.Identity.BrandingApi.CheckPicture("image/png", new byte[200 * 1024], true));
+        Assert.Null(DeskAsk.Platform.Identity.BrandingApi.CheckPicture("image/png", Png, true));
     }
 
     [PgFact]
@@ -64,6 +73,21 @@ public class BrandingTests : IClassFixture<WebApplicationFactory<Program>>
         var page = await anon.GetStringAsync("/account/login");
         Assert.Contains("Acme &lt;IT&gt;", page); Assert.DoesNotContain("Acme <IT>", page);
         Assert.Contains("Call 100 for help", page); Assert.Contains("/api/branding/logo?v=", page); Assert.Contains("#0d8a7f", page); Assert.Contains("#c31528", page);
+
+        // the browser-tab icon: the logo stands in until one is uploaded; then the sign-in page uses it
+        Assert.Contains("rel=\"icon\" href=\"/api/branding/logo?v=", page);
+        Assert.Equal(HttpStatusCode.Forbidden, (await eng.PutAsync("/api/branding/favicon", Raw(Png, "image/png"))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/branding/favicon", Raw(new byte[] { 0xFF, 0xD8, 0xFF, 0 }, "image/jpeg"))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/branding/favicon", Raw(new byte[] { 0, 0, 1, 0, 1, 0, 16, 16 }, "image/x-icon"))).StatusCode);
+        var b2 = await J(await anon.GetAsync("/api/branding"));
+        Assert.True(b2.GetProperty("hasFavicon").GetBoolean()); Assert.True(b2.GetProperty("hasLogo").GetBoolean());
+        Assert.Equal("image/x-icon", (await anon.GetAsync("/api/branding/favicon")).Content.Headers.ContentType!.MediaType);
+        Assert.Contains("rel=\"icon\" href=\"/api/branding/favicon?v=", await anon.GetStringAsync("/account/login"));
+        // saving the colours keeps the icon
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/branding", Json(new { name = "Acme <IT>", theme = "light" }))).StatusCode);
+        Assert.True((await J(await anon.GetAsync("/api/branding"))).GetProperty("hasFavicon").GetBoolean());
+        Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync("/api/branding/favicon")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await anon.GetAsync("/api/branding/favicon")).StatusCode);
 
         // removing the logo and resetting
         Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync("/api/branding/logo")).StatusCode);

@@ -46,3 +46,23 @@ test('a logo that is not a picture is refused without a request', () => {
   fireEvent.change(input, { target: { files: [new File(['x'], 'a.exe', { type: 'application/x-msdownload' })] } });
   expect(screen.getByText('Use a PNG, JPEG, WebP, GIF or SVG picture.')).toBeTruthy(); expect(f).not.toHaveBeenCalled();
 });
+
+test('the browser-tab icon: uploaded icon, else the logo, else the standard one; an .ico without a type is accepted', async () => {
+  applyBrand({ ...DEFAULT_BRAND, hasFavicon: true, faviconVersion: 7 });
+  expect(document.querySelector<HTMLLinkElement>('link[rel~="icon"]')!.getAttribute('href')).toBe('/api/branding/favicon?v=7');
+  applyBrand({ ...DEFAULT_BRAND, hasLogo: true, logoVersion: 3 });
+  expect(document.querySelector<HTMLLinkElement>('link[rel~="icon"]')!.getAttribute('href')).toBe('/api/branding/logo?v=3');
+  const calls: { url: string; type?: string }[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    calls.push({ url, type: (init?.headers as Record<string, string> | undefined)?.['content-type'] });
+    return new Response(JSON.stringify({ ...DEFAULT_BRAND, hasFavicon: true, faviconVersion: 9 }), { status: 200 });
+  }));
+  render(<Branding />);
+  const input = screen.getByLabelText('Browser-tab icon file');
+  fireEvent.change(input, { target: { files: [new File(['x'], 'a.jpg', { type: 'image/jpeg' })] } });
+  expect(screen.getByText('Use a PNG, SVG or ICO file for the browser-tab icon.')).toBeTruthy();
+  fireEvent.change(input, { target: { files: [new File([new Uint8Array([0, 0, 1, 0])], 'favicon.ico', { type: '' })] } });
+  await waitFor(() => expect(calls.length).toBe(1));
+  expect(calls[0]).toEqual({ url: '/api/branding/favicon', type: 'image/x-icon' });
+  await waitFor(() => expect(document.querySelector<HTMLLinkElement>('link[rel~="icon"]')!.getAttribute('href')).toBe('/api/branding/favicon?v=9'));
+});
