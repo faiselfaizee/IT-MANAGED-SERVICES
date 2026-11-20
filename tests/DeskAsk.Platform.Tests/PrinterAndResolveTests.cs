@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using DeskAsk.Platform;
 using DeskAsk.Platform.Assets;
 using DeskAsk.Platform.Monitoring;
 using Npgsql;
