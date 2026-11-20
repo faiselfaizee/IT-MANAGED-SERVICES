@@ -316,6 +316,7 @@ public sealed class CommerceModule : IPlatformModule
         s.AddSingleton<Signer>();
         s.AddSingleton<IJobHandler, TrialsJob>();
         s.AddSingleton(new RecurringJob("commerce.trials", TrialsJob.JobType, TimeSpan.FromHours(6)));
+        s.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter, LinkBodyBuffer>();
         s.AddSingleton<IJobHandler, LinkJob>();
         s.AddSingleton(new RecurringJob("commerce.link", LinkJob.JobType, TimeSpan.FromMinutes(1)));
     }

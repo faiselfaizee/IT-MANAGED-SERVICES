@@ -73,7 +73,9 @@ public static class Link
         var ts = http.Request.Headers[HeaderTs].ToString(); var nonce = http.Request.Headers[HeaderNonce].ToString(); var sig = http.Request.Headers[HeaderSig].ToString();
         if (!long.TryParse(ts, out var t) || Math.Abs(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - t) > Window.TotalSeconds) return Refuse("The request is too old or its clock is wrong.");
         if (nonce.Length is < 16 or > 64) return Refuse("The request has no valid nonce.");
-        http.Request.EnableBuffering();
+        // the body was buffered by LinkBodyBuffer before binding read it; read it again from the start
+        if (!http.Request.Body.CanSeek) return Refuse("The request body could not be checked.");
+        http.Request.Body.Position = 0;
         string body;
         using (var reader = new StreamReader(http.Request.Body, Encoding.UTF8, leaveOpen: true)) body = await reader.ReadToEndAsync(http.RequestAborted);
         http.Request.Body.Position = 0;
@@ -276,4 +278,21 @@ public sealed class LinkJob : IJobHandler
         await using var db = await CommerceDb.OpenAsync(o, ct);
         await LinkOut.DeliverDueAsync(job.Services, db, s, ct);
     }
+}
+
+/// <summary>
+/// Buffers the body of every /api/link/v1 request before the endpoint binds it, so the Signed filter (which runs after binding)
+/// can read the exact bytes that were signed.
+/// </summary>
+public sealed class LinkBodyBuffer : Microsoft.AspNetCore.Hosting.IStartupFilter
+{
+    public Action<Microsoft.AspNetCore.Builder.IApplicationBuilder> Configure(Action<Microsoft.AspNetCore.Builder.IApplicationBuilder> next) => app =>
+    {
+        app.Use(async (ctx, go) =>
+        {
+            if (ctx.Request.Path.StartsWithSegments("/api/link/v1")) ctx.Request.EnableBuffering(256 * 1024);
+            await go(ctx);
+        });
+        next(app);
+    };
 }
