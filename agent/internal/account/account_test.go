@@ -50,3 +50,22 @@ func TestChpasswdFailureIsReported(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestServiceLogonNamesAreChecked(t *testing.T) {
+	for _, ok := range []string{`CORP\svc_sql`, `.\backup`, "svc@corp.local", "svc_sql"} {
+		if !ValidLogon.MatchString(ok) {
+			t.Errorf("%q should be accepted", ok)
+		}
+	}
+	for _, bad := range []string{`-x`, `a\b\c`, `CORP\`, "a;b", `"x"`, ""} {
+		if ValidLogon.MatchString(bad) {
+			t.Errorf("%q should be refused", bad)
+		}
+	}
+	if err := SetServiceLogon("bad/name", "svc", "pw"); err == nil {
+		t.Error("a service name with a slash must be refused")
+	}
+	if err := SetServiceLogon("Spooler", "svc", ""); err == nil {
+		t.Error("an empty password must be refused")
+	}
+}

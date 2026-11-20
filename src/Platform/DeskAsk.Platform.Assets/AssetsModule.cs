@@ -764,6 +764,7 @@ public sealed class AssetsModule : IPlatformModule
         ConfigsApi.Map(r, Key);
         AssetDash.Map(r, Key);
         AssetReports.Map(r, Key);
+        ServicesApi.Map(r, Key);
         DeviceHealth.Map(r, Key);
         SecretHandoff.Map(r, Key);
         RenewalsApi.Map(r, Key);

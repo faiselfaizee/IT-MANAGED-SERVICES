@@ -393,6 +393,6 @@ public static class ServiceWatch
     public static bool IsWatched(ServiceInfo s, IReadOnlyDictionary<string, string> modes, string deviceKind)
     {
         if (modes.TryGetValue(s.Name.ToLowerInvariant(), out var m)) return m == "watch";
-        return deviceKind == "server" && s.Start == "auto" && !IsDefaultQuiet(s.Name);
+        return deviceKind == "server" && s.Start is "auto" or "delayed" && !IsDefaultQuiet(s.Name);
     }
 }

@@ -93,3 +93,11 @@ func TestParseSystemd(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestCimServicesKeepTheLogOnAccountAndDelayedStart(t *testing.T) {
+	got := parseCimServices(`[{"Name":"MSSQLSERVER","DisplayName":"SQL Server","State":"Running","StartMode":"Auto","StartName":"CORP\\svc_sql","DelayedAutoStart":true},
+		{"Name":"Spooler","DisplayName":"Print Spooler","State":"Stopped","StartMode":"Auto","StartName":"LocalSystem","DelayedAutoStart":false}]`)
+	if len(got) != 2 || got[0].Start != "delayed" || got[0].Logon != `CORP\svc_sql` || got[1].Start != "auto" || got[1].Logon != "LocalSystem" {
+		t.Fatalf("%+v", got)
+	}
+}

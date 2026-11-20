@@ -419,7 +419,13 @@ func (r *Runner) setPassword(ctx context.Context, nonce string) {
 		log.Printf("password change %s: could not fetch it: %v", nonce, err)
 		return
 	}
-	err := setPasswordFunc(s.Account, s.Target, s.Password)
+	var err error
+	if svc, ok := strings.CutPrefix(s.Target, "service:"); ok {
+		// the account a Windows service runs as (Assets › Services › Log On)
+		err = serviceLogonFunc(svc, s.Account, s.Password)
+	} else {
+		err = setPasswordFunc(s.Account, s.Target, s.Password)
+	}
 	s.Password = ""
 	res := map[string]any{"ok": err == nil}
 	if err != nil {
@@ -438,3 +444,6 @@ func (r *Runner) setPassword(ctx context.Context, nonce string) {
 
 // setPasswordFunc is account.SetPassword; replaced in tests.
 var setPasswordFunc = account.SetPassword
+
+// serviceLogonFunc is account.SetServiceLogon; replaced in tests.
+var serviceLogonFunc = account.SetServiceLogon
