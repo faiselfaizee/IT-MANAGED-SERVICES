@@ -120,6 +120,7 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
         {
             Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/commerce/signing-key", Json(new { pem = Vendor.ExportPkcs8PrivateKeyPem() }))).StatusCode);
 
+            await Scalar("delete from commerce.settings where key in ('business', 'razorpay', 'link')");
             // 1. closed until business details and payment keys are set
             Assert.False((await J(await anon.GetAsync("/api/store/info"))).GetProperty("open").GetBoolean());
             Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/commerce/business", Json(new { legalName = "X", gstin = "33AAKCD8221B1Y3" }))).StatusCode);
@@ -264,6 +265,135 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
         finally
         {
             Razorpay.TestHandler = null;
+            var prov = factory.Services.GetRequiredService<ITenantProvisioner>();
+            foreach (var t in made) try { await prov.DeleteAsync(t); } catch (Exception) { }
+        }
+    }
+
+    sealed class FakeWebsite : HttpMessageHandler
+    {
+        public readonly List<(string Path, string Body, string Sig, string Ts, string Nonce)> Got = new();
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
+        {
+            Got.Add((req.RequestUri!.AbsolutePath, await req.Content!.ReadAsStringAsync(ct), req.Headers.GetValues(Link.HeaderSig).Single(), req.Headers.GetValues(Link.HeaderTs).Single(), req.Headers.GetValues(Link.HeaderNonce).Single()));
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+    }
+
+    static HttpRequestMessage SignedReq(string secret, HttpMethod method, string pathAndQuery, object? body = null, string? nonce = null, long? ts = null, string ip = "203.0.113.9")
+    {
+        var text = body == null ? "" : JsonSerializer.Serialize(body);
+        var t = (ts ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds()).ToString(); var n = nonce ?? Guid.NewGuid().ToString("N");
+        var m = new HttpRequestMessage(method, pathAndQuery);
+        if (body != null) m.Content = new StringContent(text, Encoding.UTF8, "application/json");
+        m.Headers.Add(Link.HeaderTs, t); m.Headers.Add(Link.HeaderNonce, n); m.Headers.Add(Link.HeaderClientIp, ip);
+        m.Headers.Add(Link.HeaderSig, Link.Sign(secret, t, n, method.Method, pathAndQuery, text));
+        return m;
+    }
+
+    [Fact]
+    public void TheSignatureBothSidesCompute()
+    {
+        // the same vector is checked by the website's tests (tests/DeskAsk.Web.Tests), so the two can never drift apart
+        Assert.Equal("v1=7a5d437a36564aa322460c3fac5aef9404259a4fd712e6ab3fed79522984fb96", Link.Sign("dkl_test", "1700000000", "0123456789abcdef", "POST", "/store/hooks", "{}"));
+        Assert.Equal(Link.Sign("dkl_test", "1700000000", "0123456789abcdef", "POST", "/store/hooks", "{}"), Link.Sign("dkl_test", "1700000000", "0123456789abcdef", "post", "/store/hooks", "{}"));
+        Assert.NotEqual(Link.Sign("dkl_test", "1700000000", "0123456789abcdef", "POST", "/store/hooks", "{}"), Link.Sign("dkl_test", "1700000001", "0123456789abcdef", "POST", "/store/hooks", "{}"));
+        var expected = "v1=" + Convert.ToHexString(HMACSHA256.HashData(Encoding.UTF8.GetBytes("dkl_test"), Encoding.UTF8.GetBytes("1700000000\n0123456789abcdef\nPOST\n/store/hooks\n{}"))).ToLowerInvariant();
+        Assert.Equal(expected, Link.Sign("dkl_test", "1700000000", "0123456789abcdef", "POST", "/store/hooks", "{}"));
+    }
+
+    [PgFact]
+    public async Task TheWebsiteSellsThroughTheSignedLink()
+    {
+        var fake = new FakeRazorpay(); var site = new FakeWebsite();
+        Razorpay.TestHandler = fake; LinkOut.TestHandler = site;
+        var admin = await TestSupport.AdminClient(factory);
+        var anon = factory.CreateClient();
+        await SchemaMigrator.RunAsync(Pg, "catalog", CatalogSchema.Migrations, CancellationToken.None);
+        var made = new List<string>();
+        try
+        {
+            Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/commerce/signing-key", Json(new { pem = Vendor.ExportPkcs8PrivateKeyPem() }))).StatusCode);
+            Assert.True((await admin.PutAsync("/api/commerce/business", Json(new { legalName = "DamazeTech Solutions (OPC) Private Limited", address = "Plot No. A4, Thuraipakkam", city = "Chennai", state = "Tamil Nadu", pincode = "600097",
+                gstin = "33AAKCD8221B1Z3", sac = "998315", supportEmail = "servicedesk@deskask.in", invoicePrefix = "DA", tenantDomain = "deskask.test", trialDays = 14, trialKeepDays = 45 }))).IsSuccessStatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/commerce/payments", Json(new { keyId = "rzp_test_TuVf3mkccS7MvN", keySecret = Secret, webhookSecret = Hook }))).StatusCode);
+
+            // not linked yet: refused
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anon.SendAsync(SignedReq("x", HttpMethod.Get, "/api/link/v1/ping"))).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync("/api/commerce/link", Json(new { websiteUrl = "http://www.deskask.test/x" }))).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/commerce/link", Json(new { websiteUrl = "https://www.deskask.test", hidePlatformStore = true }))).StatusCode);
+            var secret = (await J(await admin.PostAsync("/api/commerce/link/secret", Json(new { })))).GetProperty("secret").GetString()!;
+            Assert.StartsWith("dkl_", secret);
+            Assert.DoesNotContain(secret, (await admin.GetStringAsync("/api/commerce/link")));
+
+            // signed, fresh and once only
+            Assert.Equal(HttpStatusCode.OK, (await anon.SendAsync(SignedReq(secret, HttpMethod.Get, "/api/link/v1/ping"))).StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anon.SendAsync(SignedReq("dkl_wrong", HttpMethod.Get, "/api/link/v1/ping"))).StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anon.SendAsync(SignedReq(secret, HttpMethod.Get, "/api/link/v1/ping", ts: DateTimeOffset.UtcNow.AddMinutes(-10).ToUnixTimeSeconds()))).StatusCode);
+            var once = Guid.NewGuid().ToString("N");
+            Assert.Equal(HttpStatusCode.OK, (await anon.SendAsync(SignedReq(secret, HttpMethod.Get, "/api/link/v1/info", nonce: once))).StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anon.SendAsync(SignedReq(secret, HttpMethod.Get, "/api/link/v1/info", nonce: once))).StatusCode);
+            // a body changed on the way does not pass
+            var tampered = SignedReq(secret, HttpMethod.Post, "/api/link/v1/quote", new { kind = "saas", plans = new { } });
+            tampered.Content = new StringContent("{\"kind\":\"onprem\"}", Encoding.UTF8, "application/json");
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anon.SendAsync(tampered)).StatusCode);
+
+            // the platform's own store page now points to the website
+            Assert.Equal("https://www.deskask.test/pricing", (await J(await anon.GetAsync("/api/store/info"))).GetProperty("redirect").GetString());
+            var info = await J(await anon.SendAsync(SignedReq(secret, HttpMethod.Get, "/api/link/v1/info")));
+            Assert.Equal(JsonValueKind.Null, info.GetProperty("redirect").ValueKind); Assert.True(info.GetProperty("open").GetBoolean());
+
+            // a SaaS purchase from the website: the platform takes the payment and tells the website
+            var plans = await J(await anon.SendAsync(SignedReq(secret, HttpMethod.Get, "/api/link/v1/plans")));
+            var sd10 = plans.EnumerateArray().First(p => p.GetProperty("module").GetString() == "servicedesk" && p.GetProperty("sizeLabel").GetString() == "10 agents").GetProperty("id").GetInt32();
+            var shop = "web-" + Rand(); made.Add(shop);
+            var co = await anon.SendAsync(SignedReq(secret, HttpMethod.Post, "/api/link/v1/checkout", new { kind = "saas", period = "month", plans = new Dictionary<string, int> { ["servicedesk"] = sd10 }, country = "IN", stateCode = "33", tenantId = shop, @ref = "W-1001", buyer = Buyer }));
+            Assert.True(co.IsSuccessStatusCode, await co.Content.ReadAsStringAsync());
+            var c = await J(co); var rz = c.GetProperty("razorpay").GetProperty("order_id").GetString()!;
+            Assert.Equal("website", (string)(await Scalar("select source from commerce.orders where id = @i", ("i", Guid.Parse(c.GetProperty("orderId").GetString()!))))!);
+            var conf = await anon.SendAsync(SignedReq(secret, HttpMethod.Post, "/api/link/v1/checkout/confirm", new { razorpay_order_id = rz, razorpay_payment_id = "pay_W1", razorpay_signature = Razorpay.Sign(Secret, rz + "|pay_W1") }));
+            Assert.True(conf.IsSuccessStatusCode, await conf.Content.ReadAsStringAsync());
+            var st = await J(await anon.SendAsync(SignedReq(secret, HttpMethod.Get, "/api/link/v1/orders/" + c.GetProperty("orderId").GetString() + "?t=" + c.GetProperty("access").GetString())));
+            Assert.True(st.GetProperty("status").GetString() == "fulfilled", st.ToString());
+            var ev = Assert.Single(site.Got, g => g.Body.Contains("order.fulfilled"));
+            Assert.Equal("/store/hooks", ev.Path);
+            Assert.Equal(Link.Sign(secret, ev.Ts, ev.Nonce, "POST", "/store/hooks", ev.Body), ev.Sig);
+            var evData = JsonDocument.Parse(ev.Body).RootElement.GetProperty("data");
+            Assert.Equal("W-1001", evData.GetProperty("ref").GetString()); Assert.Equal("https://" + shop + ".deskask.test", evData.GetProperty("address").GetString());
+            Assert.StartsWith("DA/", evData.GetProperty("invoice").GetString());
+
+            // renewal: the customer's own address is accepted again only with its renewal link, and the paid period is added after the current one
+            var endsBefore = (DateTime)(await Scalar("select ends_at from commerce.subscriptions where tenant_id = @t", ("t", shop)))!;
+            Assert.Equal(HttpStatusCode.BadRequest, (await anon.SendAsync(SignedReq(secret, HttpMethod.Post, "/api/link/v1/checkout", new { kind = "saas", period = "month", plans = new Dictionary<string, int> { ["servicedesk"] = sd10 }, country = "IN", stateCode = "33", tenantId = shop, buyer = Buyer }))).StatusCode);
+            var dp = factory.Services.GetRequiredService<Microsoft.AspNetCore.DataProtection.IDataProtectionProvider>();
+            var token = Link.RenewToken(dp, shop);
+            var rn = await J(await anon.SendAsync(SignedReq(secret, HttpMethod.Get, "/api/link/v1/renew?token=" + Uri.EscapeDataString(token))));
+            Assert.Equal(shop, rn.GetProperty("tenantId").GetString()); Assert.Equal(sd10, rn.GetProperty("plans").GetProperty("servicedesk").GetInt32()); Assert.Equal("Acme Industries", rn.GetProperty("contact").GetProperty("company").GetString());
+            Assert.Equal(HttpStatusCode.Gone, (await anon.SendAsync(SignedReq(secret, HttpMethod.Get, "/api/link/v1/renew?token=junk"))).StatusCode);
+            var c2 = await J(await anon.SendAsync(SignedReq(secret, HttpMethod.Post, "/api/link/v1/checkout", new { kind = "saas", period = "month", plans = new Dictionary<string, int> { ["servicedesk"] = sd10 }, country = "IN", stateCode = "33", tenantId = shop, renew = token, @ref = "W-1002", buyer = Buyer })));
+            var rz2 = c2.GetProperty("razorpay").GetProperty("order_id").GetString()!;
+            Assert.True((await anon.SendAsync(SignedReq(secret, HttpMethod.Post, "/api/link/v1/checkout/confirm", new { razorpay_order_id = rz2, razorpay_payment_id = "pay_W2", razorpay_signature = Razorpay.Sign(Secret, rz2 + "|pay_W2") }))).IsSuccessStatusCode);
+            var endsAfter = (DateTime)(await Scalar("select ends_at from commerce.subscriptions where tenant_id = @t", ("t", shop)))!;
+            Assert.True((endsAfter - endsBefore).TotalDays is > 27 and < 32, $"{endsBefore} -> {endsAfter}");
+
+            // a trial from the website counts the visitor's address, not the website's
+            var trial = "wtr-" + Rand(); made.Add(trial);
+            var tr = await anon.SendAsync(SignedReq(secret, HttpMethod.Post, "/api/link/v1/trial", new { company = "Delta", name = "Dee", email = "dee@delta.test", tenantId = trial, modules = new[] { "vault" } }, ip: "198.51.100.77"));
+            Assert.True(tr.IsSuccessStatusCode, await tr.Content.ReadAsStringAsync());
+            Assert.Equal("198.51.100.77", (string)(await Scalar("select ip from commerce.trials where tenant_id = @t", ("t", trial)))!);
+
+            // the Subscription page's links open the website, filled in
+            var mine = await J(await admin.GetAsync("/api/platform/subscription"));
+            Assert.StartsWith("https://www.deskask.test/pricing?renew=", mine.GetProperty("renewUrl").GetString());
+            // the test event and the list of events
+            Assert.True((await J(await admin.PostAsync("/api/commerce/link/test", Json(new { })))).GetProperty("ok").GetBoolean());
+            Assert.True((await J(await admin.GetAsync("/api/commerce/link"))).GetProperty("recent").GetArrayLength() >= 2);
+        }
+        finally
+        {
+            Razorpay.TestHandler = null; LinkOut.TestHandler = null;
+            // leave the store as the other test expects to find it: closed and unlinked
+            await Scalar("delete from commerce.settings where key in ('business', 'razorpay', 'link')");
             var prov = factory.Services.GetRequiredService<ITenantProvisioner>();
             foreach (var t in made) try { await prov.DeleteAsync(t); } catch (Exception) { }
         }

@@ -44,24 +44,30 @@ public static class StoreFront
         return await sp.GetRequiredService<ITenantProvisioner>().ExistsAsync(id, Fulfilment.Host(biz, id), ct) ? "This name is already taken." : null;
     }
 
-    static string Ip(HttpContext h) => h.Connection.RemoteIpAddress?.ToString() ?? "";
+    static string Ip(HttpContext h) => Link.ClientIp(h);
 
-    public static void Map(IEndpointRouteBuilder r)
+    public static void Map(IEndpointRouteBuilder r) => MapRoutes(r, "/api/store", Public, link: false);
+
+    /// <summary>The store's routes under a prefix: /api/store for the platform's own store page, /api/link/v1 for the website (signed).</summary>
+    internal static void MapRoutes(IEndpointRouteBuilder r, string p, Func<RouteHandlerBuilder, RouteHandlerBuilder> f, bool link)
     {
         // what the store pages show: who sells, how to reach them, whether payments are on
-        Public(r.MapGet("/api/store/info", async (CommerceOptions o, IDataProtectionProvider dp, CancellationToken ct) =>
+        f(r.MapGet(p + "/info", async (CommerceOptions o, IDataProtectionProvider dp, CancellationToken ct) =>
         {
             var biz = await Business.LoadAsync(o, ct);
             var rz = await Razorpay.LoadAsync(o, dp, ct);
+            var ws = await Link.LoadAsync(o, ct);
             return Results.Ok(new
             {
+                website = ws.WebsiteUrl, redirect = !link && ws.HidePlatformStore && ws.WebsiteUrl != "" ? ws.WebsiteUrl + "/pricing" : null,
+                razorpayKey = rz.Ready ? rz.KeyId : "",
                 business = new { biz.LegalName, biz.TradeName, biz.Address, biz.City, biz.State, biz.Pincode, biz.Country, biz.Gstin, biz.Cin, biz.SupportEmail, biz.SupportPhone,
                     biz.GrievanceName, biz.GrievanceDesignation, biz.GrievanceEmail, biz.TermsUrl, biz.PrivacyUrl, biz.RefundUrl, biz.DeliveryUrl, biz.TenantDomain, biz.TrialDays },
                 open = biz.Missing() == null && rz.Ready, trials = biz.Missing() == null, payments = rz.Ready ? rz.Mode : "off",
             });
         }));
 
-        Public(r.MapGet("/api/store/plans", async (CommerceOptions o, CancellationToken ct) =>
+        f(r.MapGet(p + "/plans", async (CommerceOptions o, CancellationToken ct) =>
         {
             await using var db = await CommerceDb.OpenAsync(o, ct);
             var plans = await Store.PlansAsync(db, ct);
@@ -73,7 +79,7 @@ public static class StoreFront
             }));
         }));
 
-        Public(r.MapPost("/api/store/quote", async (JsonElement b, CommerceOptions o, CancellationToken ct) =>
+        f(r.MapPost(p + "/quote", async (JsonElement b, CommerceOptions o, CancellationToken ct) =>
         {
             var req = Request(b);
             if (req == null) return No("plans", "Choose at least one module.");
@@ -82,7 +88,7 @@ public static class StoreFront
             return quote == null ? No("quote", error!) : Results.Ok(quote);
         }));
 
-        Public(r.MapGet("/api/store/available", async (string? id, HttpContext http, CommerceOptions o, CancellationToken ct) =>
+        f(r.MapGet(p + "/available", async (string? id, HttpContext http, CommerceOptions o, CancellationToken ct) =>
         {
             var name = (id ?? "").Trim().ToLowerInvariant();
             var biz = await Business.LoadAsync(o, ct);
@@ -91,7 +97,7 @@ public static class StoreFront
         }));
 
         // checkout: the order is written, Razorpay makes its order, the browser opens Razorpay Checkout with it
-        Public(r.MapPost("/api/store/checkout", async (JsonElement b, HttpContext http, CommerceOptions o, IDataProtectionProvider dp, CancellationToken ct) =>
+        f(r.MapPost(p + "/checkout", async (JsonElement b, HttpContext http, CommerceOptions o, IDataProtectionProvider dp, CancellationToken ct) =>
         {
             var req = Request(b);
             if (req == null) return No("plans", "Choose at least one module.");
@@ -115,9 +121,12 @@ public static class StoreFront
             if (quote == null) return No("quote", error!);
 
             var tenantId = Str(b, "tenantId").ToLowerInvariant();
+            var websiteRef = Str(b, "ref"); if (websiteRef.Length > 64) return No("ref", "The website's order reference is too long.");
             if (req.Kind == "saas")
             {
                 var problem = await NameProblemAsync(http.RequestServices, biz, tenantId, ct);
+                // a renewal link from Administration › Subscription lets the customer buy for their own address again
+                if (problem != null && Link.RenewTenant(dp, Str(b, "renew")) is { } renewing && renewing == tenantId) problem = null;
                 if (problem != null)
                 {
                     // a name that is taken may be the buyer's own trial (same email): buying turns it into the paid plan
@@ -138,9 +147,10 @@ public static class StoreFront
             }
             var access = Licences.Secret();
             Guid orderId;
-            await using (var ins = new NpgsqlCommand(@"insert into commerce.orders (account_id, kind, status, lines, currency, total, tax, gateway, quote, buyer, tenant_id, access_hash)
-                values (@a, @k, 'pending', @l, @c, @t, @tax, 'razorpay', @q, @b, @tid, @h) returning id", db))
+            await using (var ins = new NpgsqlCommand(@"insert into commerce.orders (account_id, kind, status, lines, currency, total, tax, gateway, quote, buyer, tenant_id, access_hash, source, website_ref)
+                values (@a, @k, 'pending', @l, @c, @t, @tax, 'razorpay', @q, @b, @tid, @h, @src, @wref) returning id", db))
             {
+                ins.Parameters.AddWithValue("src", link ? "website" : "store"); ins.Parameters.AddWithValue("wref", websiteRef);
                 ins.Parameters.AddWithValue("a", accountId); ins.Parameters.AddWithValue("k", req.Kind);
                 ins.Parameters.Add(new NpgsqlParameter("l", NpgsqlDbType.Jsonb) { Value = JsonSerializer.Serialize(quote.Licence) });
                 ins.Parameters.AddWithValue("c", quote.Currency); ins.Parameters.AddWithValue("t", quote.Total); ins.Parameters.AddWithValue("tax", quote.Tax);
@@ -169,7 +179,7 @@ public static class StoreFront
         }));
 
         // the browser's Razorpay answer: the signature proves it came from Razorpay
-        Public(r.MapPost("/api/store/checkout/confirm", async (JsonElement b, HttpContext http, CommerceOptions o, IDataProtectionProvider dp, CancellationToken ct) =>
+        f(r.MapPost(p + "/checkout/confirm", async (JsonElement b, HttpContext http, CommerceOptions o, IDataProtectionProvider dp, CancellationToken ct) =>
         {
             var keys = await Razorpay.LoadAsync(o, dp, ct);
             var rzOrder = Str(b, "razorpay_order_id"); var payment = Str(b, "razorpay_payment_id"); var sig = Str(b, "razorpay_signature");
@@ -181,8 +191,8 @@ public static class StoreFront
             return Results.Ok(new { orderId = id });
         }));
 
-        // Razorpay's server tells us about payments (also when the browser closed before returning)
-        Public(r.MapPost("/api/store/webhooks/razorpay", async (HttpContext http, CommerceOptions o, IDataProtectionProvider dp, CancellationToken ct) =>
+        // Razorpay's server tells us about payments (also when the browser closed before returning); only on the platform's own address
+        if (!link) f(r.MapPost(p + "/webhooks/razorpay", async (HttpContext http, CommerceOptions o, IDataProtectionProvider dp, CancellationToken ct) =>
         {
             string body;
             using (var reader = new StreamReader(http.Request.Body, Encoding.UTF8)) body = await reader.ReadToEndAsync(ct);
@@ -211,7 +221,7 @@ public static class StoreFront
         }));
 
         // the order page polls this: status, and when done the address or the licence key
-        Public(r.MapGet("/api/store/orders/{id:guid}", async (Guid id, string? t, CommerceOptions o, IDataProtectionProvider dp, CancellationToken ct) =>
+        f(r.MapGet(p + "/orders/{id:guid}", async (Guid id, string? t, CommerceOptions o, IDataProtectionProvider dp, CancellationToken ct) =>
         {
             await using var db = await CommerceDb.OpenAsync(o, ct);
             await using var q = new NpgsqlCommand(@"select o.status, o.kind, o.tenant_id, o.result, o.error, o.access_hash, o.total, o.currency, i.number, o.created_at
@@ -229,7 +239,7 @@ public static class StoreFront
             });
         }));
 
-        Public(r.MapGet("/api/store/orders/{id:guid}/invoice", async (Guid id, string? t, CommerceOptions o, CancellationToken ct) =>
+        f(r.MapGet(p + "/orders/{id:guid}/invoice", async (Guid id, string? t, CommerceOptions o, CancellationToken ct) =>
         {
             await using var db = await CommerceDb.OpenAsync(o, ct);
             await using var q = new NpgsqlCommand("select o.access_hash, i.number, i.pdf from commerce.orders o join commerce.invoices i on i.id = o.invoice_id where o.id = @i", db);
@@ -240,7 +250,7 @@ public static class StoreFront
         }));
 
         // a free trial: the customer is created at once; the set-password mail also proves the address
-        Public(r.MapPost("/api/store/trial", async (JsonElement b, HttpContext http, CommerceOptions o, Signer signer, IMailQueue mail, IAuditLog audit, CancellationToken ct) =>
+        f(r.MapPost(p + "/trial", async (JsonElement b, HttpContext http, CommerceOptions o, Signer signer, IMailQueue mail, IAuditLog audit, CancellationToken ct) =>
         {
             var biz = await Business.LoadAsync(o, ct);
             if (biz.Missing() is { } missing) return No("store_closed", "Trials are not open yet (" + missing + " is not set).", 503);
