@@ -85,6 +85,8 @@ type asset struct {
 	// Bmc is the address of the server's management controller (iLO, iDRAC, XClarity), read in addition to the main read.
 	Bmc       string  `json:"bmc"`
 	BmcLogins []login `json:"bmcLogins"`
+	// Printer is true for a printer read over SNMP: its status, supplies and page counter are read every PrinterEvery.
+	Printer bool `json:"printer"`
 }
 
 type deploy struct {
@@ -136,8 +138,9 @@ type results struct {
 	Bmc         []invRes      `json:"bmc"` // what a server's management controller reported, merged into the asset
 	Errors      []errRes      `json:"errors"`
 	Checks      []CheckResult `json:"checks"`
-	Traffic     []trafficRes  `json:"traffic,omitempty"` // port states and rates of network devices
-	Events      []eventRes    `json:"events,omitempty"`  // syslog messages and traps received
+	Traffic     []trafficRes  `json:"traffic,omitempty"`  // port states and rates of network devices
+	Events      []eventRes    `json:"events,omitempty"`   // syslog messages and traps received
+	Printers    []printerRes  `json:"printers,omitempty"` // status, supplies, trays, alerts and page counters of printers
 }
 
 // Report is the body of one check-in.
@@ -175,6 +178,8 @@ type Runner struct {
 
 	traffic     map[string]*trafficReading // last counter reading per network device
 	lastTraffic map[string]time.Time
+	lastPrinter map[string]time.Time
+	known       map[string]asset // the devices of the last work list, with their logins, for actions a person asks for (clear a printer's queue, restart it)
 	// Listen receives syslog and traps; nil in tests that do not want it. SyslogAddr/TrapAddr default to :514 and :162.
 	Listen *Listener
 
@@ -289,6 +294,10 @@ func merge(old, cur report) report {
 	if len(old.Results.Traffic) > 2000 {
 		old.Results.Traffic = old.Results.Traffic[len(old.Results.Traffic)-2000:]
 	}
+	old.Results.Printers = append(old.Results.Printers, cur.Results.Printers...)
+	if len(old.Results.Printers) > 1000 {
+		old.Results.Printers = old.Results.Printers[len(old.Results.Printers)-1000:]
+	}
 	old.Results.Events = append(old.Results.Events, cur.Results.Events...)
 	if len(old.Results.Events) > maxEvents {
 		old.Results.Events = old.Results.Events[len(old.Results.Events)-maxEvents:]
@@ -300,6 +309,13 @@ func merge(old, cur report) report {
 
 // DoWork carries out one list of work and queues the results for the next check-in.
 func (r *Runner) DoWork(ctx context.Context, w *work) {
+	known := make(map[string]asset, len(w.Assets))
+	for _, a := range w.Assets {
+		known[a.ID] = a
+	}
+	r.mu.Lock()
+	r.known = known
+	r.mu.Unlock()
 	sem := make(chan struct{}, 12)
 	var wg sync.WaitGroup
 	for _, a := range w.Assets {
@@ -355,9 +371,20 @@ func (r *Runner) watch(ctx context.Context, a asset, checks []CheckDef) {
 		}
 		r.lastTraffic[a.ID] = time.Now()
 	}
+	psince := time.Since(r.lastPrinter[a.ID])
+	pdue := up && a.Printer && a.Monitor == "snmp" && (psince >= PrinterEvery || a.ReadNow && psince >= readNowGap)
+	if pdue {
+		if r.lastPrinter == nil {
+			r.lastPrinter = map[string]time.Time{}
+		}
+		r.lastPrinter[a.ID] = time.Now()
+	}
 	r.mu.Unlock()
 	if tdue {
 		r.readTraffic(ctx, a, target)
+	}
+	if pdue {
+		r.readPrinter(ctx, a, target)
 	}
 	if bdue {
 		r.readBmc(ctx, a, bkey)

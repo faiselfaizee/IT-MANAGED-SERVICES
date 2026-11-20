@@ -410,3 +410,16 @@ Monitors, keyboards, mice, docking stations, headsets, webcams, mobile phones, t
 **Log On** (Windows, administrators, with a reason): Local System, Network Service, Local Service, or an account with its password, typed or filled from the Vault (decrypted in the browser; the use is recorded on the Vault item). The password travels through the one-time sealed hand-over: the agent fetches it once, Windows sets it with ChangeServiceConfig, and the account gets "Log on as a service". It is never in a job, a script, the history or the audit log. Needs agent 6.3 or later.
 
 **Applications tab › Uninstall** (administrators and engineers, with a reason): the program's silent uninstall entry on Windows (QuietUninstallString, or msiexec /x for MSI packages), the package manager on Linux (apt, dnf, yum, zypper). A program without a silent uninstaller is not removed and the message says so. The reason goes to the asset history and the audit log; the inventory refreshes afterwards.
+
+## 6.5: Printers
+
+Set a printer's *Read as* to **Printer or other device (SNMP)** and give it a saved SNMP login. The site controller then reads it every 15 minutes ("Read now" at most every 2 minutes) and the asset gets a **Printer** tab:
+- **Status**: idle, printing, warming up, plus faults (jam, door open, no paper, offline, service needed), the display message and the printer's own alerts.
+- **Supplies**: toner, ink, drums, fusers and waste containers with colour and percentage; trays with paper size and level.
+- **Pages**: lifetime counter, pages this month, last month, 7 and 30 days, and a daily chart. A replaced printer (counter goes down) gives no figure for that period.
+- **Clear the printer's queue**: IPP Purge-Jobs on port 631, cancelling job by job if the printer does not support it. Works on standalone printers; a printer that asks for a login says so.
+- **Restart the printer**: SNMP write (v2c) needing a *write* community saved on the asset. A read-only community is refused with a clear message.
+
+Print servers: clear their queues with the library scripts *Clear print queue and restart spooler* and *List printers*. Printers behind a print server are still read directly over SNMP.
+
+Not in 6.5: colour vs black-and-white page split, print-server queue monitoring, SNMPv3 restart. Tested against simulated printers only. Update the site controllers to read printers.

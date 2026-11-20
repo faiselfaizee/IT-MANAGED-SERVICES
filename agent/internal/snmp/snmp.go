@@ -1,5 +1,5 @@
 // Package snmp is a small SNMP v2c client (GET and GETNEXT over UDP) for reading printers, switches, firewalls and other devices.
-// It is written with the standard library only. Read-only: it can never change a device.
+// It is written with the standard library only. It reads; the one write it can do is SetInt (used to restart a printer).
 package snmp
 
 import (

@@ -19,6 +19,7 @@ var makers = map[string]string{
 	"6486": "Alcatel-Lucent", "1991": "Brocade", "1916": "Extreme Networks", "6876": "VMware", "2021": "Net-SNMP", "16": "Allied Telesis", "5951": "Citrix",
 	"3375": "F5", "6527": "Nokia", "4881": "Ruijie", "27975": "Sophos", "8744": "Sophos", "2604": "Sophos", "10002": "Ubiquiti", "15983": "WatchGuard", "21013": "Hikvision",
 	"8741": "SonicWall", "29671": "Cisco Meraki", "14823": "Aruba", "47196": "Aruba",
+	"236": "Samsung", "2385": "Sharp", "1129": "Toshiba TEC", "2590": "Konica Minolta", "297": "Fuji Xerox", "2001": "OKI",
 }
 
 // SNMPInventory reads a device over SNMP v2c and returns it in the inventory shape the platform reads.

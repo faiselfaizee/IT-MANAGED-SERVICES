@@ -10,7 +10,7 @@ export const devHref = (co: string, filter = '') => '#/monitoring/devices' + (()
 export const alertHref = (co: string, filter = '') => '#/monitoring/alerts' + (() => { const q = [co !== 'all' ? `company=${co}` : '', filter].filter(Boolean).join('&'); return q ? '?' + q : ''; })();
 const attention = (m: Rec) => 3 * n(m.critical) + n(m.warning);
 
-export const METRIC_WORDS: Record<string, string> = { offline: 'Device down', cpu: 'Processor', memory: 'Memory', disk: 'Disk space', check: 'Service checks', cert: 'Certificates', hardware: 'Hardware', traffic: 'Port traffic', port: 'Port down', service: 'Services', autoservice: 'Automatic services', process: 'Programs', log: 'Device messages' };
+export const METRIC_WORDS: Record<string, string> = { offline: 'Device down', cpu: 'Processor', memory: 'Memory', disk: 'Disk space', check: 'Service checks', cert: 'Certificates', hardware: 'Hardware', traffic: 'Port traffic', port: 'Port down', service: 'Services', autoservice: 'Automatic services', process: 'Programs', log: 'Device messages', supply: 'Printer supplies', printer: 'Printer faults' };
 
 export function statusParts(m: Rec, co: string): Part[] {
   return [

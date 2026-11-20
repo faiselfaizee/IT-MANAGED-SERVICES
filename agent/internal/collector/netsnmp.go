@@ -252,6 +252,10 @@ func vendorFacts(c *snmp.Client, maker string) (serial, model, firmware string) 
 
 // addNetworkDetails puts the ports and hardware tables of a network device into its inventory document.
 func addNetworkDetails(c *snmp.Client, inv map[string]any) {
+	if rows, _ := c.Walk(oidHrPrinterStatus, 1); len(rows) > 0 {
+		inv["is_printer"] = true
+		return // a printer with a wired and a wireless port is still a printer, not a network device: its own reading says more
+	}
 	maker, _ := inv["make"].(string)
 	ports, summary := snmpPorts(c)
 	modules, psus, sensors, fw := snmpHardware(c, maker)

@@ -248,7 +248,7 @@ public sealed class DeviceHealth : IDeviceHealth
         await using (var c = new NpgsqlCommand($@"select a.id, a.tag, a.name, a.company_id, coalesce(co.name, ''), {AssetDash.KindSql}, a.ip_address, trim(a.os_name || ' ' || a.os_version),
                 g.id is not null, coalesce(g.version, ''), g.last_seen, case when a.collector_id <> '' and a.monitor <> '' then a.check_up end, a.check_down_at, a.check_rtt, a.checked_at,
                 a.m_at, a.m_cpu, a.m_mem, a.m_mem_total, a.m_uptime, a.m_disks::text, coalesce(a.hw_extra->'datastores', '[]')::text,
-                a.m_ports::text, a.m_ports_at, a.m_services::text, a.m_services_at, a.m_svc_inv::text, a.m_svc_inv_at
+                a.m_ports::text, a.m_ports_at, a.m_services::text, a.m_services_at, a.m_svc_inv::text, a.m_svc_inv_at, a.m_printer::text, a.m_printer_at
             from assets.assets a left join assets.types t on t.id = a.type_id left join assets.companies co on co.id = a.company_id
             left join assets.agents g on g.id = a.agent_id and g.deleted_at is null
             where {where} order by a.id", db))
@@ -288,7 +288,8 @@ public sealed class DeviceHealth : IDeviceHealth
                     mAt, rd.IsDBNull(16) ? null : rd.GetFloat(16), rd.IsDBNull(17) ? null : rd.GetFloat(17), rd.GetInt64(18), rd.GetInt64(19), disks,
                     checks.TryGetValue(id, out var ck) ? ck : Array.Empty<CheckState>(), faults.TryGetValue(id, out var fl) ? fl : Array.Empty<PartFault>(),
                     ports, rd.IsDBNull(23) ? null : rd.GetDateTime(23), watched, rd.IsDBNull(25) ? null : rd.GetDateTime(25),
-                    inventory, rd.IsDBNull(27) ? null : rd.GetDateTime(27), svcModes.TryGetValue(id, out var sm) ? sm : null));
+                    inventory, rd.IsDBNull(27) ? null : rd.GetDateTime(27), svcModes.TryGetValue(id, out var sm) ? sm : null,
+                    PrinterApi.Parse(rd.IsDBNull(28) ? null : rd.GetString(28)), rd.IsDBNull(29) ? null : rd.GetDateTime(29)));
             }
         }
         return outList;

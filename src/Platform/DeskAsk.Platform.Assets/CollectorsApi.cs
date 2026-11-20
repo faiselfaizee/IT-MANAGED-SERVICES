@@ -318,6 +318,13 @@ chmod 755 /opt/deskask-collector/deskask-collector
                 AgentsApi.P(c, "i", col.Id); await using var rd = await c.ExecuteReaderAsync(ct);
                 while (await rd.ReadAsync(ct)) mine[rd.GetInt64(0)] = (rd.GetString(1), rd.GetString(2), rd.GetString(3), rd.GetString(4), rd.IsDBNull(5) ? null : rd.GetBoolean(5), rd.GetBoolean(6), rd.GetString(7));
             }
+            // printers among them: their status, supplies and page counter are read every 15 minutes
+            var printerIds = new HashSet<long>();
+            await using (var c = new NpgsqlCommand($"select a.id from assets.assets a left join assets.types t on t.id = a.type_id where a.collector_id = @i and a.monitor = 'snmp' and {AssetDash.KindSql} = 'printer'", db))
+            {
+                AgentsApi.P(c, "i", col.Id); await using var rd = await c.ExecuteReaderAsync(ct);
+                while (await rd.ReadAsync(ct)) printerIds.Add(rd.GetInt64(0));
+            }
             long AssetOf(JsonElement e) { var s = AgentsApi.Str(e, "asset") ?? ""; return long.TryParse(s, out var l) && mine.ContainsKey(l) ? l : 0; }
 
             foreach (var h in Items(res, "health", 5000))
@@ -357,6 +364,13 @@ chmod 755 /opt/deskask-collector/deskask-collector
                 var id = AssetOf(tr); if (id == 0 || !tr.TryGetProperty("ports", out var ports) || ports.ValueKind != JsonValueKind.Array) continue;
                 try { await DeviceHealth.AddTraffic(db, id, ports, ct); }
                 catch (Exception e) { await Log(db, col.Id, "warn", "Traffic for asset " + id + " rejected: " + e.Message, ct); }
+            }
+            // printers: status, supplies, trays, alerts and the page counter
+            foreach (var pr in Items(res, "printers", 1000))
+            {
+                var id = AssetOf(pr); if (id == 0) continue;
+                try { await PrinterApi.StoreAsync(db, id, pr, ct); }
+                catch (Exception e) { await Log(db, col.Id, "warn", "Printer reading for asset " + id + " rejected: " + e.Message, ct); }
             }
             // syslog messages and traps, matched to the devices this controller watches by address
             var byIp = mine.Where(m => m.Value.Ip != "").GroupBy(m => m.Value.Ip).ToDictionary(g => g.Key, g => g.First().Key);
@@ -457,7 +471,7 @@ chmod 755 /opt/deskask-collector/deskask-collector
             }
             // the work list
             var assets = new List<object>(); foreach (var (id, a) in mine) assets.Add(new { id = id.ToString(), ip = a.Ip, host = a.Host, name = a.Name, monitor = a.Monitor == "" ? "ping" : a.Monitor, logins = Reading.Contains(a.Monitor) ? LoginsFor(id, a.Monitor) : Array.Empty<object>(), readNow = a.ReadReq && (Reading.Contains(a.Monitor) || a.Bmc != ""),
-                bmc = a.Bmc, bmcLogins = a.Bmc != "" ? LoginsFor(id, "bmc") : Array.Empty<object>() });
+                bmc = a.Bmc, bmcLogins = a.Bmc != "" ? LoginsFor(id, "bmc") : Array.Empty<object>(), printer = printerIds.Contains(id) });
             var checks = new Dictionary<string, List<object>>();
             await using (var c = new NpgsqlCommand("select s.id, s.asset_id, s.name, s.type, s.host, s.port, s.url, s.expect, s.status, s.insecure, s.dns, s.timeout_s, a.ip_address, a.dns_name, a.hostname from assets.service_checks s join assets.assets a on a.id = s.asset_id where a.collector_id = @i and a.monitor <> '' and s.enabled", db))
             {
