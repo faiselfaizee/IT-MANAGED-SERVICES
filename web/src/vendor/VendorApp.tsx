@@ -363,7 +363,7 @@ function WebsiteLink() {
   const u = url ?? String(d.websiteUrl ?? ''); const h = hide ?? !!d.hidePlatformStore;
   const save = async () => { setErr(''); setOk(''); try { await api('/api/commerce/link', { method: 'PUT', body: { websiteUrl: u.trim(), hidePlatformStore: h } }); setUrl(null); setHide(null); l.reload(); setOk('Saved.'); } catch (e) { setErr((e as Error).message); } };
   const make = async () => {
-    if (d.hasSecret && !confirm('Make a new secret? The website stops working with the platform until you paste the new one into its admin (Store › Link).')) return;
+    if (d.hasSecret && !confirm('Make a new secret? The website stops working with the platform until you paste the new one into its Admin › Store.')) return;
     setErr(''); try { const r = await api<Rec>('/api/commerce/link/secret', { method: 'POST', body: {} }); setSecret(String(r.secret)); l.reload(); } catch (e) { setErr((e as Error).message); }
   };
   const ping = async () => { setTest(null); try { setTest(await api<Rec>('/api/commerce/link/test', { method: 'POST', body: {} })); l.reload(); } catch (e) { setTest({ ok: false, detail: (e as Error).message }); } };
@@ -379,7 +379,7 @@ function WebsiteLink() {
       <Err text={err} />{ok && <p role="status">{ok}</p>}
     </Card>
     <Card title="Shared secret">
-      <p className="muted">{d.hasSecret ? <>A secret is set (ends …{String(d.secretHint)}, made {d.secretAt ? fmtDate(String(d.secretAt)) : ''}).</> : 'No secret yet.'} Both sides sign every request with it. Paste it into the website's admin under Store › Link.</p>
+      <p className="muted">{d.hasSecret ? <>A secret is set (ends …{String(d.secretHint)}, made {d.secretAt ? fmtDate(String(d.secretAt)) : ''}).</> : 'No secret yet.'} Both sides sign every request with it. Paste it into the website's Admin › Store.</p>
       {secret && <div className="secret-once"><p><b>Copy it now; it is not shown again.</b></p><Copy text={secret} /></div>}
       <div className="actions" style={{ justifyContent: 'flex-start' }}><button onClick={() => void make()}>{d.hasSecret ? 'Make a new secret' : 'Make the secret'}</button>
         <button disabled={!d.hasSecret || !d.websiteUrl} onClick={() => void ping()}>Send a test event</button></div>

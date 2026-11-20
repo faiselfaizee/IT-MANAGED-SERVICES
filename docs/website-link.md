@@ -14,7 +14,7 @@ the licence, issues the GST invoice and mails everything, then tells the website
 ## Setting it up
 
 1. Platform, **Vendor console › Website link**: website address `https://www.deskask.in`; tick "Send visitors of the platform's own store page to the website" when the website store is live. Press **Make the secret** and copy it (shown once).
-2. Website, **Admin › Store › Link**: platform address (for example `https://damazetech.deskask.in` for testing, `https://platform.deskask.in` later) and paste the secret. Press **Test the link**: it calls the platform's ping. Switch the store on.
+2. Website, **Admin › Store**: platform address (for example `https://damazetech.deskask.in` for testing, `https://platform.deskask.in` later) and paste the secret. Press **Test the link**: it calls the platform's ping. Switch the store on.
 3. Platform, **Website link › Send a test event**: the website must answer 200.
 4. The website must reach the platform's address over HTTPS, and the platform must reach `https://www.deskask.in/store/hooks`. With both on the same public IP behind OPNsense/HAProxy, add `www.deskask.in` to HAProxy with its own backend (the website's IIS server) before the tenant catch-all rule.
 

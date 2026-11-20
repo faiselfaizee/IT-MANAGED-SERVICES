@@ -364,7 +364,7 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
 
             // renewal: the customer's own address is accepted again only with its renewal link, and the paid period is added after the current one
             var endsBefore = (DateTime)(await Scalar("select ends_at from commerce.subscriptions where tenant_id = @t", ("t", shop)))!;
-            Assert.Equal(HttpStatusCode.BadRequest, (await anon.SendAsync(SignedReq(secret, HttpMethod.Post, "/api/link/v1/checkout", new { kind = "saas", period = "month", plans = new Dictionary<string, int> { ["servicedesk"] = sd10 }, country = "IN", stateCode = "33", tenantId = shop, buyer = Buyer })))).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, (await anon.SendAsync(SignedReq(secret, HttpMethod.Post, "/api/link/v1/checkout", new { kind = "saas", period = "month", plans = new Dictionary<string, int> { ["servicedesk"] = sd10 }, country = "IN", stateCode = "33", tenantId = shop, buyer = Buyer }))).StatusCode);
             var dp = factory.Services.GetRequiredService<Microsoft.AspNetCore.DataProtection.IDataProtectionProvider>();
             var token = Link.RenewToken(dp, shop);
             var rn = await J(await anon.SendAsync(SignedReq(secret, HttpMethod.Get, "/api/link/v1/renew?token=" + Uri.EscapeDataString(token))));
