@@ -160,7 +160,7 @@ public static class PrinterApi
             var daily = Daily(rows).Where(d => d.Day >= today.AddDays(-59)).Select(d => new { day = d.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), pages = d.Pages }).ToArray();
             return Results.Ok(new
             {
-                reading = reading == null ? null : JsonDocument.Parse(reading).RootElement.Clone(), at, error,
+                reading = reading == null ? (JsonElement?)null : JsonDocument.Parse(reading).RootElement.Clone(), at, error,
                 // how it is read: a site controller must watch the printer over SNMP, otherwise nothing is read and no action can run
                 controller, printer,
                 pages = new { total = rows.Count > 0 ? rows[^1].Item2 : (long?)null, last7 = Pc(Between(rows, today.AddDays(-6), today)), last30 = Pc(Between(rows, today.AddDays(-29), today)),
