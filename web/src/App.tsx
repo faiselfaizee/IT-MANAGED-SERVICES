@@ -20,6 +20,7 @@ const Users = lazy(() => import('./Users'));
 const Access = lazy(() => import('./Access'));
 const Licence = lazy(() => import('./Licence'));
 const Branding = lazy(() => import('./Branding'));
+const Subscription = lazy(() => import('./Subscription'));
 const Mail = lazy(() => import('./Mail'));
 const Updates = lazy(() => import('./Updates'));
 const VendorApp = lazy(() => import('./vendor/VendorApp'));
@@ -44,7 +45,7 @@ function UsersArea({ meId, tab }: { meId?: string; tab: string }) {
 }
 
 const SECTION: Record<string, string> = { '': 'Home', servicedesk: 'Service Desk', assets: 'Assets', monitoring: 'Monitoring', admanager: 'AD Manager', vault: 'Vault', backup: 'Backup',
-  users: 'Administration › Users', access: 'Administration › Users', mail: 'Administration › Mail', updates: 'Administration › Updates', licence: 'Administration › Licence', branding: 'Administration › Branding', vendor: 'Administration › Vendor console' };
+  users: 'Administration › Users', access: 'Administration › Users', mail: 'Administration › Mail', updates: 'Administration › Updates', licence: 'Administration › Licence', subscription: 'Administration › Subscription', branding: 'Administration › Branding', vendor: 'Administration › Vendor console' };
 const ROLE: Record<string, string> = { admin: 'Administrator', engineer: 'Engineer', viewer: 'Viewer', cadmin: 'Customer administrator', customer: 'Customer' };
 
 /** The signed-in person: name and role, appearance, two-step sign-in and signing out. */
@@ -203,6 +204,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const inUsers = (parts[0] === 'users' || parts[0] === 'access') && isAdmin;
   const inLicence = parts[0] === 'licence' && isAdmin;
   const inBranding = parts[0] === 'branding' && isAdmin;
+  const inSub = parts[0] === 'subscription' && isAdmin;
   const brand = useBrand();
   const inMail = parts[0] === 'mail' && isAdmin;
   const inUpdates = parts[0] === 'updates' && isAdmin;
@@ -215,7 +217,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
       <nav aria-label="Modules" className="side">
         <a className="brand" href="#/" aria-label={brand.name + ' home'}>{brand.hasLogo ? <span className="logo-chip"><img src={logoUrl(brand)} alt="" /></span> : <Logo size={38} />}<span className="brand-text"><strong>{brand.name}</strong><small>{brand.headerText || 'IT managed services'}</small></span></a>
         <div className="side-group">
-          <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inBranding && !inMail && !inUpdates && !inVendor ? 'on' : ''}><Icon name="home" />Home</a>
+          <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inSub && !inBranding && !inMail && !inUpdates && !inVendor ? 'on' : ''}><Icon name="home" />Home</a>
           {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
             ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
             : m === 'Service Desk'
@@ -236,6 +238,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           <a href="#/mail" className={inMail ? 'on' : ''}><Icon name="mail" />Mail</a>
           <a href="#/updates" className={inUpdates ? 'on' : ''}><Icon name="updates" />Updates</a>
           <a href="#/licence" className={inLicence ? 'on' : ''}><Icon name="licence" />Licence</a>
+          <a href="#/subscription" className={inSub ? 'on' : ''}><Icon name="licence" />Subscription</a>
           <a href="#/branding" className={inBranding ? 'on' : ''}><Icon name="branding" />Branding</a>
           {isVendor ? <a href="#/vendor" className={inVendor ? 'on' : ''}><Icon name="store" />Vendor console</a> : null}
         </div> : null}
@@ -257,6 +260,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           : inBackup ? <Suspense fallback={<p className="muted">Loading…</p>}><BackupApp /></Suspense>
           : inUpdates ? <Suspense fallback={<p className="muted">Loading…</p>}><Updates /></Suspense>
           : inMail ? <Suspense fallback={<p className="muted">Loading…</p>}><Mail /></Suspense>
+          : inSub ? <Suspense fallback={<p className="muted">Loading…</p>}><Subscription /></Suspense>
           : inBranding ? <Suspense fallback={<p className="muted">Loading…</p>}><Branding /></Suspense>
           : inLicence ? <Suspense fallback={<p className="muted">Loading…</p>}><Licence /></Suspense>
           : inVendor ? <Suspense fallback={<p className="muted">Loading…</p>}><VendorApp path={parts.slice(1)} /></Suspense>

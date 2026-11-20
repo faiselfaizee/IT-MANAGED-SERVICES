@@ -253,6 +253,11 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
             Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/commerce/pages/terms", Json(new { markdown = "" }))).StatusCode);
             Assert.Contains("Law and disputes", (await J(await anon.GetAsync("/api/store/pages/terms"))).GetProperty("markdown").GetString());
 
+            // Administration › Subscription answers for every customer; the store link is the website's
+            var mine = await J(await admin.GetAsync("/api/platform/subscription"));
+            Assert.True(mine.GetProperty("store").GetBoolean()); Assert.Equal("https://www.deskask.in/pricing", mine.GetProperty("storeUrl").GetString());
+            Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/api/platform/subscription/invoices/" + invoices[0].GetProperty("id").GetInt64() + "/pdf")).StatusCode);   // another customer's invoice
+
             // the vendor console stays closed to everyone else
             Assert.Equal(HttpStatusCode.Unauthorized, (await anon.GetAsync("/api/commerce/business")).StatusCode);
         }

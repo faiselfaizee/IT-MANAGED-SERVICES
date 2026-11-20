@@ -400,3 +400,13 @@ Monitors, keyboards, mice, docking stations, headsets, webcams, mobile phones, t
 - **Add several.** All assets → Add several: paste serial numbers, one per line, or give a quantity (up to 200). Duplicates are skipped and listed.
 - **People.** What each person holds, take several things back at once (attached items come along), give things from stock, and print the handover sheet for signing.
 - **Stock.** Counts per kind: in stock, in use, in repair, retired, lost.
+
+## 6.3: Reports, Services and Uninstall
+
+**Assets › Reports** lists every asset report: inventory, hardware and firmware, disks and partitions, network adapters, installed software (search a program to see where it is), antivirus, patch compliance, purchase/warranty/AMC, licences and subscriptions, agent health, and the Backup status report. Each can be filtered by customer and status, searched, and exported to CSV (UTF-8, opens in Excel). The page shows 2,000 rows; the CSV holds up to 50,000. Customer scope applies to every row.
+
+**Services tab** (computers with the agent): every service with its state, startup type and, on Windows, the account it runs as. Administrators and engineers can Start, Stop, Restart and change the startup type (Automatic, Automatic (delayed start), Manual, Disabled; on Linux enable or disable). The agent runs the action as a job (visible in Remote activity) and the row shows the state the computer reported afterwards. The same buttons are on the Monitoring device page.
+
+**Log On** (Windows, administrators, with a reason): Local System, Network Service, Local Service, or an account with its password, typed or filled from the Vault (decrypted in the browser; the use is recorded on the Vault item). The password travels through the one-time sealed hand-over: the agent fetches it once, Windows sets it with ChangeServiceConfig, and the account gets "Log on as a service". It is never in a job, a script, the history or the audit log. Needs agent 6.3 or later.
+
+**Applications tab › Uninstall** (administrators and engineers, with a reason): the program's silent uninstall entry on Windows (QuietUninstallString, or msiexec /x for MSI packages), the package manager on Linux (apt, dnf, yum, zypper). A program without a silent uninstaller is not removed and the message says so. The reason goes to the asset history and the audit log; the inventory refreshes afterwards.
