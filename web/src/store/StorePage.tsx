@@ -304,7 +304,7 @@ function Buy({ info, preset }: { info: Rec; preset?: string }) {
     return () => clearTimeout(t);
   }, [reqKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const timer = useRef<ReturnType<typeof setTimeout>>();
-  const checkName = (v: string) => { setTenantId(v); setAvail(null); clearTimeout(timer.current); if (v.length >= 2) timer.current = setTimeout(() => { void call('/api/store/available?id=' + encodeURIComponent(v)).then(setAvail, () => undefined); }, 350); };
+  const checkName = (v: string) => { setTenantId(v); setAvail(null); clearTimeout(timer.current); if (v.length >= 2) timer.current = setTimeout(() => { void call('/api/store/available?id=' + encodeURIComponent(v)).then(setAvail, (e) => setAvail({ available: false, reason: (e as Error).message || 'The address could not be checked. Try again.' })); }, 350); };
   const pay = async () => {
     setBusy(true); setErr('');
     try {
@@ -389,7 +389,10 @@ function Trial({ info }: { info: Rec }) {
   const [f, setF] = useState({ company: '', name: '', email: '', tenantId: '' }); const [mods, setMods] = useState<string[]>(['servicedesk', 'assets']);
   const [avail, setAvail] = useState<Rec | null>(null); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false); const [done, setDone] = useState<Rec | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
-  const name = (v: string) => { setF({ ...f, tenantId: v }); setAvail(null); clearTimeout(timer.current); if (v.length >= 2) timer.current = setTimeout(() => { void call('/api/store/available?id=' + encodeURIComponent(v)).then(setAvail, () => undefined); }, 350); };
+  const name = (v: string) => { setF({ ...f, tenantId: v }); setAvail(null); clearTimeout(timer.current); if (v.length >= 2) timer.current = setTimeout(() => { void call('/api/store/available?id=' + encodeURIComponent(v)).then(setAvail, (e) => setAvail({ available: false, reason: (e as Error).message || 'The address could not be checked. Try again.' })); }, 350); };
+  const missing = [!f.company && 'company', !f.name && 'your name', !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email) && 'a valid work email',
+    !f.tenantId ? 'your DeskAsk address' : avail === null ? 'the address check (a moment)' : !avail.available && 'a free DeskAsk address',
+    mods.length === 0 && 'at least one module'].filter(Boolean) as string[];
   const start = async () => { setBusy(true); setErr(''); try { setDone(await call('/api/store/trial', { ...f, modules: mods })); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); } };
   if (done) return <div className="site-wrap page"><div className="store-body"><section className="store-card"><h1>Your trial is ready</h1>
     <p>We have emailed <b>{f.email}</b> a link to choose your password. Then sign in at <a href={done.address}>{done.address}</a>.</p>
@@ -407,8 +410,10 @@ function Trial({ info }: { info: Rec }) {
     <fieldset className="store-mods"><legend>Modules to try</legend>
       {TRIAL_MODULES.map(([k, n]) => <label key={k} className="check"><input type="checkbox" checked={mods.includes(k)} onChange={(e) => setMods(e.target.checked ? [...mods, k] : mods.filter((x) => x !== k))} />{n}</label>)}</fieldset>
     {err && <p className="err" role="alert">{err}</p>}
-    {info.trials ? <button className="primary" disabled={busy || !f.company || !f.name || !f.email || !avail?.available || mods.length === 0} onClick={() => void start()}>{busy ? 'Creating your DeskAsk…' : 'Start free trial'}</button>
-      : <p className="muted">Trials open soon.</p>}
+    {info.trials ? <>
+      <button className="primary" disabled={busy || missing.length > 0} onClick={() => void start()}>{busy ? 'Creating your DeskAsk…' : 'Start free trial'}</button>
+      {!busy && missing.length > 0 && <p className="store-missing" role="status">Still needed: {missing.join(', ')}.</p>}
+    </> : <p className="muted">Trials open soon.</p>}
   </section></div></div>;
 }
 

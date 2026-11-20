@@ -33,11 +33,14 @@ test('a free trial checks the address and starts', async () => {
   }));
   render(<StorePage path={['trial']} />);
   await waitFor(() => expect(screen.getByText(/Try DeskAsk free for 14 days/)).toBeTruthy());
+  expect(screen.getByRole('status').textContent).toContain('company');
+  expect((screen.getByRole('checkbox', { name: 'Service Desk' }) as HTMLInputElement).checked).toBe(true);
   fireEvent.change(screen.getByLabelText('Company'), { target: { value: 'Acme' } });
   fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Asha' } });
   fireEvent.change(screen.getByLabelText('Work email'), { target: { value: 'asha@acme.in' } });
   fireEvent.change(screen.getByLabelText('Trial address'), { target: { value: 'acme' } });
   await waitFor(() => expect(screen.getByText('https://acme.deskask.in is free')).toBeTruthy(), { timeout: 2000 });
+  expect(screen.queryByText(/Still needed/)).toBeNull();
   fireEvent.click(screen.getByText('Start free trial'));
   await waitFor(() => expect(screen.getByText('Your trial is ready')).toBeTruthy());
 });
