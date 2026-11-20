@@ -109,7 +109,7 @@ public sealed class DeviceHealth : IDeviceHealth
                 {
                     var nm = AgentsApi.Clip(AgentsApi.Str(sv, "name"), 120); if (nm == "") continue;
                     var st = AgentsApi.Clip(AgentsApi.Str(sv, "state"), 20); var sa = AgentsApi.Clip(AgentsApi.Str(sv, "start"), 12);
-                    list.Add(new { name = nm, display = AgentsApi.Clip(AgentsApi.Str(sv, "display"), 160), state = st == "" ? "unknown" : st, start = sa == "" ? "other" : sa });
+                    list.Add(new { name = nm, display = AgentsApi.Clip(AgentsApi.Str(sv, "display"), 160), state = st == "" ? "unknown" : st, start = sa == "" ? "other" : sa, logon = AgentsApi.Clip(AgentsApi.Str(sv, "logon"), 160) });
                 }
                 await using var c = new NpgsqlCommand("update assets.assets set m_svc_inv = @s::jsonb, m_svc_inv_at = now() where id = @a", db);
                 AgentsApi.P(c, "s", JsonSerializer.Serialize(list)); AgentsApi.P(c, "a", ag.Value.AssetId); await c.ExecuteNonQueryAsync(ct);

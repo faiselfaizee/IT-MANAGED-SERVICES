@@ -2,6 +2,30 @@ import { useState } from 'react';
 import { saveFile, useLoad, type Rec } from '../http';
 import { Empty, Loading } from '../ui';
 import { CountUp } from '../Rings';
+import { ReportList, TableReport, type ReportEntry } from '../ReportHub';
+
+/** Monitoring › Reports: every monitoring report, and the report that is open. */
+export default function Reports({ name }: { name?: string }) {
+  const catalog = useLoad<Rec[]>('/api/monitoring/report-catalog');
+  const dash = useLoad<Rec>('/api/monitoring/dashboard');
+  const cos = ((dash.data?.customers ?? []) as Rec[]).filter((c) => c.companyId != null);
+  if (name === 'uptime') return <UptimeReport />;
+  if (name) return <TableReport key={name} url={'/api/monitoring/report/' + encodeURIComponent(name)} back="#/monitoring/reports" extra={{ days: name === 'disks' || name === 'services' ? '' : '30' }}
+    link={(id) => `#/monitoring/device/${id}`}
+    filters={(set, f) => <>
+      <select value={f.company ?? ''} onChange={(e) => set('company', e.target.value)} aria-label="Customer">{!dash.data?.restricted && <option value="">All customers</option>}{cos.map((c) => <option key={c.companyId} value={c.companyId}>{c.company}</option>)}</select>
+      {name !== 'disks' && name !== 'services' && <select value={f.days ?? '30'} onChange={(e) => set('days', e.target.value)} aria-label="Period">
+        <option value="1">Last 24 hours</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select>}
+    </>} />;
+  const entries: ReportEntry[] = [
+    { key: 'uptime', group: 'Availability', title: 'Monthly uptime report', about: 'Availability and downtime per device for a month; the same PDF that is mailed to customers on the 1st.', href: '#/monitoring/reports/uptime' },
+    ...((Array.isArray(catalog.data) ? catalog.data : []) as Rec[]).map((r) => ({ key: String(r.key), group: String(r.group), title: String(r.title), about: String(r.about), href: '#/monitoring/reports/' + r.key })),
+  ];
+  return <>
+    <Loading loading={catalog.loading && !catalog.data} error={catalog.error} />
+    <ReportList title="Monitoring reports" intro="Pick a report. Each one can be filtered by customer and period, searched, and exported to CSV (opens in Excel)." entries={entries} />
+  </>;
+}
 
 const KIND: Record<string, string> = { offline: 'Device down', cpu: 'Processor', memory: 'Memory', disk: 'Disk space', check: 'Service checks', cert: 'Certificates', hardware: 'Hardware', traffic: 'Port traffic', port: 'Ports down', service: 'Services', process: 'Programs', log: 'Device messages' };
 const pct = (v: number) => (v >= 99.995 ? '100%' : v.toFixed(v >= 99 ? 2 : 1) + '%');
@@ -14,7 +38,7 @@ function months(): [string, string][] {
 }
 
 /** The uptime report of a month, for one customer or all; the same as the PDF mailed on the 1st. */
-export default function Reports() {
+function UptimeReport() {
   const qs = new URLSearchParams(location.hash.split('?')[1] ?? '');
   const ms = months();
   const [month, setMonth] = useState(ms[1][0]); const [company, setCompany] = useState(qs.get('company') ?? 'all');
@@ -24,6 +48,7 @@ export default function Reports() {
   const lines = (data?.lines ?? []) as Rec[]; const byKind = Object.entries((data?.byKind ?? {}) as Record<string, number>).sort((a, b) => b[1] - a[1]);
   const [err, setErr] = useState('');
   return <>
+    <p className="crumb-back"><a href="#/monitoring/reports">All reports</a></p>
     <h1>Uptime report</h1>
     <div className="tools">
       <select value={company} onChange={(e) => setCompany(e.target.value)} aria-label="Customer">{!dash.data?.restricted && <option value="all">All customers</option>}{cos.map((c) => <option key={c.companyId} value={c.companyId}>{c.company}</option>)}</select>

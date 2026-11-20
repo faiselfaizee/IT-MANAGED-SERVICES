@@ -93,7 +93,7 @@ func (l *EventLog) Read(ctx context.Context) []Event {
 // Inventory lists every service with its state and start type (one PowerShell call, so it is meant for every few minutes, not every minute).
 func Inventory(ctx context.Context) []ServiceInfo {
 	o, err := run(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
-		"Get-CimInstance Win32_Service | Select-Object Name,DisplayName,State,StartMode | ConvertTo-Json -Compress")
+		"Get-CimInstance Win32_Service | Select-Object Name,DisplayName,State,StartMode,StartName,DelayedAutoStart | ConvertTo-Json -Compress")
 	if err != nil {
 		return nil
 	}

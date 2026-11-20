@@ -151,3 +151,7 @@ The agent (version 3.4 and later) lists **every service** of a Windows computer 
 
 ## v4.3.0: acknowledged alerts count as Ok
 An acknowledged alert is being handled: the device shows Ok in the rings, the device list and the counts while the alert stays open (marked acknowledged on the Alerts page) until it clears. The dashboards also show how many alerts are acknowledged.
+
+## 6.3: Monitoring › Reports
+
+Monthly uptime report (the PDF mailed on the 1st), alert history, busiest devices (processor and memory average and highest, lowest free disk), disk space now, network port traffic, and service status. Filters: customer and period (24 hours to 90 days); every report exports to CSV.

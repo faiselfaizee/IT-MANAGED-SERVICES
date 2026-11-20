@@ -7,8 +7,8 @@ import Rules from './Rules';
 import Settings from './Settings';
 import Events from './Events';
 import Reports from './Reports';
+import { ModNav } from '../ModNav';
 
-const NAV: [string, string, boolean][] = [['', 'Dashboard', false], ['devices', 'Devices', false], ['alerts', 'Alerts', false], ['events', 'Messages', false], ['reports', 'Uptime report', false], ['rules', 'Alert rules', false], ['settings', 'Settings', true]];
 
 /** The Monitoring module: routes inside the #/monitoring address. */
 export default function MonitoringApp() {
@@ -23,13 +23,16 @@ export default function MonitoringApp() {
     case 'device': page = <Device key={b} id={b ?? ''} />; break;
     case 'alerts': page = <Alerts key={location.hash} />; break;
     case 'events': page = <Events key={location.hash} />; break;
-    case 'reports': page = <Reports key={location.hash} />; break;
+    case 'reports': page = <Reports key={b ?? ''} name={b?.split('?')[0]} />; break;
     case 'rules': page = <Rules admin={admin} />; break;
     case 'settings': page = admin ? <Settings /> : <Dashboard />; break;
     default: page = <Dashboard />;
   }
-  return <>
-    <nav className="sub" aria-label="Monitoring">{NAV.filter(([, , adm]) => !adm || admin).map(([k, l]) => <a key={k} href={'#/monitoring' + (k ? '/' + k : '')} className={section === k ? 'on' : ''}>{l}</a>)}</nav>
-    {page}
-  </>;
+  const groups = [
+    { group: 'Overview', items: [{ key: '', label: 'Dashboard' }] },
+    { group: 'Watch', items: [{ key: 'devices', label: 'Devices' }, { key: 'alerts', label: 'Alerts' }, { key: 'events', label: 'Messages' }] },
+    { group: 'Reports', items: [{ key: 'reports', label: 'Monitoring reports' }] },
+    { group: 'Settings', items: [{ key: 'rules', label: 'Alert rules' }, ...(admin ? [{ key: 'settings', label: 'Settings' }] : [])] },
+  ];
+  return <ModNav title="Monitoring" base="monitoring" groups={groups} section={section}>{page}</ModNav>;
 }

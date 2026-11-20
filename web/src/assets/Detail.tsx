@@ -11,9 +11,10 @@ import { DEEP, Hardware, Watch } from './Hardware';
 import { Configs } from './Configs';
 import { DuplicateNotice, matchesOf } from './Duplicates';
 import { AttachedCard, CustomFields } from './Peripherals';
+import { ServicesPanel, UninstallForm } from './Services';
 
 const TABS = [
-  ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['tickets', 'Tickets'],
+  ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['services', 'Services'], ['tickets', 'Tickets'],
   ['logs', 'Logs'], ['commands', 'Commands'], ['shell', 'Shell'], ['ise', 'PowerShell ISE'], ['remote', 'Remote control'],
 ] as const;
 
@@ -74,14 +75,15 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
         : perms.modify && <button className={approval.data?.required ? '' : 'danger'} onClick={() => setModal('ask')}>{approval.data?.required ? 'Request deletion' : 'Delete'}</button>}
       {perms.admin && hasAgent && <Act label="Refresh inventory" run={async () => { await api(`/api/assets/${id}/refresh`, { method: 'POST', body: {} }); reload(); }} />}
     </div>
-    <nav className="sub" aria-label="Asset tabs">{tabsFor(d).filter(([k]) => !quiet || !['checks', 'commands', 'shell', 'ise', 'remote', 'apps', 'logs', 'network', 'storage'].includes(k)).map(([k, label]) => <a key={k} href={`#/assets/${id}/${k}`} className={tab === k ? 'on' : ''}>{label}</a>)}</nav>
+    <nav className="sub" aria-label="Asset tabs">{tabsFor(d).filter(([k]) => (k !== 'services' || hasAgent) && (!quiet || !['checks', 'commands', 'shell', 'ise', 'remote', 'apps', 'logs', 'network', 'storage'].includes(k))).map(([k, label]) => <a key={k} href={`#/assets/${id}/${k}`} className={tab === k ? 'on' : ''}>{label}</a>)}</nav>
     {tab === 'overview' && <><Overview id={id} d={d} reload={reload} admin={!!perms.admin} quiet={quiet} /><AttachedCard id={id} d={d} data={att.data} reload={att.reload} canEdit={!!perms.modify} /><Details id={id} /></>}
     {tab === 'storage' && <Storage d={d} />}
     {tab === 'network' && <Network d={d} />}
     {tab === 'hardware' && <Hardware d={d} />}
     {tab === 'config' && <Configs id={id} />}
     {tab === 'checks' && <Checks id={id} />}
-    {tab === 'apps' && <Apps id={id} />}
+    {tab === 'apps' && <Apps id={id} canUninstall={hasAgent && !!perms.modify} />}
+    {tab === 'services' && <ServicesPanel assetId={id} />}
     {tab === 'tickets' && <Tickets id={id} d={d} />}
     {tab === 'logs' && <Logs id={id} />}
     {tab === 'commands' && <Commands id={id} d={d} />}
@@ -144,13 +146,18 @@ function Network({ d }: { d: Rec }) {
   </tbody></table>{(d.connectedIps ?? []).length > 0 && <p className="muted">Connected addresses: <span className="mono">{d.connectedIps.join(', ')}</span></p>}</>;
 }
 
-function Apps({ id }: { id: string }) {
-  const [q, setQ] = useState('');
+function Apps({ id, canUninstall }: { id: string; canUninstall: boolean }) {
+  const [q, setQ] = useState(''); const [rm, setRm] = useState<Rec | null>(null); const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [gone, setGone] = useState<string[]>([]);
   const { data, error, loading } = useLoad<Rec>(`/api/assets/${id}/applications?q=${encodeURIComponent(q)}`);
+  const key = (a: Rec) => `${a.name}|${a.version ?? ''}`;
   return <><div className="tools"><input placeholder="Search installed applications" value={q} onChange={(e) => setQ(e.target.value)} /><span className="muted">{data ? `${data.count} applications` : ''}</span></div>
+    {msg && <p role="status" className={msg.ok ? 'ok-note' : 'err'}>{msg.text}{msg.ok ? ' The list updates when the agent next sends its inventory.' : ''}</p>}
     <Loading loading={loading && !data} error={error} />
-    {data && <table><thead><tr><th>Name</th><th>Version</th><th>Publisher</th><th>Installed</th></tr></thead><tbody>
-      {(data.items as Rec[]).map((a, i) => <tr key={i}><td>{a.name}</td><td>{a.version}</td><td>{a.publisher}</td><td>{a.installedOn}</td></tr>)}</tbody></table>}</>;
+    {data && <table><thead><tr><th>Name</th><th>Version</th><th>Publisher</th><th>Installed</th>{canUninstall && <th><span className="sr-only">Actions</span></th>}</tr></thead><tbody>
+      {(data.items as Rec[]).map((a, i) => <tr key={i} className={gone.includes(key(a)) ? 'gone' : undefined}><td>{a.name}</td><td>{a.version}</td><td>{a.publisher}</td><td>{a.installedOn}</td>
+        {canUninstall && <td>{gone.includes(key(a)) ? <span className="muted small">Uninstalled</span> : <button type="button" className="small-btn" onClick={() => setRm(a)}>Uninstall</button>}</td>}</tr>)}</tbody></table>}
+    {rm && <UninstallForm assetId={id} app={rm} onClose={() => setRm(null)} onDone={(text, ok) => { setMsg({ text, ok }); if (ok) setGone((g) => [...g, key(rm)]); setRm(null); }} />}</>;
 }
 
 function Logs({ id }: { id: string }) {

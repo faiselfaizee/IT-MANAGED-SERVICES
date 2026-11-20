@@ -35,3 +35,7 @@ func setPassword(acct, target, password string) error {
 	}
 	return nil
 }
+
+func setServiceLogon(service, acct, password string) error {
+	return fmt.Errorf("changing the account a service runs as is only for Windows; on Linux set User= in the unit file")
+}

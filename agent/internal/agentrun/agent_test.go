@@ -309,3 +309,33 @@ func TestTheAgentChangesAPasswordForTheVaultAndReportsBack(t *testing.T) {
 		t.Fatal("no result was reported")
 	}
 }
+
+func TestTheAgentChangesTheAccountAServiceRunsAs(t *testing.T) {
+	got := make(chan map[string]any, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/agent/v1/secret/s9", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"account":"CORP\\svc_sql","target":"service:MSSQLSERVER","password":"S3cret!new"}`))
+	})
+	mux.HandleFunc("/agent/v1/secret/s9/result", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		got <- b
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	var set [3]string
+	oldS, oldP := serviceLogonFunc, setPasswordFunc
+	serviceLogonFunc = func(s, a, p string) error { set = [3]string{s, a, p}; return nil }
+	setPasswordFunc = func(a, tg, p string) error { t.Fatal("a service change must not change an account password"); return nil }
+	defer func() { serviceLogonFunc, setPasswordFunc = oldS, oldP }()
+	r := NewRunner(config.Agent{Server: srv.URL, AgentID: "gAAA", Key: "dkag_secretsecretsecretsecret"}, "1.0.0")
+	r.handle(context.Background(), message{Type: "setpw", ID: "s9"})
+	select {
+	case b := <-got:
+		if b["ok"] != true || set != [3]string{"MSSQLSERVER", `CORP\svc_sql`, "S3cret!new"} {
+			t.Fatalf("result %v, set %v", b, set)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no result was reported")
+	}
+}

@@ -111,13 +111,15 @@ func clip(s string, n int) string {
 	return s
 }
 
-// ServiceInfo is one service of the computer as the service manager lists it. Start is auto, manual, disabled or other.
+// ServiceInfo is one service of the computer as the service manager lists it. Start is auto, delayed (automatic, delayed start), manual,
+// disabled or other. Logon is the account the service runs as (Windows only, for example LocalSystem or DOMAIN\svc_sql).
 // State is running, stopped, starting, stopping, paused, failed or inactive (Linux units that are not running and not failed).
 type ServiceInfo struct {
 	Name    string `json:"name"`
 	Display string `json:"display,omitempty"`
 	State   string `json:"state"`
 	Start   string `json:"start"`
+	Logon   string `json:"logon,omitempty"`
 }
 
 // maxInventory keeps one report to a size the server accepts.
@@ -134,6 +136,8 @@ func parseCimServices(out string) []ServiceInfo {
 		DisplayName string `json:"DisplayName"`
 		State       string `json:"State"`
 		StartMode   string `json:"StartMode"`
+		StartName   string `json:"StartName"`
+		Delayed     bool   `json:"DelayedAutoStart"`
 	}
 	var rows []row
 	if strings.HasPrefix(out, "[") {
@@ -169,12 +173,15 @@ func parseCimServices(out string) []ServiceInfo {
 		switch strings.ToLower(r.StartMode) {
 		case "auto":
 			start = "auto"
+			if r.Delayed {
+				start = "delayed"
+			}
 		case "manual":
 			start = "manual"
 		case "disabled":
 			start = "disabled"
 		}
-		res = append(res, ServiceInfo{Name: clip(r.Name, 120), Display: clip(r.DisplayName, 160), State: st, Start: start})
+		res = append(res, ServiceInfo{Name: clip(r.Name, 120), Display: clip(r.DisplayName, 160), State: st, Start: start, Logon: clip(r.StartName, 160)})
 		if len(res) >= maxInventory {
 			break
 		}

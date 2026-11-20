@@ -241,6 +241,28 @@ public static class ItemsApi
             return Results.Ok(new { items = o });
         }), key);
 
+        // Vault › Reports › Access report: who opened, revealed, copied or exported which item, in the vaults I manage or edit.
+        // Item titles stay encrypted; the browser decrypts them with keys it already holds.
+        VaultModule.Use(r.MapGet("/api/vault/reports/access", async (HttpContext http, ITenantContext t, CancellationToken ct) =>
+        {
+            var q = http.Request.Query;
+            var days = int.TryParse(q["days"], out var d) && d is >= 1 and <= 366 ? d : 30;
+            var who = q["user"].ToString().Trim(); var act = q["action"].ToString();
+            if (act is not ("" or "viewed" or "revealed" or "copied" or "opened" or "exported")) return VaultModule.Bad("bad_input", "action must be viewed, revealed, copied, opened or exported");
+            await using var db = await VaultModule.Open(t, ct);
+            var mine = (await Access.MyRoles(db, http, ct)).Where(x => VaultModule.Rank(x.Value) >= 3).Select(x => x.Key).ToArray();
+            await using var c = new NpgsqlCommand(@"select e.id, e.at, e.user_name, e.action, e.detail, e.vault_id, v.name, e.item_id, coalesce(i.title_enc, ''), i.deleted_at is not null
+                from vault.events e join vault.vaults v on v.id = e.vault_id left join vault.items i on i.id = e.item_id
+                where e.vault_id = any(@v) and e.item_id is not null and e.at > now() - make_interval(days => @d)
+                  and e.action in ('viewed','revealed','copied','opened','exported') and (@a = '' or e.action = @a) and (@u = '' or e.user_name ilike @ul)
+                order by e.id desc limit 2000", db);
+            VaultModule.P(c, "v", mine); VaultModule.P(c, "d", days); VaultModule.P(c, "a", act); VaultModule.P(c, "u", who); VaultModule.P(c, "ul", "%" + who.Replace("%", "") + "%");
+            var o = new List<object>(); await using var rd = await c.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct))
+                o.Add(new { id = rd.GetInt64(0), at = rd.GetDateTime(1), user = rd.GetString(2), action = rd.GetString(3), field = rd.GetString(4), vaultId = rd.GetInt32(5), vault = rd.GetString(6), itemId = rd.GetInt64(7), titleEnc = rd.GetString(8), deleted = rd.GetBoolean(9) });
+            return Results.Ok(new { days, vaults = mine.Length, items = o });
+        }), key);
+
         // items linked to an asset, for the asset's page (titles only; the browser decrypts them with keys it already has)
         VaultModule.Use(r.MapGet("/api/vault/assets/{assetId:long}/items", async (long assetId, HttpContext http, ITenantContext t, CancellationToken ct) =>
         {

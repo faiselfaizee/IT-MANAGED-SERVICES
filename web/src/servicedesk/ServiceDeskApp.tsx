@@ -36,13 +36,13 @@ export default function ServiceDeskApp() {
   else if (a === 'people' && admin) page = <People />;
   else page = <List key="all" me={m} />;
   const menu: { group: string; items: [string, string, boolean][] }[] = [
-    { group: '', items: [['', 'All tickets', true], ['new', 'New ticket', !!m?.canRaise]] },
+    { group: 'Overview', items: [['', 'All tickets', true], ['new', 'New ticket', !!m?.canRaise]] },
     { group: 'Incidents', items: [['incidents', 'Incidents', true], ['major', 'Major incidents', sees]] },
     { group: 'Service requests', items: [['catalog', 'Service catalogue', !!m?.canRaise || staff], ['requests', 'Requests', true], ['approvals', 'Approvals', staff]] },
     { group: 'Problems', items: [['problems', 'Problems', sees], ['known-errors', 'Known errors', sees]] },
     { group: 'Changes', items: [['changes', 'Changes', sees], ['calendar', 'Change calendar', sees], ['standard', 'Standard changes', sees]] },
-    { group: 'Insight', items: [['reports', 'Reports', sees || m?.role === 'cadmin']] },
-    { group: 'Admin', items: [['catalog-items', 'Catalogue items', admin], ['cab', 'Change board', admin], ['settings', 'Settings', admin], ['connections', 'Connections', admin], ['people', 'People', admin]] },
+    { group: 'Reports', items: [['reports', 'Desk reports', sees || m?.role === 'cadmin']] },
+    { group: 'Settings', items: [['catalog-items', 'Catalogue items', admin], ['cab', 'Change board', admin], ['connections', 'Connections', admin], ['people', 'People', admin], ['settings', 'Settings', admin]] },
   ];
   const section = isId ? '' : a ?? '';
   return <>

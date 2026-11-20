@@ -537,6 +537,10 @@ pre.plaintext { white-space: pre-wrap; font: inherit; margin: 6px 0; }
 @media (max-width: 960px) { .brand-page { grid-template-columns: minmax(0, 1fr); } }
 .logo-box { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; } .logo-box .logo-prev { display: grid; place-items: center; width: 150px; height: 64px; border: 1px dashed var(--line); border-radius: 8px; background: #fff; overflow: hidden; }
 .logo-box .logo-prev img { max-width: 140px; max-height: 56px; object-fit: contain; }
+.tab-prev { display: flex; align-items: center; gap: 8px; width: 190px; height: 34px; padding: 0 12px; border: 1px solid var(--line); border-bottom: 0; border-radius: 10px 10px 0 0; background: var(--card); font-size: 13px; box-shadow: 0 -1px 0 var(--line) inset; }
+.tab-prev-icon { display: grid; place-items: center; width: 16px; height: 16px; flex: none; } .tab-prev-icon img { width: 16px; height: 16px; object-fit: contain; }
+.tab-prev-std { width: 16px; height: 16px; border-radius: 5px; background: linear-gradient(135deg, #2fe0cf, #5b6bff); }
+.tab-prev-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .preview { border: 1px solid var(--edge); border-radius: var(--r-md); overflow: hidden; background: var(--base); }
 .preview .p-nav { padding: 12px 14px; background: var(--nav); color: var(--nav-hi); display: flex; align-items: center; gap: 10px; font-weight: 650; }
 .preview .p-nav .logo-chip { height: 28px; min-width: 28px; padding: 2px 5px; } .preview .p-nav img { max-height: 22px; max-width: 110px; }
@@ -712,3 +716,22 @@ html[data-look='compact'] input:not([type=checkbox]):not([type=radio]):not([type
 .store-foot { padding: 18px 28px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; display: grid; gap: 4px; }
 .store-foot p { margin: 0; } .store-foot .links { display: flex; gap: 14px; flex-wrap: wrap; }
 @media (max-width: 860px) { .store-body { grid-template-columns: 1fr; } .store-sum { grid-column: 1; grid-row: auto; position: static; } }
+.modnav-head .lock-btn { width: 100%; margin: 0; }
+/* a module's Reports page */
+.report-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px 32px; margin-top: 8px; }
+.report-list h2 { font-size: 15px; margin: 0 0 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.report-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.report-list li { display: grid; gap: 1px; } .report-list li a { font-weight: 600; } .report-list li .muted { font-size: 13px; }
+.crumb-back { margin: 0 0 4px; font-size: 13.5px; }
+.table-wrap { overflow-x: auto; }
+.report-table td { white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+/* services and uninstall (6.3) */
+.svc-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.svc-acts button, .small-btn { padding: 4px 10px; font-size: 13px; }
+.radio-list { border: 0; padding: 0; margin: 0 0 6px; display: grid; gap: 6px; } .radio-list label { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.pick-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 360px; overflow: auto; }
+.pick-list button { width: 100%; display: flex; gap: 10px; align-items: center; text-align: left; padding: 8px 10px; }
+.pick-list button .muted { margin-left: auto; }
+.ok-note { color: var(--ok, #157a3d); }
+tr.gone td { opacity: .55; text-decoration: line-through; } tr.gone td:last-child { text-decoration: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

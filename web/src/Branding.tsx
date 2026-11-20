@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { accessToken } from './auth';
-import { DEFAULT_BRAND, contrast, inkOn, isHex, logoUrl, setBrand, useBrand, type Brand } from './brand';
+import { DEFAULT_BRAND, contrast, iconUrl, inkOn, isHex, logoUrl, setBrand, useBrand, type Brand } from './brand';
 import { api, message } from './http';
 import { Card, Err, Field } from './ui';
 
 const TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml'];
 const MAX = 256 * 1024;
+const ICON_TYPES = ['image/png', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon'];
+const ICON_MAX = 128 * 1024;
 
 /** Administration › Branding: the logo, name, header and footer text, colours and theme of this customer's DeskAsk. */
 export default function Branding() {
   const saved = useBrand();
   const [f, setF] = useState<Brand>(saved); const [err, setErr] = useState(''); const [ok, setOk] = useState(''); const [busy, setBusy] = useState(false);
-  const file = useRef<HTMLInputElement>(null); const loaded = useRef(false);
+  const file = useRef<HTMLInputElement>(null); const icon = useRef<HTMLInputElement>(null); const loaded = useRef(false);
   useEffect(() => { if (!loaded.current) { loaded.current = true; setF(saved); } }, [saved]);
   const set = (p: Partial<Brand>) => { setF({ ...f, ...p }); setOk(''); };
 
@@ -24,7 +26,7 @@ export default function Branding() {
     catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
   const save = () => run(() => api<Brand>('/api/branding', { method: 'PUT', body: { name: f.name, headerText: f.headerText, footerText: f.footerText, accent: f.accent, accent2: f.accent2, nav: f.nav, theme: f.theme } }), 'Saved. Everyone sees the new look after their next page load.');
-  const reset = () => { if (confirm('Go back to the standard DeskAsk look? The logo is removed too.')) void run(() => api<Brand>('/api/branding/reset', { method: 'POST', body: {} }), 'The standard look is back.'); };
+  const reset = () => { if (confirm('Go back to the standard DeskAsk look? The logo and browser-tab icon are removed too.')) void run(() => api<Brand>('/api/branding/reset', { method: 'POST', body: {} }), 'The standard look is back.'); };
   const removeLogo = () => run(() => api<Brand>('/api/branding/logo', { method: 'DELETE' }), 'The logo is removed.');
   const upload = (file: File | undefined) => {
     if (!file) return;
@@ -37,6 +39,23 @@ export default function Branding() {
       return j as unknown as Brand;
     }, 'The logo is saved.');
   };
+
+  const send = (url: string, file: File, type: string) => async () => {
+    const r = await fetch(url, { method: 'PUT', headers: { 'content-type': type, authorization: 'Bearer ' + (accessToken() ?? '') }, body: file });
+    const t = await r.text(); let j: Record<string, unknown> = {}; try { j = t ? JSON.parse(t) : {}; } catch { /* not json */ }
+    if (!r.ok) throw new Error(message(r.status, j));
+    return j as unknown as Brand;
+  };
+  const uploadIcon = (file: File | undefined) => {
+    if (!file) return;
+    // some browsers give .ico files no type; the name tells
+    const type = file.type || (file.name.toLowerCase().endsWith('.ico') ? 'image/x-icon' : '');
+    if (!ICON_TYPES.includes(type)) { setErr('Use a PNG, SVG or ICO file for the browser-tab icon.'); return; }
+    if (file.size > ICON_MAX) { setErr('The browser-tab icon is larger than 128 KB. Use a smaller picture (32 x 32 or 64 x 64 pixels is enough).'); return; }
+    void run(send('/api/branding/favicon', file, type), 'The browser-tab icon is saved. Browsers may show the old one until the page is reloaded.');
+  };
+  const removeIcon = () => run(() => api<Brand>('/api/branding/favicon', { method: 'DELETE' }), 'The browser-tab icon is removed.');
+  const tabIcon = iconUrl(f);
 
   const pvAccent = isHex(f.accent) ? f.accent : '#0d8a7f'; const pvNav = isHex(f.nav) ? f.nav : '#ffffff'; const pvA2 = isHex(f.accent2) ? f.accent2 : '#5b6bff';
   return <>
@@ -54,6 +73,20 @@ export default function Branding() {
               <button type="button" disabled={busy} onClick={() => file.current?.click()}>{f.hasLogo ? 'Replace logo' : 'Upload logo'}</button>{' '}
               {f.hasLogo && <button type="button" disabled={busy} onClick={() => void removeLogo()}>Remove</button>}
               <p className="muted" style={{ margin: '6px 0 0' }}>PNG, JPEG, WebP, GIF or SVG, up to 256 KB. A wide logo on a transparent background works best.</p>
+            </div>
+          </div>
+        </div></Card>
+        <Card title="Browser-tab icon (favicon)"><div className="form">
+          <div className="logo-box">
+            <div className="tab-prev" aria-label="Preview of a browser tab">
+              <span className="tab-prev-icon">{tabIcon ? <img src={tabIcon} alt="" width={16} height={16} /> : <span className="tab-prev-std" aria-hidden />}</span>
+              <span className="tab-prev-title">{f.name || 'DeskAsk'}</span>
+            </div>
+            <div>
+              <input ref={icon} type="file" accept=".ico,.png,.svg,image/png,image/svg+xml,image/x-icon" hidden aria-label="Browser-tab icon file" onChange={(e) => { uploadIcon(e.target.files?.[0]); e.target.value = ''; }} />
+              <button type="button" disabled={busy} onClick={() => icon.current?.click()}>{f.hasFavicon ? 'Replace icon' : 'Upload icon'}</button>{' '}
+              {f.hasFavicon && <button type="button" disabled={busy} onClick={() => void removeIcon()}>Remove</button>}
+              <p className="muted" style={{ margin: '6px 0 0' }}>PNG, SVG or ICO, square, up to 128 KB. Shown in the browser tab, bookmarks and the sign-in page. {f.hasFavicon ? '' : f.hasLogo ? 'Until you upload one, the logo is used.' : 'Until you upload one, the standard DeskAsk icon is used.'}</p>
             </div>
           </div>
         </div></Card>

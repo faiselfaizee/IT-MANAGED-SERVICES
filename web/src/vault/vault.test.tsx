@@ -75,7 +75,7 @@ test('set-up, recovery code, adding an item, and only ciphertext reaches the ser
   expect(st.events.some((e) => e.action === 'revealed' && e.field === 'Password')).toBe(true);
 
   // locking forgets the keys; the master password opens them again
-  fireEvent.click(screen.getByRole('button', { name: 'Lock' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Lock the vault' }));
   await waitFor(() => expect(screen.getByRole('heading', { name: 'The vault is locked' })).toBeTruthy());
   fireEvent.change(screen.getByLabelText('Master password'), { target: { value: 'wrong one' } });
   fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));

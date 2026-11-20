@@ -13,11 +13,11 @@ import { CreateOther } from './Create';
 
 type Item = { key: string; label: string; admin?: boolean; right?: string };
 const MENU: { group: string; items: Item[] }[] = [
-  { group: '', items: [{ key: '', label: 'Overview' }] },
+  { group: 'Overview', items: [{ key: '', label: 'Overview' }] },
   { group: 'Management', items: [{ key: 'users', label: 'Users' }, { key: 'groups', label: 'Groups' }, { key: 'computers', label: 'Computers' }, { key: 'ous', label: 'OUs' }] },
   { group: 'Create', items: [{ key: 'new-user', label: 'New user', right: 'create' }, { key: 'new-other', label: 'New group or OU', right: 'create' }, { key: 'bulk-create', label: 'Users from a file', right: 'create' }, { key: 'bulk-modify', label: 'Change from a file', right: 'modify' }] },
-  { group: 'Reports', items: [{ key: 'reports', label: 'All reports' }] },
   { group: 'Workflow', items: [{ key: 'requests', label: 'Account requests' }, { key: 'approvals', label: 'Approvals' }] },
+  { group: 'Reports', items: [{ key: 'reports', label: 'All reports' }] },
   { group: 'Settings', items: [{ key: 'automation', label: 'Automation', admin: true }, { key: 'templates', label: 'User templates', admin: true }, { key: 'domains', label: 'Domains and delegation', admin: true }] },
 ];
 

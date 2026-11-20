@@ -9,15 +9,15 @@ using Microsoft.AspNetCore.Routing;
 namespace DeskAsk.Platform.Identity;
 
 /// <summary>What a customer's installation looks like: name, logo, header and footer text, colours and theme. Read by anyone (the sign-in page needs it), changed by administrators.</summary>
-public sealed record Brand(string Name, string HeaderText, string FooterText, string Accent, string Nav, string Theme, bool HasLogo, long LogoVersion, string Accent2 = "")
+public sealed record Brand(string Name, string HeaderText, string FooterText, string Accent, string Nav, string Theme, bool HasLogo, long LogoVersion, string Accent2 = "", bool HasFavicon = false, long FaviconVersion = 0)
 {
     public static readonly Brand Default = new("DeskAsk", "", "", "", "", "auto", false, 0);
 }
 
 public static class BrandingApi
 {
-    const string Key = "branding", LogoKey = "branding.logo";
-    const int MaxLogo = 256 * 1024;
+    const string Key = "branding", LogoKey = "branding.logo", IconKey = "branding.favicon";
+    const int MaxLogo = 256 * 1024, MaxIcon = 128 * 1024;
     static readonly Regex Hex = new("^#[0-9a-fA-F]{6}$", RegexOptions.Compiled);
     static readonly string[] Themes = { "auto", "light", "dark" };
     static readonly Dictionary<string, byte[][]> Magic = new()
@@ -26,11 +26,12 @@ public static class BrandingApi
         ["image/jpeg"] = new[] { new byte[] { 0xFF, 0xD8, 0xFF } },
         ["image/gif"] = new[] { Encoding.ASCII.GetBytes("GIF87a"), Encoding.ASCII.GetBytes("GIF89a") },
         ["image/webp"] = new[] { Encoding.ASCII.GetBytes("RIFF") },
+        ["image/x-icon"] = new[] { new byte[] { 0, 0, 1, 0 } },
     };
     // Things that make an SVG do more than draw: scripts, embedded pages, outside addresses, event handlers.
     static readonly string[] SvgBad = { "<script", "<foreignobject", "<iframe", "<object", "<embed", "<!entity", "<!doctype", "javascript:", "<animate", "<set ", "@import", "href=\"http", "href='http", "url(http", "url(\"http", "url('http", "<audio", "<video" };
 
-    sealed record Stored(string? Name, string? HeaderText, string? FooterText, string? Accent, string? Nav, string? Theme, long LogoVersion, string? Accent2 = null);
+    sealed record Stored(string? Name, string? HeaderText, string? FooterText, string? Accent, string? Nav, string? Theme, long LogoVersion, string? Accent2 = null, long FaviconVersion = 0);
     sealed record Logo(string Type, string Data);
     sealed record Update(string? Name, string? HeaderText, string? FooterText, string? Accent, string? Nav, string? Theme, string? Accent2 = null);
 
@@ -42,7 +43,7 @@ public static class BrandingApi
             var o = JsonSerializer.Deserialize<Stored>(raw, J) ?? new Stored(null, null, null, null, null, null, 0);
             var name = Clean(o.Name, 60); if (name == "") name = "DeskAsk";
             var theme = Themes.Contains(o.Theme ?? "") ? o.Theme! : "auto";
-            return new Brand(name, Clean(o.HeaderText, 120), Clean(o.FooterText, 300), Colour(o.Accent), Colour(o.Nav), theme, o.LogoVersion > 0, o.LogoVersion, Colour(o.Accent2));
+            return new Brand(name, Clean(o.HeaderText, 120), Clean(o.FooterText, 300), Colour(o.Accent), Colour(o.Nav), theme, o.LogoVersion > 0, o.LogoVersion, Colour(o.Accent2), o.FaviconVersion > 0, o.FaviconVersion);
         }
         catch { return Brand.Default; }   // a damaged setting must never stop the sign-in page
     }
@@ -62,12 +63,19 @@ public static class BrandingApi
         return null;
     }
 
-    public static string? CheckLogo(string type, byte[] b)
+    public static string? CheckLogo(string type, byte[] b) => CheckPicture(type, b, false);
+
+    /// <summary>Why this picture may not be used as the logo (or, with <paramref name="icon"/>, as the browser-tab icon), or null.</summary>
+    public static string? CheckPicture(string type, byte[] b, bool icon)
     {
+        if (type == "image/vnd.microsoft.icon") type = "image/x-icon";
         if (b.Length == 0) return "The picture is empty.";
-        if (b.Length > MaxLogo) return "The logo is larger than 256 KB. Use a smaller picture.";
+        if (!icon && b.Length > MaxLogo) return "The logo is larger than 256 KB. Use a smaller picture.";
+        if (icon && b.Length > MaxIcon) return "The browser-tab icon is larger than 128 KB. Use a smaller picture (32 x 32 or 64 x 64 pixels is enough).";
         if (type == "image/svg+xml") return CheckSvg(b);
-        if (!Magic.TryGetValue(type, out var sigs)) return "Use a PNG, JPEG, WebP, GIF or SVG picture.";
+        if (type == "image/x-icon" && !icon) return "Use a PNG, JPEG, WebP, GIF or SVG picture for the logo.";
+        if (type == "image/jpeg" && icon) return "Use a PNG, SVG or ICO file for the browser-tab icon.";
+        if (!Magic.TryGetValue(type, out var sigs)) return icon ? "Use a PNG, SVG or ICO file for the browser-tab icon." : "Use a PNG, JPEG, WebP, GIF or SVG picture.";
         if (!sigs.Any(s => b.Length >= s.Length && b.AsSpan(0, s.Length).SequenceEqual(s))) return "The file is not really a " + type[6..] + " picture.";
         if (type == "image/webp" && (b.Length < 12 || Encoding.ASCII.GetString(b, 8, 4) != "WEBP")) return "The file is not really a webp picture.";
         return null;
@@ -77,16 +85,18 @@ public static class BrandingApi
     {
         r.MapGet("/api/branding", async (ISettings s, CancellationToken ct) => Results.Ok(await LoadAsync(s, ct))).AllowAnonymous();
 
-        r.MapGet("/api/branding/logo", async (ISettings s, HttpContext http, CancellationToken ct) =>
+        r.MapGet("/api/branding/favicon", (ISettings s, HttpContext http, CancellationToken ct) => Picture(IconKey, s, http, ct)).AllowAnonymous();
+        r.MapGet("/api/branding/logo", (ISettings s, HttpContext http, CancellationToken ct) => Picture(LogoKey, s, http, ct)).AllowAnonymous();
+        static async Task<IResult> Picture(string key, ISettings s, HttpContext http, CancellationToken ct)
         {
-            var raw = await s.GetAsync(LogoKey, ct); if (string.IsNullOrWhiteSpace(raw)) return Results.NotFound();
+            var raw = await s.GetAsync(key, ct); if (string.IsNullOrWhiteSpace(raw)) return Results.NotFound();
             Logo? l; try { l = JsonSerializer.Deserialize<Logo>(raw, J); } catch { return Results.NotFound(); }
             if (l == null || l.Data == "") return Results.NotFound();
             http.Response.Headers.CacheControl = "public, max-age=86400";
             // the picture is only ever drawn by an <img>; if someone opens its address directly nothing in it can run
             http.Response.Headers.ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
             return Results.File(Convert.FromBase64String(l.Data), l.Type);
-        }).AllowAnonymous();
+        }
 
         var g = r.MapGroup("/api/branding").RequireAuthorization(p => p.RequireRole("admin"));
 
@@ -97,7 +107,7 @@ public static class BrandingApi
             if (b.Nav is { Length: > 0 } n && !Hex.IsMatch(n.Trim())) return Results.BadRequest(new { error = "bad_colour", detail = "The menu colour must be like #0f1c2e." });
             if (b.Theme is { Length: > 0 } t && !Themes.Contains(t)) return Results.BadRequest(new { error = "bad_theme", detail = "The theme must be auto, light or dark." });
             var cur = await LoadAsync(s, ct);
-            var next = new Stored(Clean(b.Name, 60), Clean(b.HeaderText, 120), Clean(b.FooterText, 300), Colour(b.Accent), Colour(b.Nav), string.IsNullOrEmpty(b.Theme) ? "auto" : b.Theme, cur.LogoVersion, Colour(b.Accent2));
+            var next = new Stored(Clean(b.Name, 60), Clean(b.HeaderText, 120), Clean(b.FooterText, 300), Colour(b.Accent), Colour(b.Nav), string.IsNullOrEmpty(b.Theme) ? "auto" : b.Theme, cur.LogoVersion, Colour(b.Accent2), cur.FaviconVersion);
             await s.SetAsync(Key, JsonSerializer.Serialize(next, J), ct);
             await audit.WriteAsync("branding.updated", detail: $"name={next.Name}; accent={next.Accent}; accent2={next.Accent2}; nav={next.Nav}; theme={next.Theme}", ct: ct);
             return Results.Ok(await LoadAsync(s, ct));
@@ -117,6 +127,27 @@ public static class BrandingApi
             return Results.Ok(await LoadAsync(s, ct));
         });
 
+        g.MapPut("/favicon", async (HttpContext http, ISettings s, IAuditLog audit, CancellationToken ct) =>
+        {
+            var type = (http.Request.ContentType ?? "").Split(';')[0].Trim().ToLowerInvariant();
+            if (type == "image/vnd.microsoft.icon") type = "image/x-icon";
+            using var ms = new MemoryStream(); var buf = new byte[16384]; int n;
+            while ((n = await http.Request.Body.ReadAsync(buf, ct)) > 0) { ms.Write(buf, 0, n); if (ms.Length > MaxIcon) return Results.BadRequest(new { error = "too_large", detail = "The browser-tab icon is larger than 128 KB. Use a smaller picture (32 x 32 or 64 x 64 pixels is enough)." }); }
+            var bytes = ms.ToArray();
+            var why = CheckPicture(type, bytes, true); if (why != null) return Results.BadRequest(new { error = "bad_favicon", detail = why });
+            await s.SetAsync(IconKey, JsonSerializer.Serialize(new Logo(type, Convert.ToBase64String(bytes)), J), ct);
+            await SetFaviconVersion(s, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), ct);
+            await audit.WriteAsync("branding.favicon_changed", detail: type + ", " + bytes.Length + " bytes", ct: ct);
+            return Results.Ok(await LoadAsync(s, ct));
+        });
+
+        g.MapDelete("/favicon", async (ISettings s, IAuditLog audit, CancellationToken ct) =>
+        {
+            await s.DeleteAsync(IconKey, ct); await SetFaviconVersion(s, 0, ct);
+            await audit.WriteAsync("branding.favicon_removed", ct: ct);
+            return Results.Ok(await LoadAsync(s, ct));
+        });
+
         g.MapDelete("/logo", async (ISettings s, IAuditLog audit, CancellationToken ct) =>
         {
             await s.DeleteAsync(LogoKey, ct); await SetVersion(s, 0, ct);
@@ -126,7 +157,7 @@ public static class BrandingApi
 
         g.MapPost("/reset", async (ISettings s, IAuditLog audit, CancellationToken ct) =>
         {
-            await s.DeleteAsync(Key, ct); await s.DeleteAsync(LogoKey, ct);
+            await s.DeleteAsync(Key, ct); await s.DeleteAsync(LogoKey, ct); await s.DeleteAsync(IconKey, ct);
             await audit.WriteAsync("branding.reset", ct: ct);
             return Results.Ok(Brand.Default);
         });
@@ -135,8 +166,19 @@ public static class BrandingApi
     static async Task SetVersion(ISettings s, long v, CancellationToken ct)
     {
         var cur = await LoadAsync(s, ct);
-        await s.SetAsync(Key, JsonSerializer.Serialize(new Stored(cur.Name, cur.HeaderText, cur.FooterText, cur.Accent, cur.Nav, cur.Theme, v, cur.Accent2), J), ct);
+        await s.SetAsync(Key, JsonSerializer.Serialize(new Stored(cur.Name, cur.HeaderText, cur.FooterText, cur.Accent, cur.Nav, cur.Theme, v, cur.Accent2, cur.FaviconVersion), J), ct);
     }
+
+    static async Task SetFaviconVersion(ISettings s, long v, CancellationToken ct)
+    {
+        var cur = await LoadAsync(s, ct);
+        await s.SetAsync(Key, JsonSerializer.Serialize(new Stored(cur.Name, cur.HeaderText, cur.FooterText, cur.Accent, cur.Nav, cur.Theme, cur.LogoVersion, cur.Accent2, v), J), ct);
+    }
+
+    /// <summary>The &lt;link rel="icon"&gt; for the server-made pages: the uploaded icon, else the logo, else nothing (the browser asks for /favicon.ico).</summary>
+    internal static string IconLink(Brand b) =>
+        b.HasFavicon ? $"<link rel=\"icon\" href=\"/api/branding/favicon?v={b.FaviconVersion}\">"
+        : b.HasLogo ? $"<link rel=\"icon\" href=\"/api/branding/logo?v={b.LogoVersion}\">" : "";
 
     // ---- the server-made pages (sign-in, two-step) ----
 

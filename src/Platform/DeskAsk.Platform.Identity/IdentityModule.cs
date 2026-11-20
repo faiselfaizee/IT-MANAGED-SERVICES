@@ -275,7 +275,7 @@ public sealed class IdentityModule : IPlatformModule
     internal static string Html(string body, Brand? brand = null)
     {
         var (css, _) = BrandingApi.LoginParts(brand ?? Brand.Default);
-        return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"dark light\"><title>" + WebUtility.HtmlEncode(brand?.Name ?? "DeskAsk") + " - Sign in</title>"
+        return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"dark light\"><title>" + WebUtility.HtmlEncode(brand?.Name ?? "DeskAsk") + " - Sign in</title>" + BrandingApi.IconLink(brand ?? Brand.Default)
             + "<style>" + PageCss + css + "</style></head><body>" + body + "</body></html>";
     }
 

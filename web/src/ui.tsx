@@ -25,7 +25,7 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
   const box = <div className="modal" role="dialog" aria-label={title} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><div><h2>{title}</h2>{children}</div></div>;
   return typeof document === 'undefined' ? box : createPortal(box, document.body);
 }
-export function Field({ label, children }: { label: string; children: ReactNode }) { return <label><span>{label}</span>{children}</label>; }
+export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) { return <label><span>{label}</span>{children}{hint ? <small className="muted">{hint}</small> : null}</label>; }
 
 export function Dl({ rows }: { rows: [string, ReactNode][] }) {
   return <dl className="kv">{rows.filter(([, v]) => v !== '' && v !== null && v !== undefined).map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}</dl>;
