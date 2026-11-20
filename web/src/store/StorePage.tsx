@@ -37,7 +37,8 @@ const LEGAL: [string, string][] = [['terms', 'Terms of Service'], ['privacy', 'P
 export default function StorePage({ path }: { path: string[] }) {
   const [info, setInfo] = useState<Rec | null>(null); const [err, setErr] = useState('');
   const [menu, setMenu] = useState(false);
-  useEffect(() => { void call('/api/store/info').then(setInfo, (e) => setErr((e as Error).message)); }, []);
+  // with the website linked and the platform store hidden, the store lives on the website
+  useEffect(() => { void call('/api/store/info').then((i) => { if (typeof i.redirect === 'string' && i.redirect.startsWith('https://')) location.href = i.redirect; else setInfo(i); }, (e) => setErr((e as Error).message)); }, []);
   const tab = path[0] ?? '';
   useEffect(() => { setMenu(false); if (!navigator.userAgent.includes('jsdom')) window.scrollTo?.(0, 0); }, [path.join('/')]); // eslint-disable-line react-hooks/exhaustive-deps
   const b = (info?.business ?? {}) as Rec;

@@ -39,15 +39,17 @@ public static class Fulfilment
     {
         var o = sp.GetRequiredService<CommerceOptions>();
         await using var db = await CommerceDb.OpenAsync(o, ct);
-        string kind, tenantId, quoteJson, buyerJson, paymentRef; Guid accountId;
+        string kind, tenantId, quoteJson, buyerJson, paymentRef, source, websiteRef; Guid accountId;
         await using (var claim = new NpgsqlCommand(@"update commerce.orders set status = 'fulfilling', updated_at = now() where id = @i and status = 'paid'
-            returning kind, tenant_id, quote::text, buyer::text, account_id, payment_ref", db))
+            returning kind, tenant_id, quote::text, buyer::text, account_id, payment_ref, source, website_ref", db))
         {
             claim.Parameters.AddWithValue("i", orderId);
             await using var rd = await claim.ExecuteReaderAsync(ct);
             if (!await rd.ReadAsync(ct)) return;   // not paid yet, or already being done
             (kind, tenantId, quoteJson, buyerJson, accountId, paymentRef) = (rd.GetString(0), rd.GetString(1), rd.GetString(2), rd.GetString(3), rd.GetGuid(4), rd.GetString(5));
+            (source, websiteRef) = (rd.GetString(6), rd.GetString(7));
         }
+        string? invoiceNumber = null, outcome = null;
         try
         {
             var quote = JsonSerializer.Deserialize<Store.Quote>(quoteJson, Licences.Json)!;
@@ -66,8 +68,18 @@ public static class Fulfilment
                 {
                     // a trial of the same customer becomes the paid plan; otherwise the customer is created now
                     Guid? trialId = null;
-                    await using (var q = new NpgsqlCommand("select id from commerce.subscriptions where kind = 'saas' and tenant_id = @t and state in ('trial', 'active', 'cancelled') order by created_at desc limit 1", db))
-                    { q.Parameters.AddWithValue("t", tenantId); trialId = await q.ExecuteScalarAsync(ct) as Guid?; }
+                    await using (var q = new NpgsqlCommand("select id, state, ends_at from commerce.subscriptions where kind = 'saas' and tenant_id = @t and state in ('trial', 'active', 'cancelled') order by created_at desc limit 1", db))
+                    {
+                        q.Parameters.AddWithValue("t", tenantId);
+                        await using var rd = await q.ExecuteReaderAsync(ct);
+                        if (await rd.ReadAsync(ct))
+                        {
+                            trialId = rd.GetGuid(0);
+                            // a renewal before the paid period ends adds the new period after it, so nothing already paid for is lost
+                            var paidTo = DateTime.SpecifyKind(rd.GetDateTime(2), DateTimeKind.Utc);
+                            if (rd.GetString(1) == "active" && paidTo > now) ends = quote.Period == "year" ? paidTo.AddYears(1) : paidTo.AddMonths(1);
+                        }
+                    }
                     string? passwordLink = null;
                     if (trialId == null)
                     {
@@ -120,6 +132,7 @@ public static class Fulfilment
                     done.Parameters.AddWithValue("s", subId); done.Parameters.AddWithValue("inv", invoiceId); done.Parameters.AddWithValue("r", result); done.Parameters.AddWithValue("i", orderId);
                     await done.ExecuteNonQueryAsync(ct);
                 }
+                invoiceNumber = number; outcome = kind == "saas" ? result : "";
                 await sp.GetRequiredService<IAuditLog>().WriteAsync("commerce.order_fulfilled", kind + " " + tenantId, "order " + orderId + "; invoice " + number + "; " + Store.Money(quote.Total, quote.Currency), actor: "store", ct: ct);
             }
         }
@@ -129,6 +142,18 @@ public static class Fulfilment
             await using var fail = new NpgsqlCommand("update commerce.orders set status = 'failed', error = @e, updated_at = now() where id = @i", db);
             fail.Parameters.AddWithValue("e", e.Message.Length > 500 ? e.Message[..500] : e.Message); fail.Parameters.AddWithValue("i", orderId);
             await fail.ExecuteNonQueryAsync(CancellationToken.None);
+        }
+        // an order placed on the website: tell the website how it went
+        if (source == "website")
+        {
+            await using var st = new NpgsqlCommand("select status, total, currency from commerce.orders where id = @i", db);
+            st.Parameters.AddWithValue("i", orderId);
+            string status = "failed"; decimal total = 0; string currency = "";
+            await using (var rd = await st.ExecuteReaderAsync(CancellationToken.None)) if (await rd.ReadAsync(CancellationToken.None)) (status, total, currency) = (rd.GetString(0), rd.GetDecimal(1), rd.GetString(2));
+            await LinkOut.SendAsync(sp, status == "fulfilled" ? "order.fulfilled" : "order.failed", new
+            {
+                orderId, @ref = websiteRef, kind, status, tenantId, address = outcome ?? "", invoice = invoiceNumber ?? "", total, currency,
+            }, CancellationToken.None);
         }
     }
 

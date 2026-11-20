@@ -20,7 +20,7 @@ const linesText = (l: Lines) => MODS.filter((m) => l?.[m.key]).map((m) => { cons
 export default function VendorApp({ path }: { path: string[] }) {
   const status = useLoad<Rec>('/api/commerce/status');
   const tab = path[0] ?? '';
-  const tabs: [string, string][] = [['', 'Subscriptions'], ['orders', 'Orders'], ['invoices', 'Invoices'], ['new', 'New subscription'], ['unlinked', 'Not linked yet'], ['prices', 'Price list'], ['business', 'Business details'], ['pages', 'Website pages'], ['payments', 'Payments'], ['key', 'Signing key']];
+  const tabs: [string, string][] = [['', 'Subscriptions'], ['orders', 'Orders'], ['invoices', 'Invoices'], ['new', 'New subscription'], ['unlinked', 'Not linked yet'], ['prices', 'Price list'], ['business', 'Business details'], ['pages', 'Website pages'], ['link', 'Website link'], ['payments', 'Payments'], ['key', 'Signing key']];
   const ready = !!status.data?.signing?.ready;
   return <>
     <h1>Vendor console</h1>
@@ -34,6 +34,7 @@ export default function VendorApp({ path }: { path: string[] }) {
       : tab === 'invoices' ? <InvoiceList />
       : tab === 'business' ? <BusinessDetails />
       : tab === 'pages' ? <WebsitePages slug={path[1]} />
+      : tab === 'link' ? <WebsiteLink />
       : tab === 'payments' ? <Payments />
       : tab === 'key' ? <SigningKey status={status.data} reload={status.reload} />
       : <SubList />}
@@ -351,6 +352,46 @@ const BIZ_FIELDS: [string, string, string?][] = [['legalName', 'Legal name'], ['
   ['gstin', 'GSTIN'], ['cin', 'CIN'], ['pan', 'PAN'], ['sac', 'SAC code', 'number'], ['lut', 'LUT reference (exports)'], ['supportEmail', 'Support email'], ['supportPhone', 'Support phone'],
   ['grievanceName', 'Grievance officer'], ['grievanceDesignation', 'Designation'], ['grievanceEmail', 'Grievance email'], ['invoicePrefix', 'Invoice prefix'],
   ['termsUrl', 'Terms of Service link'], ['privacyUrl', 'Privacy Policy link'], ['refundUrl', 'Cancellation and Refund link'], ['deliveryUrl', 'Delivery policy link'], ['tenantDomain', 'Domain for customer addresses']];
+
+/** Vendor console › Website link: the company website that sells through this platform, its shared secret, and the events sent to it. */
+function WebsiteLink() {
+  const l = useLoad<Rec>('/api/commerce/link');
+  const [url, setUrl] = useState<string | null>(null); const [hide, setHide] = useState<boolean | null>(null);
+  const [secret, setSecret] = useState(''); const [test, setTest] = useState<Rec | null>(null); const [err, setErr] = useState(''); const [ok, setOk] = useState('');
+  const d = l.data;
+  if (!d) return <Loading loading={l.loading} error={l.error} />;
+  const u = url ?? String(d.websiteUrl ?? ''); const h = hide ?? !!d.hidePlatformStore;
+  const save = async () => { setErr(''); setOk(''); try { await api('/api/commerce/link', { method: 'PUT', body: { websiteUrl: u.trim(), hidePlatformStore: h } }); setUrl(null); setHide(null); l.reload(); setOk('Saved.'); } catch (e) { setErr((e as Error).message); } };
+  const make = async () => {
+    if (d.hasSecret && !confirm('Make a new secret? The website stops working with the platform until you paste the new one into its admin (Store › Link).')) return;
+    setErr(''); try { const r = await api<Rec>('/api/commerce/link/secret', { method: 'POST', body: {} }); setSecret(String(r.secret)); l.reload(); } catch (e) { setErr((e as Error).message); }
+  };
+  const ping = async () => { setTest(null); try { setTest(await api<Rec>('/api/commerce/link/test', { method: 'POST', body: {} })); l.reload(); } catch (e) { setTest({ ok: false, detail: (e as Error).message }); } };
+  const recent = (d.recent ?? []) as Rec[];
+  return <>
+    <Card title="Website link">
+      <p className="muted">The company website sells through this platform: it shows the prices and the checkout, and the platform takes the payment, creates the customer, issues the licence and the invoice, then tells the website. See docs/website-link.md.</p>
+      <div className="form">
+        <Field label="Website address"><input value={u} onChange={(e) => setUrl(e.target.value)} placeholder="https://www.deskask.in" /></Field>
+        <label className="check"><input type="checkbox" checked={h} disabled={!u.trim()} onChange={(e) => setHide(e.target.checked)} /> Send visitors of the platform's own store page (#/store) to the website</label>
+        <div className="actions"><button className="primary" onClick={() => void save()}>Save</button></div>
+      </div>
+      <Err text={err} />{ok && <p role="status">{ok}</p>}
+    </Card>
+    <Card title="Shared secret">
+      <p className="muted">{d.hasSecret ? <>A secret is set (ends …{String(d.secretHint)}, made {d.secretAt ? fmtDate(String(d.secretAt)) : ''}).</> : 'No secret yet.'} Both sides sign every request with it. Paste it into the website's admin under Store › Link.</p>
+      {secret && <div className="secret-once"><p><b>Copy it now; it is not shown again.</b></p><Copy text={secret} /></div>}
+      <div className="actions" style={{ justifyContent: 'flex-start' }}><button onClick={() => void make()}>{d.hasSecret ? 'Make a new secret' : 'Make the secret'}</button>
+        <button disabled={!d.hasSecret || !d.websiteUrl} onClick={() => void ping()}>Send a test event</button></div>
+      {test && <p role="status" className={test.ok ? 'ok-note' : 'err'}>{String(test.detail)}</p>}
+      <p className="muted small">The website receives events at <code>{String(d.websiteUrl || 'https://www.deskask.in')}{String(d.hookPath)}</code>.</p>
+    </Card>
+    <Card title="Events sent to the website">
+      {recent.length === 0 ? <Empty>None yet.</Empty> : <table><thead><tr><th>When</th><th>Event</th><th>Delivered</th><th>Last problem</th></tr></thead><tbody>
+        {recent.map((e) => <tr key={String(e.id)}><td>{fmtDate(String(e.created))}</td><td className="mono">{e.type}</td><td>{e.delivered ? <Badge tone="ok">Yes</Badge> : <Badge tone="warn">{`Retrying (${e.attempts})`}</Badge>}</td><td className="small">{e.error}</td></tr>)}</tbody></table>}
+    </Card>
+  </>;
+}
 
 function WebsitePages({ slug }: { slug?: string }) {
   const list = useLoad<Rec[]>('/api/commerce/pages');

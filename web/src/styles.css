@@ -735,3 +735,4 @@ html[data-look='compact'] input:not([type=checkbox]):not([type=radio]):not([type
 .ok-note { color: var(--ok, #157a3d); }
 tr.gone td { opacity: .55; text-decoration: line-through; } tr.gone td:last-child { text-decoration: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.secret-once { padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; margin-bottom: 10px; } .secret-once p { margin: 0 0 6px; }

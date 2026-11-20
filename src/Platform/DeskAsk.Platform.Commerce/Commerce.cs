@@ -135,6 +135,14 @@ public static class CommerceDb
             create table commerce.gateway_events (id text primary key, gateway text not null, type text not null, ok boolean not null, received_at timestamptz not null default now());
             create table commerce.trials (id uuid primary key default gen_random_uuid(), email text not null, domain text not null, ip text not null, tenant_id text not null, created_at timestamptz not null default now());
             create index on commerce.trials (created_at);"),
+        new(4, "the website link: where an order came from, signed-request nonces, events for the website", @"
+            alter table commerce.orders add column source text not null default 'store', add column website_ref text not null default '';
+            create table commerce.link_nonces (nonce text primary key, at timestamptz not null default now());
+            create index on commerce.link_nonces (at);
+            create table commerce.link_outbox (
+              id bigserial primary key, event_id text not null unique, type text not null, body text not null,
+              attempts int not null default 0, next_at timestamptz not null default now(), delivered_at timestamptz, last_error text not null default '', created_at timestamptz not null default now());
+            create index on commerce.link_outbox (next_at) where delivered_at is null;"),
     };
 
     public static async Task<string?> GetSettingAsync(CommerceOptions o, string key, CancellationToken ct)
@@ -308,6 +316,8 @@ public sealed class CommerceModule : IPlatformModule
         s.AddSingleton<Signer>();
         s.AddSingleton<IJobHandler, TrialsJob>();
         s.AddSingleton(new RecurringJob("commerce.trials", TrialsJob.JobType, TimeSpan.FromHours(6)));
+        s.AddSingleton<IJobHandler, LinkJob>();
+        s.AddSingleton(new RecurringJob("commerce.link", LinkJob.JobType, TimeSpan.FromMinutes(1)));
     }
 
     public void MapEndpoints(IEndpointRouteBuilder r)
@@ -318,5 +328,6 @@ public sealed class CommerceModule : IPlatformModule
         StoreConsole.Map(r);
         Pages.Map(r);
         MySubscription.Map(r);
+        Link.Map(r);
     }
 }

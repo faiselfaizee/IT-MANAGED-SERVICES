@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
@@ -17,7 +18,7 @@ public static class MySubscription
 
     public static void Map(IEndpointRouteBuilder r)
     {
-        r.MapGet("/api/platform/subscription", async (ITenantContext t, CommerceOptions o, IConfiguration cfg, CancellationToken ct) =>
+        r.MapGet("/api/platform/subscription", async (ITenantContext t, CommerceOptions o, IConfiguration cfg, IDataProtectionProvider dp, CancellationToken ct) =>
         {
             var tenant = t.Require().Id;
             var subs = new List<object>(); var invoices = new List<object>();
@@ -44,7 +45,14 @@ public static class MySubscription
                 }
                 catch (PostgresException e) when (e.SqlState == "42P01") { }   // the store was never set up here
             }
-            return Results.Ok(new { store = o.Enabled, storeUrl = StoreUrl(cfg), subscriptions = subs, invoices });
+            // with the website linked, Renew and Change open its checkout filled in for this customer (a renewal link valid 3 days)
+            string storeUrl = StoreUrl(cfg), renewUrl = storeUrl, changeUrl = storeUrl;
+            if (o.Enabled && await Link.LoadAsync(o, ct) is { WebsiteUrl.Length: > 0 } ws)
+            {
+                var token = Uri.EscapeDataString(Link.RenewToken(dp, tenant));
+                storeUrl = ws.WebsiteUrl + "/pricing"; renewUrl = storeUrl + "?renew=" + token; changeUrl = renewUrl + "&intent=change";
+            }
+            return Results.Ok(new { store = o.Enabled, storeUrl, renewUrl, changeUrl, subscriptions = subs, invoices });
         }).RequireAuthorization(p => p.RequireRole("admin"));
 
         r.MapGet("/api/platform/subscription/invoices/{id:long}/pdf", async (long id, ITenantContext t, CommerceOptions o, CancellationToken ct) =>

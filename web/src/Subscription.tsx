@@ -19,7 +19,7 @@ export default function Subscription() {
   const subs = (s?.subscriptions ?? []) as Rec[]; const invoices = (s?.invoices ?? []) as Rec[];
   const now = subs.find((x) => x.state === 'active' || x.state === 'trial') ?? subs[0];
   const store = String(s?.storeUrl ?? 'https://www.deskask.in/pricing');
-  const link = (what: string) => `${store}${store.includes('?') ? '&' : '?'}customer=${encodeURIComponent(String(l.tenant ?? ''))}&intent=${what}`;
+  const link = (what: string) => String((what === 'renew' ? s?.renewUrl : s?.changeUrl) || store);
   const days = now ? Math.ceil((new Date(String(now.endsAt)).getTime() - Date.now()) / 86_400_000) : null;
   return <>
     <h1>Subscription</h1>
