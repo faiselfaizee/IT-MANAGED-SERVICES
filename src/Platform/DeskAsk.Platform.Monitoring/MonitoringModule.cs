@@ -33,6 +33,7 @@ public sealed class MonitoringModule : IPlatformModule
         MonitoringApi.Map(r, Key);
         RulesApi.Map(r, Key);
         ReportsApi.Map(r, Key);
+        MonitoringReports.Map(r, Key);
     }
 
     internal static IResult Bad(string error, string? detail = null) => Results.BadRequest(new { error, detail });

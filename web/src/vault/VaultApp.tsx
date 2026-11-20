@@ -12,8 +12,9 @@ import Managed from './Managed';
 import Tools from './Tools';
 import Account from './Account';
 import Settings from './Settings';
+import Access from './Access';
+import { ModNav } from '../ModNav';
 
-const NAV: [string, string, boolean][] = [['', 'All items', false], ['vaults', 'Vaults', false], ['requests', 'Requests', false], ['sends', 'Send links', false], ['managed', 'Managed accounts', false], ['health', 'Password health', false], ['tools', 'Tools', false], ['account', 'My key', false], ['settings', 'Settings', true]];
 
 /** The Vault module: locked until the master password opens the keys in this browser. */
 export default function VaultApp() {
@@ -37,15 +38,20 @@ export default function VaultApp() {
     case 'sends': page = <Sends />; break;
     case 'managed': page = <Managed />; break;
     case 'health': page = <Health />; break;
+    case 'access': page = <Access />; break;
     case 'tools': page = <Tools />; break;
     case 'account': page = <Account />; break;
     case 'settings': page = admin ? <Settings /> : <Items />; break;
     default: page = <Items key={location.hash} />;
   }
   const section = (a ?? '').split('?')[0];
-  return <>
-    <nav className="sub" aria-label="Vault">{NAV.filter(([, , adm]) => !adm || admin).map(([k, l]) => <a key={k} href={'#/vault' + (k ? '/' + k : '')} className={section === k ? 'on' : ''}>{l}{k === 'requests' && waiting ? <span className="pill">{waiting}</span> : null}</a>)}
-      <button className="lock-btn" onClick={S.lock} title="Forget the keys in this browser">Lock</button></nav>
-    {page}
-  </>;
+  const groups = [
+    { group: 'Overview', items: [{ key: '', label: 'All items' }] },
+    { group: 'Items', items: [{ key: 'vaults', label: 'Vaults' }, { key: 'sends', label: 'Send links' }, { key: 'managed', label: 'Managed accounts' }] },
+    { group: 'Workflow', items: [{ key: 'requests', label: 'Requests', badge: waiting }] },
+    { group: 'Reports', items: [{ key: 'health', label: 'Password health' }, { key: 'access', label: 'Access report' }] },
+    { group: 'Settings', items: [{ key: 'account', label: 'My key' }, { key: 'tools', label: 'Tools' }, ...(admin ? [{ key: 'settings', label: 'Settings' }] : [])] },
+  ];
+  return <ModNav title="Vault" base="vault" groups={groups} section={section}
+    head={<button className="lock-btn" onClick={S.lock} title="Forget the keys in this browser">Lock the vault</button>}>{page}</ModNav>;
 }

@@ -91,7 +91,7 @@ export function CustomerDash({ id }: { id: string }) {
   return <>
     <nav className="crumbs" aria-label="Breadcrumb"><a href="#/monitoring">Monitoring</a><span aria-hidden="true">›</span><span aria-current="page">{m.company}</span></nav>
     <header className="dash-head"><h1>{m.company}</h1><p className="muted">{n(m.devices)} devices, {n(m.watched)} watched, {n(m.withMetrics)} sending performance data</p>
-      <a className="button" href={`#/monitoring/reports?company=${co}`}>Uptime report</a><a className="button primary" href={devHref(co)}>View all devices</a></header>
+      <a className="button" href={`#/monitoring/reports/uptime?company=${co}`}>Uptime report</a><a className="button primary" href={devHref(co)}>View all devices</a></header>
     <div className="rings dash-rings">
       <Ring title="Device status" unit="devices" delay={0} empty="No devices in service." parts={statusParts(m, co)} />
       <Ring title="Open alerts" unit="alerts" delay={120} empty="No open alerts. All clear." parts={[

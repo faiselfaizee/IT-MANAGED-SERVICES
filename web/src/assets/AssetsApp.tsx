@@ -21,13 +21,13 @@ import { People, Stock, Types } from './Peripherals';
 
 type Nav = { key: string; label: string };
 const MENU: { group: string; items: Nav[] }[] = [
-  { group: '', items: [{ key: '', label: 'Dashboard' }] },
+  { group: 'Overview', items: [{ key: '', label: 'Dashboard' }] },
   { group: 'Inventory', items: [{ key: 'list', label: 'All assets' }, { key: 'people', label: 'People' }, { key: 'stock', label: 'Stock' }, { key: 'discover', label: 'Discover' }, { key: 'duplicates', label: 'Duplicates' }, { key: 'delete-requests', label: 'Delete requests' }] },
-  { group: 'Software', items: [{ key: 'licenses', label: 'Licences & subscriptions' }, { key: 'software', label: 'Installed software' }, { key: 'reports', label: 'Patch report' }] },
-  { group: 'Agents', items: [{ key: 'fleet', label: 'Agents & collectors' }, { key: 'commands', label: 'Command repository' }, { key: 'remote-log', label: 'Remote activity' }] },
+  { group: 'Software', items: [{ key: 'software', label: 'Installed software' }, { key: 'licenses', label: 'Licences & subscriptions' }] },
   { group: 'Contracts', items: [{ key: 'amc', label: 'AMC' }, { key: 'rentals', label: 'Rentals' }, { key: 'renewals', label: 'Renewals' }, { key: 'vendors', label: 'Vendors' }] },
-  { group: 'Organisation', items: [{ key: 'companies', label: 'Companies' }, { key: 'locations', label: 'Locations' }, { key: 'credentials', label: 'Credentials' }] },
-  { group: 'Admin', items: [{ key: 'types', label: 'Kinds of asset' }, { key: 'settings', label: 'Settings' }] },
+  { group: 'Agents', items: [{ key: 'fleet', label: 'Agents & collectors' }, { key: 'commands', label: 'Command repository' }, { key: 'remote-log', label: 'Remote activity' }] },
+  { group: 'Reports', items: [{ key: 'reports', label: 'Asset reports' }] },
+  { group: 'Settings', items: [{ key: 'companies', label: 'Companies' }, { key: 'locations', label: 'Locations' }, { key: 'credentials', label: 'Credentials' }, { key: 'types', label: 'Kinds of asset' }, { key: 'settings', label: 'Settings' }] },
 ];
 
 /** The Assets module: routes inside the #/assets address. */
@@ -41,7 +41,7 @@ export default function AssetsApp() {
   else switch (a) {
     case 'customer': page = <CustomerDash key={b} id={b ?? 'all'} />; break;
     case 'list': page = <List key={location.hash} />; break;
-    case 'reports': page = <Reports />; break;
+    case 'reports': page = <Reports key={b ?? ''} name={b} />; break;
     case 'software': page = <Software />; break;
     case 'licenses': page = b ? <LicenseDetail key={b} id={b} /> : <Licenses />; break;
     case 'discover': page = <Discover />; break;

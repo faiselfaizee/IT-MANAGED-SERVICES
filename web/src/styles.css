@@ -716,3 +716,12 @@ html[data-look='compact'] input:not([type=checkbox]):not([type=radio]):not([type
 .store-foot { padding: 18px 28px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; display: grid; gap: 4px; }
 .store-foot p { margin: 0; } .store-foot .links { display: flex; gap: 14px; flex-wrap: wrap; }
 @media (max-width: 860px) { .store-body { grid-template-columns: 1fr; } .store-sum { grid-column: 1; grid-row: auto; position: static; } }
+.modnav-head .lock-btn { width: 100%; margin: 0; }
+/* a module's Reports page */
+.report-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px 32px; margin-top: 8px; }
+.report-list h2 { font-size: 15px; margin: 0 0 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.report-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.report-list li { display: grid; gap: 1px; } .report-list li a { font-weight: 600; } .report-list li .muted { font-size: 13px; }
+.crumb-back { margin: 0 0 4px; font-size: 13.5px; }
+.table-wrap { overflow-x: auto; }
+.report-table td { white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }

@@ -4,6 +4,7 @@ import { ago, Act, Copy, Empty, Err, fmtBytes, fmtDate, Loading, Modal, useSubmi
 import { CountUp, MiniRing, Ring, type Part } from '../Rings';
 import { BarList } from '../monitoring/Dashboard';
 import { Plans, PlanPage } from './Plans';
+import Report from './Report';
 
 const n = (v: unknown) => Number(v ?? 0);
 export const TOOLS: Record<string, string> = {
@@ -35,8 +36,10 @@ export function StatusBadge({ s }: { s: string }) {
 }
 
 const MENU: { group: string; items: { key: string; label: string; admin?: boolean }[] }[] = [
-  { group: '', items: [{ key: '', label: 'Dashboard' }, { key: 'jobs', label: 'Backup jobs' }, { key: 'plans', label: 'File backups' }, { key: 'devices', label: 'Devices with backup software' }] },
-  { group: 'Set-up', items: [{ key: 'settings', label: 'Alerts', admin: true }, { key: 'senders', label: 'Report mails', admin: true }, { key: 'keys', label: 'Report address', admin: true }, { key: 'connect', label: 'How to connect' }] },
+  { group: 'Overview', items: [{ key: '', label: 'Dashboard' }] },
+  { group: 'Backups', items: [{ key: 'jobs', label: 'Backup jobs' }, { key: 'plans', label: 'File backups' }, { key: 'devices', label: 'Devices with backup software' }] },
+  { group: 'Reports', items: [{ key: 'report', label: 'Backup status report' }] },
+  { group: 'Settings', items: [{ key: 'settings', label: 'Alerts', admin: true }, { key: 'senders', label: 'Report mails', admin: true }, { key: 'keys', label: 'Report address', admin: true }, { key: 'connect', label: 'How to connect' }] },
 ];
 
 /** The Backup module: watches the backup software customers already run. Routes inside #/backup. */
@@ -58,6 +61,7 @@ export default function BackupApp() {
     case 'senders': page = admin ? <Senders /> : <Dashboard />; break;
     case 'keys': page = admin ? <Keys /> : <Dashboard />; break;
     case 'connect': page = <Connect />; break;
+    case 'report': page = <Report />; break;
     default: page = <Dashboard />;
   }
   return <div className="modshell">

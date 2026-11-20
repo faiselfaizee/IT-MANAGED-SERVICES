@@ -135,6 +135,56 @@ public static class BackupApi
             return Results.Ok(new { total = list.Count, items = list.Take(1000).Select(Shape) });
         }));
 
+        // Backup › Reports › Backup status: every job with its current state and its runs in the period (success, warning, failed, success rate)
+        async Task<(int Days, List<(Job J, int Ok, int Warn, int Fail)> Rows)?> Report(HttpContext http, ITenantContext t, ISettings settings, CancellationToken ct)
+        {
+            var days = int.TryParse(http.Request.Query["days"], out var d) && d is >= 1 and <= 366 ? d : 30;
+            var company = http.Request.Query["company"].ToString();
+            if (company != "" && company != "none" && !int.TryParse(company, out _)) return null;
+            var scope = await Scope(http, Acts.Read, ct);
+            var s = await BackupSettings.LoadAsync(settings, ct);
+            await using var db = await BackupModule.Open(t, ct);
+            var jobs = (await Load(db, scope, null, s.GraceHours, ct)).Where(j => company == "" || (company == "none" ? j.CompanyId == null : j.CompanyId == int.Parse(company))).ToList();
+            var counts = new Dictionary<long, (int, int, int)>();
+            await using (var c = new NpgsqlCommand(@"select job_id, count(*) filter (where result = 'success'), count(*) filter (where result = 'warning'), count(*) filter (where result = 'failed')
+                from backup.runs where ended > now() - make_interval(days => @d) and job_id = any(@j) group by job_id", db))
+            {
+                BackupModule.P(c, "d", days); BackupModule.P(c, "j", jobs.Select(j => j.Id).ToArray());
+                await using var rd = await c.ExecuteReaderAsync(ct);
+                while (await rd.ReadAsync(ct)) counts[rd.GetInt64(0)] = ((int)rd.GetInt64(1), (int)rd.GetInt64(2), (int)rd.GetInt64(3));
+            }
+            var order = new[] { "failed", "missed", "warning", "waiting", "success", "ignored" };
+            return (days, jobs.Select(j => { var (o, w, f) = counts.GetValueOrDefault(j.Id); return (j, o, w, f); })
+                .OrderBy(x => Array.IndexOf(order, x.j.Status)).ThenBy(x => x.j.Company).ThenBy(x => x.j.AssetName).ThenBy(x => x.j.Name).ToList());
+        }
+        static string Rate(int ok, int warn, int fail) => ok + warn + fail == 0 ? "" : Math.Round(100.0 * (ok + warn) / (ok + warn + fail)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        Read(r.MapGet("/api/backup/report", async (HttpContext http, ITenantContext t, ISettings settings, CancellationToken ct) =>
+        {
+            if (await Report(http, t, settings, ct) is not { } rep) return BackupModule.Bad("bad_input", "company must be a customer id or none");
+            var rows = rep.Rows;
+            return Results.Ok(new
+            {
+                days = rep.Days, total = rows.Count,
+                summary = new { jobs = rows.Count, success = rows.Count(x => x.J.Status == "success"), warning = rows.Count(x => x.J.Status == "warning"), failed = rows.Count(x => x.J.Status == "failed"), missed = rows.Count(x => x.J.Status == "missed"),
+                    runs = rows.Sum(x => x.Ok + x.Warn + x.Fail), runsFailed = rows.Sum(x => x.Fail) },
+                items = rows.Take(2000).Select(x => new { id = x.J.Id, company = x.J.Company, device = x.J.AssetName, assetId = x.J.AssetId, tool = x.J.Tool, name = x.J.Name, status = x.J.Status,
+                    lastAt = x.J.LastAt, lastSuccessAt = x.J.LastSuccessAt, ok = x.Ok, warn = x.Warn, fail = x.Fail, rate = Rate(x.Ok, x.Warn, x.Fail) }),
+            });
+        }));
+
+        Read(r.MapGet("/api/backup/report.csv", async (HttpContext http, ITenantContext t, ISettings settings, IAuditLog audit, CancellationToken ct) =>
+        {
+            if (await Report(http, t, settings, ct) is not { } rep) return BackupModule.Bad("bad_input", "company must be a customer id or none");
+            static string Cell(string v) { if (v.Length > 0 && v[0] is '=' or '+' or '-' or '@' or '\t' or '\r') v = "'" + v; return v.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0 ? "\"" + v.Replace("\"", "\"\"") + "\"" : v; }
+            static string T(DateTime? d) => d?.ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture) ?? "";
+            var sb = new System.Text.StringBuilder("Customer,Device,Backup software,Job,Status,Last run (UTC),Last success (UTC),Successful runs,Warnings,Failed runs,Success rate %\r\n");
+            foreach (var x in rep.Rows)
+                sb.Append(string.Join(",", new[] { x.J.Company, x.J.AssetName, x.J.Tool, x.J.Name, x.J.Status, T(x.J.LastAt), T(x.J.LastSuccessAt), x.Ok.ToString(), x.Warn.ToString(), x.Fail.ToString(), Rate(x.Ok, x.Warn, x.Fail) }.Select(Cell))).Append("\r\n");
+            await audit.WriteAsync("backup.report_exported", "status", rep.Rows.Count + " jobs", ct: ct);
+            return Results.File(System.Text.Encoding.UTF8.GetPreamble().Concat(System.Text.Encoding.UTF8.GetBytes(sb.ToString())).ToArray(), "text/csv; charset=utf-8", "backup-status-report.csv");
+        }));
+
         // devices where the agent found backup software in the last week, with how many jobs they report
         Read(r.MapGet("/api/backup/devices", async (HttpContext http, ITenantContext t, CancellationToken ct) =>
         {

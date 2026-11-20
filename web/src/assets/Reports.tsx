@@ -2,9 +2,35 @@ import { useState } from 'react';
 import { saveFile, useLoad, type Rec } from '../http';
 import { Act, Badge, Empty, Loading } from '../ui';
 import { Ring } from '../Rings';
+import { ReportList, TableReport, type ReportEntry } from '../ReportHub';
+
+/** Assets › Reports: every asset report, and the report that is open. */
+export default function Reports({ name }: { name?: string }) {
+  const catalog = useLoad<Rec[]>('/api/assets/report-catalog');
+  const companies = useLoad<Rec[]>('/api/assets/companies'); const cos = Array.isArray(companies.data) ? companies.data : [];
+  if (name === 'patches') return <PatchReport />;
+  if (name) return <TableReport key={name} url={'/api/assets/report/' + encodeURIComponent(name)} back="#/assets/reports"
+    link={(id, d) => d.idKind === 'licence' ? `#/assets/licenses/${id}` : `#/assets/${id}`}
+    filters={(set, f) => <>
+      <select value={f.company ?? ''} onChange={(e) => set('company', e.target.value)} aria-label="Customer"><option value="">All customers</option><option value="none">No customer</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+      {name !== 'licences' && <select value={f.status ?? ''} onChange={(e) => set('status', e.target.value)} aria-label="Status">
+        <option value="">In use, stock and repair</option><option value="in_use">In use</option><option value="stock">In stock</option><option value="repair">In repair</option><option value="retired">Retired</option><option value="lost">Lost</option></select>}
+    </>} />;
+  const entries: ReportEntry[] = [
+    ...((Array.isArray(catalog.data) ? catalog.data : []) as Rec[]).map((r) => ({ key: String(r.key), group: String(r.group), title: String(r.title), about: String(r.about), href: '#/assets/reports/' + r.key })),
+    { key: 'patches', group: 'Security', title: 'Patch compliance', about: 'Computers with an agent, oldest patches first, with antivirus and compliance.', href: '#/assets/reports/patches' },
+    { key: 'backup', group: 'Security', title: 'Backup status', about: 'Success, failed and missed backups per device (in the Backup module).', href: '#/backup/report' },
+  ];
+  const order = ['Inventory', 'Software', 'Security', 'Contracts', 'Agents'];
+  entries.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));
+  return <>
+    <Loading loading={catalog.loading && !catalog.data} error={catalog.error} />
+    <ReportList title="Asset reports" intro="Pick a report. Each one can be filtered by customer and status, searched, and exported to CSV (opens in Excel). A PDF of a single asset is on the asset's own page." entries={entries} />
+  </>;
+}
 
 /** The patch and compliance report: every computer with an agent, oldest patches first, for one customer or all. */
-export default function Reports() {
+function PatchReport() {
   const [co, setCo] = useState(''); const [show, setShow] = useState('all');
   const companies = useLoad<Rec[]>('/api/assets/companies');
   const qs = `?company=${encodeURIComponent(co)}&show=${show}`;
@@ -12,6 +38,7 @@ export default function Reports() {
   const items = (data?.items ?? []) as Rec[]; const list = Array.isArray(companies.data) ? companies.data : [];
   const total = Number(data?.total ?? 0);
   return <>
+    <p className="crumb-back"><a href="#/assets/reports">All reports</a></p>
     <h1>Patch and compliance report</h1>
     <p className="muted">Computers that report through an agent. Compliant means antivirus on and patches installed in the last 30 days.</p>
     <div className="tools">
