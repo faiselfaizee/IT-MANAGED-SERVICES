@@ -37,3 +37,7 @@ A logo is the one place where an administrator can put a file in front of everyo
 ## Where it is stored
 
 Two per-customer settings: `branding` (the values and a logo version number used to refresh caches) and `branding.logo` (type and data). No new tables, so an update needs no migration.
+
+## Browser-tab icon (6.3)
+
+Administration › Branding › Browser-tab icon: upload a square PNG, SVG or ICO (up to 128 KB; 32 x 32 or 64 x 64 pixels is enough). It is used in the browser tab, bookmarks and on the sign-in pages. Without one, the logo is used; without a logo, the standard DeskAsk icon. "Go back to the standard look" removes it too.
