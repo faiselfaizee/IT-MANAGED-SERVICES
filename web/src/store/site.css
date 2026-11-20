@@ -158,7 +158,7 @@
 .site .store-body { width: auto; margin: 0; padding: 0; }
 .site .store-card { border-radius: 16px; padding: 26px 28px; box-shadow: none; font-size: 16px; }
 .site .store-card h1 { font-size: 30px; letter-spacing: -.025em; } .site .store-card h2 { font-size: 21px; }
-.site .store-card input, .site .store-card select { font: 16px var(--font); padding: 10px 12px; border: 1px solid #b9cbd1; border-radius: 9px; background: #fff; color: var(--s-ink); }
+.site .store-card input:not([type=checkbox]):not([type=radio]), .site .store-card select { font: 16px var(--font); padding: 10px 12px; border: 1px solid #b9cbd1; border-radius: 9px; background: #fff; color: var(--s-ink); }
 .site .store-card label { font-size: 14px; color: var(--s-ink); }
 .site .store-card button.primary { font: 700 16px var(--font); padding: 13px 18px; border-radius: 10px; background: var(--s-teal); color: #fff; border: 0; cursor: pointer; }
 .site .store-card button.primary:hover:not(:disabled) { background: var(--s-ink); }
@@ -206,9 +206,13 @@
 .site th { text-transform: none; letter-spacing: 0; }
 .site .md-table thead th, .site .store-plans th { font-size: 14px; font-weight: 600; text-transform: none; letter-spacing: 0; }
 .site .md-table tbody th { font-size: 16px; color: var(--s-ink); background: transparent; }
-.site .store-card input, .site .store-card select { width: 100%; box-sizing: border-box; min-width: 0; }
+.site .store-card input:not([type=checkbox]):not([type=radio]), .site .store-card select { width: 100%; box-sizing: border-box; min-width: 0; }
 .site .store-addr input { width: auto; flex: 1; }
 .site .store-plans td b { font-size: 16px; }
 .site .store-plans td { vertical-align: middle; }
 .site-foot, .site-foot-in, .site-foot-legal { text-align: left; }
 .site-foot-in > div { align-items: flex-start; }
+
+/* ticks keep the app's own checkbox style (the text-box rules above skip them) */
+.site .store-card input[type=checkbox] { flex: none; }
+.site .store-missing { margin: 6px 0 0; font-size: 13px; color: var(--s-ink-2); }

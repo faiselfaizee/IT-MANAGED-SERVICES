@@ -164,6 +164,12 @@ function Setup-Iis($s) {
     Log "IIS may read $dir (and nothing else of the install folder)"
 
     $hosts = @($s.iisHosts | Where-Object { $_ })
+    # Customers get addresses like acme.deskask.in, made while the platform runs. When the site has fixed names,
+    # also answer every name under the same domain (*.deskask.in), so a new customer needs no IIS change.
+    if ($hosts.Count -gt 0 -and -not ($hosts | Where-Object { $_.StartsWith('*.') })) {
+        $parents = @($hosts | Where-Object { ($_ -split '\.').Count -ge 3 } | ForEach-Object { '*.' + (($_ -split '\.', 2)[1]) } | Select-Object -Unique)
+        foreach ($w in $parents) { $hosts += $w; Log "Also answering every customer address under that domain: $w" }
+    }
     if ($hosts.Count -eq 0) { $hosts = @('') }
     foreach ($h in $hosts) {
         foreach ($ws in (Get-Website)) {
@@ -414,7 +420,7 @@ button.go:disabled{opacity:.5;cursor:default}button.sec{background:transparent;b
   <div class="opt"><input type="checkbox" id="iis"><div><label for="iis" style="margin:0">Publish through IIS</label><span class="hint">One IIS site that passes every address on to the platform. A new customer then only needs a DNS record. Needs the IIS URL Rewrite and Application Request Routing modules.</span></div></div>
   <div class="sect" id="iisBox"><div class="grid">
    <div><label>Site name</label><input type="text" id="iisSite" value="DeskAsk"></div>
-   <div><label>Host names <span>(empty = any name; or list names separated by spaces)</span></label><input type="text" id="iisHosts" placeholder="empty = any name"></div>
+   <div><label>Host names <span>(empty = any name; or names separated by spaces. Customer addresses under the same domain, such as *.deskask.in, are added for you)</span></label><input type="text" id="iisHosts" placeholder="platform.deskask.in"></div>
    <div><label>HTTP port</label><input type="number" id="httpPort" value="80"></div><div><label>HTTPS port</label><input type="number" id="httpsPort" value="443"></div>
    <div class="full"><label>Certificate <span>(from this server's certificate store; sign-in needs https)</span></label><select id="cert"><option value="">None, http only</option></select></div>
   </div></div>
@@ -605,7 +611,7 @@ function Handle-Install($b) {
         $spec.iis = $true; $spec.iisSite = [string](Get-Prop $b 'iisSite' 'DeskAsk')
         if ($spec.iisSite -notmatch '^[A-Za-z0-9 _.-]+$') { Bad 'IIS site name: letters, digits, space . _ - only.' }
         $spec.iisHosts = @((Get-Prop $b 'iisHosts' @()) | ForEach-Object { [string]$_ })
-        foreach ($h in $spec.iisHosts) { if ($h -notmatch '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$') { Bad "IIS host name '$h' is not valid." } }
+        foreach ($h in $spec.iisHosts) { if ($h -notmatch '^(\*\.)?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$') { Bad "IIS host name '$h' is not valid." } }
         $spec.httpPort = [int](Get-Prop $b 'httpPort' 80); $spec.httpsPort = [int](Get-Prop $b 'httpsPort' 443)
         $spec.certThumbprint = [string](Get-Prop $b 'certThumbprint' '')
         if ($spec.certThumbprint -and $spec.certThumbprint -notmatch '^[A-Fa-f0-9]{40}$') { Bad 'Certificate thumbprint is not valid.' }
