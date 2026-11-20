@@ -124,6 +124,17 @@ public sealed class MonitoringSchema : ITenantSchema
             alter table monitoring.rules add constraint rules_metric_check check (metric in ('offline','cpu','memory','disk','check','cert','hardware','traffic','port','service','process','log','autoservice'));
             insert into monitoring.rules (name, enabled, metric, threshold, minutes, severity, kinds, mail, ticket, ticket_priority, builtin) values
               ('Automatic service stopped (servers, and services you chose to watch)', true, 'autoservice', 0, 0, 'warning', '{}', true, false, 'high', true)"),
+        new(4, "printer supplies and faults; tickets that resolve themselves when the alert clears", @"
+            alter table monitoring.rules drop constraint if exists rules_metric_check;
+            alter table monitoring.rules add constraint rules_metric_check check (metric in ('offline','cpu','memory','disk','check','cert','hardware','traffic','port','service','process','log','autoservice','supply','printer'));
+            alter table monitoring.rules add column if not exists resolve boolean not null default false;
+            alter table monitoring.alerts add column if not exists ticket_resolved boolean not null default false;
+            update monitoring.rules set resolve = true where builtin and ticket;
+            insert into monitoring.rules (name, enabled, metric, threshold, minutes, severity, kinds, mail, ticket, ticket_priority, builtin, resolve) values
+              ('Printer toner or ink at 10% or less', true, 'supply', 10, 0, 'warning', '{printer}', true, false, 'low', true, false),
+              ('Printer toner or ink nearly empty (3% or less)', true, 'supply', 3, 0, 'critical', '{printer}', true, true, 'medium', true, true),
+              ('Printer fault: jam, open door, no paper, offline', true, 'printer', 0, 0, 'warning', '{printer}', true, false, 'low', true, false),
+              ('Printer not answering for 15 minutes', true, 'offline', 0, 15, 'warning', '{printer}', true, false, 'low', true, false)"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) => SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
 }

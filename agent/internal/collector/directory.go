@@ -348,6 +348,14 @@ func (r *Runner) runRelay(ctx context.Context, j relayJob) {
 		} else {
 			done.OK = true
 		}
+	case "printer":
+		res, err := r.doPrinter(ctx, j.Payload)
+		done.Result = res
+		if err != nil {
+			done.Error = &dirError{Message: err.Error()}
+		} else {
+			done.OK = true
+		}
 	default:
 		done.Error = &dirError{Message: "this controller does not know the job kind " + j.Kind + "; update it"}
 	}

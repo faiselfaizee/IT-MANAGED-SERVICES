@@ -28,7 +28,7 @@ public static class Evaluator
     static int Rank(string severity) => severity == "critical" ? 2 : 1;
 
     /// <summary>A device is watched when it has an agent, a site controller pings it, or it has service checks.</summary>
-    public static bool Watched(DeviceState d) => d.HasAgent || d.PingUp != null || d.Checks.Count > 0 || d.PortsAt != null;
+    public static bool Watched(DeviceState d) => d.HasAgent || d.PingUp != null || d.Checks.Count > 0 || d.PortsAt != null || d.PrinterAt != null;
     static string PortLabel(PortState p) => p.Name + (p.Alias != "" ? $" ({p.Alias})" : "");
 
     static readonly Dictionary<string, string> PartNames = new()
@@ -164,6 +164,38 @@ public static class Evaluator
                         }
                         break;
                     }
+                    case "supply":
+                    {
+                        if (d.Printer == null || d.PrinterAt == null || now - d.PrinterAt.Value > TimeSpan.FromMinutes(60)) break;
+                        foreach (var sp in d.Printer.Supplies)
+                        {
+                            if (sp.Waste) { if (sp.State == "full") Add("supply:" + sp.Name, r.Severity, $"{sp.Name} is {sp.Pct.ToString("0", Inv)}% full; empty or replace it.", sp.Pct); continue; }
+                            if (sp.Pct < 0 || sp.Pct > r.Threshold) continue;
+                            Add("supply:" + sp.Name, sp.Pct <= 0 ? "critical" : r.Severity, sp.Pct <= 0 ? $"{sp.Name} is empty." : $"{sp.Name} is at {sp.Pct.ToString("0.#", Inv)}% (at or below {th}%).", sp.Pct);
+                        }
+                        break;
+                    }
+                    case "printer":
+                    {
+                        if (d.Printer == null || d.PrinterAt == null || now - d.PrinterAt.Value > TimeSpan.FromMinutes(60)) break;
+                        var said = d.Printer.Message != "" ? $" The printer says: {d.Printer.Message}" : "";
+                        var raised = false;
+                        foreach (var f in d.Printer.Flags)
+                        {
+                            var text = f switch
+                            {
+                                "jammed" => "Paper jam.", "door_open" => "A door or cover is open.", "no_paper" => "Out of paper.", "offline" => "The printer reports itself offline.",
+                                "service_requested" => "The printer asks for service.", "output_full" => "The output tray is full.", "marker_supply_missing" => "A toner or ink cartridge is missing.",
+                                "input_tray_missing" => "A paper tray is missing.", "no_toner" when d.Printer.Supplies.Count == 0 => "Out of toner or ink.", _ => null,
+                            };
+                            if (text == null) continue;
+                            raised = true; Add("printer:" + f, r.Severity, text + said, null);
+                        }
+                        if (!raised) // nothing the flags cover: pass on what the printer itself calls critical
+                            foreach (var al in d.Printer.Alerts.Where(x => x.Severity == "critical").Take(3))
+                                Add("printer:alert:" + (al.Text.Length > 60 ? al.Text[..60] : al.Text).ToLowerInvariant(), r.Severity, "The printer reports: " + al.Text, null);
+                        break;
+                    }
                     case "hardware":
                         foreach (var f in d.Faults)
                             Add("hw:" + f.Part + ":" + f.Name, f.State == "Critical" ? r.Severity : "warning",
@@ -270,7 +302,7 @@ public static class Evaluator
             opened++;
             if (c.Rule.Mail && await Mail(mail, settings, "monitoring_alert", c, id, now, null, ct))
             { await using var m = new NpgsqlCommand("update monitoring.alerts set mailed = true where id = @i", db); MonitoringModule.P(m, "i", id); await m.ExecuteNonQueryAsync(ct); }
-            if (c.Rule.Ticket && desk != null) await Ticket(db, desk, c, id, ct);
+            if (c.Rule.Ticket && desk != null && !(c.Rule.Resolve && await Reopen(db, desk, c, id, now, ct))) await Ticket(db, desk, c, id, ct);
             await Post(c, id, "opened", now, null);
             if (c.Rule.Restart && c.Metric == "service" && actions != null)
             {
@@ -305,7 +337,15 @@ public static class Evaluator
                 await Post(cc, a.Id, "cleared", a.OpenedAt, now - a.OpenedAt);
             }
             if (desk != null && a.TicketId is long tk)
-                await desk.NoteAsync(tk, (reason ?? "The alert has cleared") + $" after {MonitoringModule.Dur(now - a.OpenedAt)}: {a.RuleName}.", ct);
+            {
+                var note = (reason ?? "The alert has cleared") + $" after {MonitoringModule.Dur(now - a.OpenedAt)}: {a.RuleName}.";
+                // a rule that resolves its tickets does so only when the alert really cleared (not when the device was muted or the rule removed) and nobody worked on the ticket
+                if (reason == null && rule is { Resolve: true } && await desk.ResolveUntouchedAsync(tk, note, ct))
+                {
+                    await using var rs = new NpgsqlCommand("update monitoring.alerts set ticket_resolved = true where id = @i", db); MonitoringModule.P(rs, "i", a.Id); await rs.ExecuteNonQueryAsync(ct);
+                }
+                else if (!(reason == null && rule is { Resolve: true })) await desk.NoteAsync(tk, note, ct);
+            }
         }
         await Escalate(db, settings, mail, protector, baseUrl, now, ct);
         await Teams.SendDueAsync(db, protector, ct);
@@ -361,12 +401,36 @@ public static class Evaluator
         return sent;
     }
 
+    /// <summary>
+    /// The same alert came back within 24 hours of closing, and the ticket Monitoring resolved for it is still resolved: reopen that ticket instead of opening a second one.
+    /// The new alert takes over the ticket. Returns false when there is nothing to reopen (a person closed it, or it was worked on, or it is a different alert).
+    /// </summary>
+    internal static async Task<bool> Reopen(NpgsqlConnection db, ITicketDesk desk, Condition c, long alertId, DateTime now, CancellationToken ct)
+    {
+        try
+        {
+            long prev; long ticket; string number;
+            await using (var q = new NpgsqlCommand(@"select id, ticket_id, ticket_number from monitoring.alerts where akey = @k and closed_at is not null and ticket_resolved and ticket_id is not null
+                and closed_at > now() - interval '24 hours' order by closed_at desc limit 1", db))
+            {
+                MonitoringModule.P(q, "k", c.Key); await using var rd = await q.ExecuteReaderAsync(ct);
+                if (!await rd.ReadAsync(ct)) return false;
+                prev = rd.GetInt64(0); ticket = rd.GetInt64(1); number = rd.GetString(2);
+            }
+            if (!await desk.ReopenAsync(ticket, $"The same alert returned: {c.Text}", ct)) return false;
+            await using var u = new NpgsqlCommand("update monitoring.alerts set ticket_id = @t, ticket_number = @n where id = @i; update monitoring.alerts set ticket_resolved = false where id = @p", db);
+            MonitoringModule.P(u, "t", ticket); MonitoringModule.P(u, "n", number); MonitoringModule.P(u, "i", alertId); MonitoringModule.P(u, "p", prev); await u.ExecuteNonQueryAsync(ct);
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+
     internal static async Task<string?> Ticket(NpgsqlConnection db, ITicketDesk desk, Condition c, long alertId, CancellationToken ct)
     {
         try
         {
             var (tid, number) = await desk.OpenAsync(new TicketRequest($"[{(c.Severity == "critical" ? "Critical" : "Warning")}] {c.Device.Name}: {c.Rule.Name}",
-                $"{c.Text}\n\nDevice: {c.Device.Name} ({c.Device.Tag})\nCustomer: {c.Device.Company}\nRule: {c.Rule.Name}\n\nOpened by Monitoring. The ticket gets a note when the alert clears.",
+                $"{c.Text}\n\nDevice: {c.Device.Name} ({c.Device.Tag})\nCustomer: {c.Device.Company}\nRule: {c.Rule.Name}\n\nOpened by Monitoring. " + (c.Rule.Resolve ? "The ticket is resolved by itself when the alert clears, unless someone has started working on it." : "The ticket gets a note when the alert clears."),
                 c.Rule.TicketPriority, c.Device.CompanyId, c.Device.Id, c.Device.Name, "monitoring", "Monitoring"), ct);
             await using var u = new NpgsqlCommand("update monitoring.alerts set ticket_id = @t, ticket_number = @n where id = @i", db);
             MonitoringModule.P(u, "t", tid); MonitoringModule.P(u, "n", number); MonitoringModule.P(u, "i", alertId); await u.ExecuteNonQueryAsync(ct);

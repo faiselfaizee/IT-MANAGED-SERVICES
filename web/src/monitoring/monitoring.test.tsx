@@ -129,3 +129,25 @@ test('settings send a Teams test and keep a saved webhook when it comes back unc
   await waitFor(() => expect(calls.some((c) => c.url === '/api/monitoring/settings' && c.method === 'PUT')).toBe(true));
   expect(JSON.parse(calls.find((c) => c.method === 'PUT')!.body)).toMatchObject({ teams: 'contoso.webhook.office.com/…', reportEnabled: true, escalateMinutes: 15 });
 });
+
+test('a rule that opens tickets can resolve them when the alert clears; a printer supply rule asks for a percentage', async () => {
+  const calls = mock({ '/api/platform/me': { role: 'admin' }, '/api/assets/companies': [], '/api/monitoring/rules': { items: [] } });
+  location.hash = '#/monitoring/rules'; render(<MonitoringApp />);
+  fireEvent.click(await screen.findByRole('button', { name: 'New rule' }));
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Toner nearly gone' } });
+  fireEvent.change(screen.getByLabelText('What to watch'), { target: { value: 'supply' } });
+  fireEvent.change(screen.getByLabelText('At or below (% left)'), { target: { value: '5' } });
+  expect(screen.queryByLabelText(/Resolve the ticket when the alert clears/)).toBeNull();
+  fireEvent.click(screen.getByLabelText('Printers'));
+  fireEvent.click(screen.getByLabelText('Open a Service Desk ticket'));
+  fireEvent.click(screen.getByLabelText(/Resolve the ticket when the alert clears/));
+  fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+  await waitFor(() => expect(calls.some((c) => c.url === '/api/monitoring/rules' && c.method === 'POST')).toBe(true));
+  expect(JSON.parse(calls.find((c) => c.method === 'POST')!.body)).toMatchObject({ metric: 'supply', threshold: 5, kinds: ['printer'], ticket: true, resolve: true });
+});
+
+test('the rules list says which rules resolve their tickets', async () => {
+  mock({ '/api/platform/me': { role: 'admin' }, '/api/monitoring/rules': { items: [{ id: 3, name: 'Disk space below 5%', description: 'Less than 5% free', severity: 'critical', enabled: true, mail: true, teams: false, ticket: true, resolve: true, ticketPriority: 'high', kinds: [], metric: 'disk', threshold: 5, minutes: 0, company: '' }] } });
+  location.hash = '#/monitoring/rules'; render(<MonitoringApp />);
+  await waitFor(() => expect(screen.getByText('Mail, Ticket (high), resolves itself')).toBeTruthy());
+});

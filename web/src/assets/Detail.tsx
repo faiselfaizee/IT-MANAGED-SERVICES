@@ -12,6 +12,7 @@ import { Configs } from './Configs';
 import { DuplicateNotice, matchesOf } from './Duplicates';
 import { AttachedCard, CustomFields } from './Peripherals';
 import { ServicesPanel, UninstallForm } from './Services';
+import { PrinterPanel } from './Printer';
 
 const TABS = [
   ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['services', 'Services'], ['tickets', 'Tickets'],
@@ -21,17 +22,19 @@ const TABS = [
 /** The Hardware tab appears for devices a controller reads in depth (VMware today). */
 function tabsFor(d: Rec): (readonly [string, string])[] {
   const hw = d.hardware && Object.keys(d.hardware).length > 0;
-  if (!hw && !DEEP.includes(d.watch?.mode) && !d.watch?.bmc) return [...TABS];
+  const printer = heroKind(d) === 'printer';
+  if (!hw && !DEEP.includes(d.watch?.mode) && !d.watch?.bmc) { const t: (readonly [string, string])[] = [...TABS]; if (printer) t.splice(1, 0, ['printer', 'Printer']); return t; }
   const t: (readonly [string, string])[] = [...TABS]; t.splice(3, 0, ['hardware', 'Hardware']);
   if (d.watch?.mode === 'network') t.splice(4, 0, ['config', 'Configuration']);
+  if (printer) t.splice(1, 0, ['printer', 'Printer']);
   return t;
 }
 
 /** The kind of device, for the coloured tile at the top of the page. */
 function heroKind(d: Rec): 'server' | 'linux' | 'network' | 'printer' | 'phone' | 'pc' {
   const t = `${d.category ?? ''} ${d.type ?? ''} ${d.identity?.model ?? ''}`.toLowerCase(); const os = String(d.system?.osFamily ?? '').toLowerCase();
-  if (d.watch?.mode === 'network' || d.watch?.mode === 'snmp' || /switch|router|firewall|access point|network/.test(t)) return 'network';
   if (/printer/.test(t)) return 'printer';
+  if (d.watch?.mode === 'network' || d.watch?.mode === 'snmp' || /switch|router|firewall|access point|network/.test(t)) return 'network';
   if (/phone|mobile|tablet/.test(t)) return 'phone';
   if (os === 'linux') return 'linux';
   if (/server|poweredge|proliant|thinksystem|esxi/.test(t) || /server/.test(String(d.system?.os ?? '').toLowerCase())) return 'server';
@@ -77,6 +80,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
     </div>
     <nav className="sub" aria-label="Asset tabs">{tabsFor(d).filter(([k]) => (k !== 'services' || hasAgent) && (!quiet || !['checks', 'commands', 'shell', 'ise', 'remote', 'apps', 'logs', 'network', 'storage'].includes(k))).map(([k, label]) => <a key={k} href={`#/assets/${id}/${k}`} className={tab === k ? 'on' : ''}>{label}</a>)}</nav>
     {tab === 'overview' && <><Overview id={id} d={d} reload={reload} admin={!!perms.admin} quiet={quiet} /><AttachedCard id={id} d={d} data={att.data} reload={att.reload} canEdit={!!perms.modify} /><Details id={id} /></>}
+    {tab === 'printer' && <PrinterPanel id={id} canAct={!!perms.modify} />}
     {tab === 'storage' && <Storage d={d} />}
     {tab === 'network' && <Network d={d} />}
     {tab === 'hardware' && <Hardware d={d} />}

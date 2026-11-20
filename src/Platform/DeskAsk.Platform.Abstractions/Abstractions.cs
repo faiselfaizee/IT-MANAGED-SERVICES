@@ -275,7 +275,8 @@ public sealed record DeviceState(long Id, string Tag, string Name, int? CompanyI
     DateTime? MetricsAt, double? Cpu, double? Mem, long MemTotal, long UptimeS, IReadOnlyList<DiskUse> Disks,
     IReadOnlyList<CheckState> Checks, IReadOnlyList<PartFault> Faults,
     IReadOnlyList<PortState>? Ports = null, DateTime? PortsAt = null, IReadOnlyList<WatchedItem>? Watched = null, DateTime? WatchedAt = null,
-    IReadOnlyList<ServiceInfo>? Inventory = null, DateTime? InventoryAt = null, IReadOnlyDictionary<string, string>? ServiceModes = null)
+    IReadOnlyList<ServiceInfo>? Inventory = null, DateTime? InventoryAt = null, IReadOnlyDictionary<string, string>? ServiceModes = null,
+    PrinterState? Printer = null, DateTime? PrinterAt = null)
 {
     /// <summary>Every service the agent listed (empty before the first list).</summary>
     public IReadOnlyList<ServiceInfo> InventoryList => Inventory ?? Array.Empty<ServiceInfo>();
@@ -296,6 +297,19 @@ public sealed record PortState(string Index, string Name, string Alias, string K
 
 /// <summary>One service of a computer as its service manager lists it. Start is auto, manual, disabled or other; State is running, stopped, starting, stopping, paused, failed or inactive.</summary>
 public sealed record ServiceInfo(string Name, string Display, string State, string Start);
+
+/// <summary>
+/// What a printer last reported over SNMP (the standard printer MIB): status (idle, printing, warmup, other, unknown), the error flags it raised
+/// (jammed, door_open, no_paper, offline, service_requested, output_full ...), its supplies, paper trays and own alerts, and its lifetime page counter (-1 when unknown).
+/// </summary>
+public sealed record PrinterState(string Status, IReadOnlyList<string> Flags, IReadOnlyList<PrinterSupply> Supplies, IReadOnlyList<PrinterTray> Trays,
+    IReadOnlyList<PrinterAlert> Alerts, string Message, long Pages);
+/// <summary>A toner, ink, drum, fuser or waste container. Pct is -1 when the printer does not say; State is ok, low, empty, full (waste container) or unknown.</summary>
+public sealed record PrinterSupply(string Name, string Kind, string Color, double Pct, string State, bool Waste);
+/// <summary>A paper tray: State is ok, low, empty or unknown.</summary>
+public sealed record PrinterTray(string Name, string Media, double Pct, string State);
+/// <summary>An alert the printer raised itself (severity critical, warning or info).</summary>
+public sealed record PrinterAlert(string Severity, string Text);
 
 /// <summary>A service (Kind "service") or a program (Kind "process") the agent reports on.</summary>
 public sealed record WatchedItem(string Name, string Kind, bool Running, string State, int Count);
@@ -413,6 +427,13 @@ public interface ITicketDesk
     Task NoteAsync(long ticketId, string text, CancellationToken ct = default);
     /// <summary>The ticket's number and status, or null when it no longer exists.</summary>
     Task<(string Number, string Status)?> GetAsync(long ticketId, CancellationToken ct = default);
+    /// <summary>
+    /// Resolves a ticket a module opened, but only when nobody has worked on it: still open, nobody assigned, no reply, no note by a person.
+    /// Returns true when it was resolved. Otherwise the text is added as a note and false is returned.
+    /// </summary>
+    Task<bool> ResolveUntouchedAsync(long ticketId, string text, CancellationToken ct = default) => Task.FromResult(false);
+    /// <summary>Reopens a ticket that was resolved (not closed) because the same problem came back, and adds the text as a note. Returns true when reopened.</summary>
+    Task<bool> ReopenAsync(long ticketId, string text, CancellationToken ct = default) => Task.FromResult(false);
 }
 
 /// <summary>A site controller (the small program installed inside a customer's network).</summary>

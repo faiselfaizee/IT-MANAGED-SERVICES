@@ -23,7 +23,7 @@ public static class ReportsApi
     static readonly Dictionary<string, string> KindWords = new()
     {
         ["offline"] = "Device down", ["cpu"] = "Processor", ["memory"] = "Memory", ["disk"] = "Disk space", ["check"] = "Service checks", ["cert"] = "Certificates", ["hardware"] = "Hardware",
-        ["traffic"] = "Port traffic", ["port"] = "Ports down", ["service"] = "Services", ["process"] = "Programs", ["log"] = "Device messages",
+        ["traffic"] = "Port traffic", ["port"] = "Ports down", ["service"] = "Services", ["process"] = "Programs", ["log"] = "Device messages", ["supply"] = "Printer supplies", ["printer"] = "Printer faults",
     };
 
     /// <summary>Builds the report for a month. companyId: a customer, 0 for devices without a customer, null for all.</summary>

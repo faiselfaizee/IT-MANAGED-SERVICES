@@ -300,3 +300,45 @@ test('the filtered list shows where it came from and sends the filters; chosen a
   await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Update asked for 1 agent. Skipped: 1 are offline.'));
   expect(JSON.parse(posts[0])).toEqual({ action: 'update', assetIds: [1, 2] });
 });
+
+const printerReading = {
+  status: 'printing', flags: ['jammed', 'low_toner'], message: 'Paper jam in tray 2', name: 'Accounts printer', model: 'HP Color LaserJet Pro M454dn', serial: 'PHBGK12345', pages: 48213,
+  supplies: [{ name: 'Black Cartridge HP 414A', kind: 'toner', color: 'black', pct: 80, state: 'ok', waste: false }, { name: 'Cyan Cartridge HP 414A', kind: 'toner', color: 'cyan', pct: 8, state: 'low', waste: false },
+    { name: 'Waste Toner Box', kind: 'waste', color: '', pct: 95, state: 'full', waste: true }],
+  trays: [{ name: 'Tray 1', media: 'A4', pct: -1, state: 'ok' }, { name: 'Tray 2', media: 'A4', pct: 0, state: 'empty' }], alerts: [{ severity: 'warning', text: 'Cyan cartridge is low' }],
+};
+
+test('a printer shows its status, toner levels, paper and pages, and can clear its queue', async () => {
+  const calls: { url: string; method: string }[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    calls.push({ url: String(url), method: init?.method ?? 'GET' });
+    const u = String(url);
+    if (u.startsWith('/api/assets/9/device')) return new Response(JSON.stringify(device({ id: 9, name: 'Accounts printer', category: 'Printers & peripherals', type: 'Printer', watch: { mode: 'snmp', collectorId: 'c1' } })), { status: 200 });
+    if (u.startsWith('/api/assets/9/printer/clear-queue')) return new Response(JSON.stringify({ ok: true, message: "The printer's own queue was cleared (IPP purge)." }), { status: 200 });
+    if (u.startsWith('/api/assets/9/printer')) return new Response(JSON.stringify({ reading: printerReading, at: new Date().toISOString(), error: '', controller: true, printer: true,
+      pages: { total: 48213, last7: { pages: 310, partial: false }, last30: { pages: 1200, partial: true }, thisMonth: { pages: 900, partial: false }, lastMonth: { pages: 3100, partial: false } },
+      daily: [{ day: '2026-11-19', pages: 120 }, { day: '2026-11-20', pages: 200 }] }), { status: 200 });
+    return new Response('{}', { status: 200 });
+  }));
+  vi.stubGlobal('confirm', () => true);
+  location.hash = '#/assets/9/printer'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('Black Cartridge HP 414A')).toBeTruthy());
+  expect(screen.getByText('Printing')).toBeTruthy(); expect(screen.getAllByText('Paper jam').length).toBeGreaterThan(0);
+  expect(screen.getByText('Cyan Cartridge HP 414A')).toBeTruthy(); expect(screen.getByText('8%')).toBeTruthy();
+  expect(screen.getByText('Nearly full')).toBeTruthy(); expect(screen.getByText('Empty')).toBeTruthy();
+  expect(screen.getByText('48,213')).toBeTruthy(); expect(screen.getByText('900')).toBeTruthy(); expect(screen.getByText('1,200 or more')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: "Clear the printer's queue" }));
+  await waitFor(() => expect(screen.getByText("The printer's own queue was cleared (IPP purge).")).toBeTruthy());
+  expect(calls.some((c) => c.url === '/api/assets/9/printer/clear-queue' && c.method === 'POST')).toBe(true);
+});
+
+test('a printer that no controller reads says what to set up', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const u = String(url);
+    if (u.startsWith('/api/assets/9/device')) return new Response(JSON.stringify(device({ id: 9, name: 'Lobby printer', category: 'Printers & peripherals', type: 'Printer' })), { status: 200 });
+    if (u.startsWith('/api/assets/9/printer')) return new Response(JSON.stringify({ reading: null, at: null, error: '', controller: false, printer: true, pages: { total: null }, daily: [] }), { status: 200 });
+    return new Response('{}', { status: 200 });
+  }));
+  location.hash = '#/assets/9/printer'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText(/Nothing is read from this printer yet/)).toBeTruthy());
+});

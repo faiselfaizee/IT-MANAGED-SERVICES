@@ -34,6 +34,40 @@ public sealed class TicketDesk : ITicketDesk
         ServiceDeskModule.P(c, "t", ticketId); ServiceDeskModule.P(c, "b", text); await c.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<bool> ResolveUntouchedAsync(long ticketId, string text, CancellationToken ct = default)
+    {
+        await using var db = await Open(ct);
+        // untouched: still open (not in progress or on hold), nobody assigned, no reply sent, and no comment or internal note by a person
+        await using (var c = new NpgsqlCommand(@"update servicedesk.tickets set status = 'resolved', resolved_at = now(), updated_at = now(),
+                paused_s = paused_s + coalesce(extract(epoch from now() - paused_at)::bigint, 0), paused_at = null
+            where id = @t and status = 'open' and assignee_id is null and first_response_at is null
+              and not exists (select 1 from servicedesk.comments m where m.ticket_id = servicedesk.tickets.id and m.kind <> 'system') returning 1", db))
+        {
+            ServiceDeskModule.P(c, "t", ticketId);
+            if (await c.ExecuteScalarAsync(ct) != null)
+            {
+                await using var n = new NpgsqlCommand("insert into servicedesk.comments (ticket_id, kind, author_name, body) values (@t, 'system', 'Monitoring', @b)", db);
+                ServiceDeskModule.P(n, "t", ticketId); ServiceDeskModule.P(n, "b", "Status: open → resolved. " + text + " Nobody had started on it, so Monitoring resolved it."); await n.ExecuteNonQueryAsync(ct);
+                await ServiceDeskModule.Event(db, ticketId, "ticket.status", new { from = "open", to = "resolved", source = "monitoring" }, ct);
+                return true;
+            }
+        }
+        await NoteAsync(ticketId, text, ct);
+        return false;
+    }
+
+    public async Task<bool> ReopenAsync(long ticketId, string text, CancellationToken ct = default)
+    {
+        await using var db = await Open(ct);
+        await using var c = new NpgsqlCommand("update servicedesk.tickets set status = 'open', resolved_at = null, updated_at = now() where id = @t and status = 'resolved' returning 1", db);
+        ServiceDeskModule.P(c, "t", ticketId);
+        if (await c.ExecuteScalarAsync(ct) == null) return false;
+        await using var n = new NpgsqlCommand("insert into servicedesk.comments (ticket_id, kind, author_name, body) values (@t, 'system', 'Monitoring', @b)", db);
+        ServiceDeskModule.P(n, "t", ticketId); ServiceDeskModule.P(n, "b", "Status: resolved → open. " + text); await n.ExecuteNonQueryAsync(ct);
+        await ServiceDeskModule.Event(db, ticketId, "ticket.status", new { from = "resolved", to = "open", source = "monitoring" }, ct);
+        return true;
+    }
+
     public async Task<(string Number, string Status)?> GetAsync(long ticketId, CancellationToken ct = default)
     {
         await using var db = await Open(ct);

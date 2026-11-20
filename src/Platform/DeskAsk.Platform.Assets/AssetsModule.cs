@@ -435,6 +435,12 @@ public sealed class AssetsSchema : ITenantSchema
             alter table assets.assets add column if not exists parent_id bigint references assets.assets(id) on delete set null;
             create index if not exists assets_parent on assets.assets (parent_id) where parent_id is not null"),
         new(29, "starter types for peripherals, phones and tablets", Run: async (db, tx, ct) => await PeripheralsApi.SeedTypesAsync(db, tx, ct)),
+        new(30, "what a site controller reads from printers: status, supplies, trays, alerts and the page counter", @"
+            alter table assets.assets add column if not exists m_printer jsonb;
+            alter table assets.assets add column if not exists m_printer_at timestamptz;
+            alter table assets.assets add column if not exists m_printer_error text not null default '';
+            create table if not exists assets.printer_pages (
+              asset_id bigint not null references assets.assets(id) on delete cascade, day date not null, pages bigint not null, primary key (asset_id, day))"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -756,6 +762,7 @@ public sealed class AssetsModule : IPlatformModule
         DiscoveryApi.Map(r, Key);
         CollectorsApi.Map(r, Key);
         ExtrasApi.Map(r, Key);
+        PrinterApi.Map(r, Key);
         AssetExport.Map(r, Key);
         DuplicatesApi.Map(r, Key);
         DuplicateOverride.Map(r, Key);
