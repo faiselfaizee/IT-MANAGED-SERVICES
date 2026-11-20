@@ -48,7 +48,7 @@ public static class AssetReports
                 case when (n->>'connected')::boolean then 'Yes' else 'No' end, coalesce(n->>'speed_mbps', ''),
                 coalesce((select string_agg(x, ', ') from jsonb_array_elements_text(case when jsonb_typeof(n->'ips') = 'array' then n->'ips' else '[]' end) x), '')
                 {From} cross join lateral jsonb_array_elements(case when jsonb_typeof(a.nics) = 'array' then a.nics else '[]' end) n where {{W}}",
-            "a.tag || ' ' || a.name || ' ' || coalesce(n->>'mac', '') || ' ' || coalesce(n->>'description', '') || ' ' || coalesce(n->'ips'::text, '')", "lower(a.name), n->>'name'"),
+            "a.tag || ' ' || a.name || ' ' || coalesce(n->>'mac', '') || ' ' || coalesce(n->>'description', '') || ' ' || coalesce((n->'ips')::text, '')", "lower(a.name), n->>'name'"),
         new("software", "Software", "Installed software", "Every installed program on every computer. Search for a program to see where it is installed.",
             new[] { "Program", "Version", "Publisher", "Installed on", "Tag", "Name", "Customer", "Operating system" },
             $@"select a.id, s->>'name', coalesce(s->>'version', ''), coalesce(s->>'publisher', ''), coalesce(s->>'installed_on', ''), a.tag, a.name, coalesce(co.name, ''), trim(a.os_name || ' ' || a.os_version)
