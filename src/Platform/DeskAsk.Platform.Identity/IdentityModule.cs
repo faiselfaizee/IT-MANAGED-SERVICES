@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Net;
@@ -41,6 +42,7 @@ public sealed class IdentityModule : IPlatformModule
 
     public void AddServices(IServiceCollection s, IConfiguration cfg)
     {
+        s.TryAddSingleton<IDnsLookup, SystemDnsLookup>();
         s.AddDbContext<IdentityDb>((sp, o) =>
         {
             o.UseNpgsql(sp.GetRequiredService<ITenantContext>().Require().ConnectionString);
@@ -137,6 +139,7 @@ public sealed class IdentityModule : IPlatformModule
         AdEndpoints.Map(r);
         UsersEndpoints.Map(r);
         BrandingApi.Map(r);
+        DomainsApi.Map(r);
         r.MapPost("/api/platform/identity/keys/rotate", async (ITenantContext t, TenantKeys keys, IAuditLog audit, CancellationToken ct) =>
         {
             if (keys.Shared) return Results.Conflict(new { error = "This server uses one fixed key (Identity:SigningKeyPem); rotate it in the configuration." });
