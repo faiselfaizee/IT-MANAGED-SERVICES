@@ -398,4 +398,38 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
             foreach (var t in made) try { await prov.DeleteAsync(t); } catch (Exception) { }
         }
     }
+
+    [PgFact]
+    public async Task AProductCanGetMoreSizesAndBeDeletedWhenNobodyBoughtIt()
+    {
+        var admin = await TestSupport.AdminClient(factory);
+        var key = "tp" + Rand();
+        try
+        {
+            var prices = new { saas = new { usd = new { year = 100 }, inr = new { year = 8000 } } };
+            Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/commerce/products", Json(new { key, name = "Test product", tagline = "x", sizeLabel = "Up to 10 users", limits = new { }, prices }))).StatusCode);
+            // more sizes (editions) for the same product; the same name twice is refused
+            Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/commerce/plans", Json(new { module = key, sizeLabel = "Up to 25 users", limits = new { users = 25 }, prices }))).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync("/api/commerce/plans", Json(new { module = key, sizeLabel = "Unlimited", limits = new { }, prices }))).StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync("/api/commerce/plans", Json(new { module = key, sizeLabel = "Unlimited", limits = new { }, prices }))).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await admin.PostAsync("/api/commerce/plans", Json(new { module = "nosuch", sizeLabel = "A", limits = new { }, prices }))).StatusCode);
+            var list = await J(await admin.GetAsync("/api/commerce/products"));
+            Assert.Equal(3, list.EnumerateArray().First(p => p.GetProperty("key").GetString() == key).GetProperty("sizes").GetInt32());
+            // a product of the program cannot be deleted, one that was bought cannot either
+            Assert.Equal(HttpStatusCode.Conflict, (await admin.DeleteAsync("/api/commerce/products/servicedesk")).StatusCode);
+            await Scalar("insert into commerce.orders (lines) values (@l::jsonb)", ("l", "{\"" + key + "\":{}}"));
+            Assert.Equal(HttpStatusCode.Conflict, (await admin.DeleteAsync("/api/commerce/products/" + key)).StatusCode);
+            await Scalar("delete from commerce.orders where jsonb_exists(lines, @k)", ("k", key));
+            // not bought: it and its sizes go
+            Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync("/api/commerce/products/" + key)).StatusCode);
+            Assert.Equal(0L, (long)(await Scalar("select count(*) from commerce.plans where module = @k", ("k", key)))!);
+            Assert.Equal(HttpStatusCode.NotFound, (await admin.DeleteAsync("/api/commerce/products/" + key)).StatusCode);
+        }
+        finally
+        {
+            await Scalar("delete from commerce.orders where jsonb_exists(lines, @k)", ("k", key));
+            await Scalar("delete from commerce.plans where module = @k", ("k", key));
+            await Scalar("delete from commerce.products where key = @k", ("k", key));
+        }
+    }
 }

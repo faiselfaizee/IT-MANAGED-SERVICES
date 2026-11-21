@@ -34,3 +34,47 @@ test('signing is not ready: the console says so', async () => {
   render(<VendorApp path={[]} />);
   await waitFor(() => expect(screen.getByText(/import the licence signing key first/)).toBeTruthy());
 });
+
+const products = [
+  { key: 'servicedesk', name: 'Service Desk', tagline: '', sort: 10, onSale: true, built: true, sizes: 1 },
+  { key: 'demo', name: 'Demo product', tagline: '', sort: 20, onSale: true, built: false, sizes: 1 },
+];
+const plan = { id: 7, module: 'demo', sizeLabel: 'Up to 10 users', limits: { users: 10 }, prices: { saas: { usd: { year: 100 } } }, sort: 10, active: true };
+
+test('a product that is not part of the program can be deleted; the others cannot', async () => {
+  const calls: string[] = [];
+  vi.stubGlobal('confirm', () => true);
+  vi.stubGlobal('fetch', vi.fn(async (u: string, o?: RequestInit) => {
+    const url = String(u); calls.push((o?.method ?? 'GET') + ' ' + url);
+    if (url.includes('/status')) return new Response(JSON.stringify(status), { status: 200 });
+    if (url.endsWith('/products')) return new Response(JSON.stringify(products), { status: 200 });
+    if (url.endsWith('/plans')) return new Response(JSON.stringify([plan]), { status: 200 });
+    return new Response(JSON.stringify({ deleted: true }), { status: 200 });
+  }));
+  render(<VendorApp path={['prices']} />);
+  await waitFor(() => expect(screen.getAllByText('Delete').length).toBe(1));
+  fireEvent.click(screen.getByText('Delete'));
+  await waitFor(() => expect(calls).toContain('DELETE /api/commerce/products/demo'));
+});
+
+test('another size is added to an existing product with its limits and prices', async () => {
+  const calls: { url: string; method?: string; body?: string }[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (u: string, o?: RequestInit) => {
+    const url = String(u); calls.push({ url, method: o?.method, body: o?.body as string });
+    if (url.includes('/status')) return new Response(JSON.stringify(status), { status: 200 });
+    if (url.endsWith('/products')) return new Response(JSON.stringify(products), { status: 200 });
+    if (url.endsWith('/plans') && o?.method !== 'POST') return new Response(JSON.stringify([plan]), { status: 200 });
+    return new Response(JSON.stringify({ saved: true }), { status: 200 });
+  }));
+  render(<VendorApp path={['prices']} />);
+  await waitFor(() => expect(screen.getByText('Add a size')).toBeTruthy());
+  fireEvent.click(screen.getByText('Add a size'));
+  fireEvent.change(screen.getByLabelText('Product'), { target: { value: 'demo' } });
+  fireEvent.change(screen.getByLabelText('Size name, for example Up to 25 users'), { target: { value: 'Up to 25 users' } });
+  fireEvent.change(screen.getByLabelText(/What it allows/), { target: { value: 'users=25' } });
+  fireEvent.change(screen.getByLabelText('SaaS yearly price (USD)'), { target: { value: '220' } });
+  fireEvent.click(screen.getByText('Add size'));
+  await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url.endsWith('/api/commerce/plans'))).toBe(true));
+  const post = calls.find((c) => c.method === 'POST' && c.url.endsWith('/api/commerce/plans'))!;
+  expect(JSON.parse(post.body!)).toMatchObject({ module: 'demo', sizeLabel: 'Up to 25 users', limits: { users: 25 }, prices: { saas: { usd: { year: 220 } } } });
+});

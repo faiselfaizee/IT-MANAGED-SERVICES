@@ -267,6 +267,7 @@ function Unlinked() {
 function Prices() {
   const plans = useLoad<Rec[]>('/api/commerce/plans');
   const prods = useLoad<Rec[]>('/api/commerce/products');
+  const [addSize, setAddSize] = useState<Rec | null>(null);
   const names = useMemo(() => Object.fromEntries((prods.data ?? []).map((p) => [String(p.key), String(p.name)])), [prods.data]);
   const modules = useMemo(() => [...new Set([...(prods.data ?? []).map((p) => String(p.key)), ...(plans.data ?? []).map((p) => String(p.module))])], [prods.data, plans.data]);
   return <>
@@ -277,6 +278,8 @@ function Prices() {
       {plans.data && <table><thead><tr><th>Module</th><th>Size</th><th>SaaS yearly (USD)</th><th>SaaS monthly (USD)</th><th>On-prem yearly (USD)</th><th>India yearly (₹)</th><th>On sale</th><th></th></tr></thead><tbody>
         {modules.flatMap((m) => (plans.data ?? []).filter((p) => p.module === m).map((p) => <PriceRow key={p.id} name={names[m] ?? m} plan={p} saved={plans.reload} />))}
       </tbody></table>}
+      <div className="tools"><button onClick={() => setAddSize({ module: modules[0] ?? '' })} disabled={modules.length === 0}>Add a size</button></div>
+      {addSize && <AddSize modules={modules} names={names} plans={plans.data ?? []} start={String(addSize.module)} onClose={() => setAddSize(null)} onSaved={() => { setAddSize(null); plans.reload(); prods.reload(); }} />}
     </Card>
   </>;
 }
@@ -286,6 +289,7 @@ function Products({ prods, onChanged }: { prods: { data: Rec[] | null; error: st
   const [adding, setAdding] = useState(false); const [err, setErr] = useState('');
   const [f, setF] = useState({ key: '', name: '', tagline: '', sizeLabel: '', year: '', inr: '' });
   const set = (id: string, body: Rec) => api('/api/commerce/products/' + id, { method: 'PUT', body }).then(onChanged);
+  const del = (p: Rec) => { if (!confirm(`Delete ${p.name}? Its sizes and prices are removed from the store and the website. This cannot be undone.`)) return Promise.resolve(); return api('/api/commerce/products/' + p.key, { method: 'DELETE' }).then(onChanged); };
   const add = async () => {
     setErr('');
     const n = (x: string) => (x === '' ? undefined : Number(x));
@@ -298,7 +302,7 @@ function Products({ prods, onChanged }: { prods: { data: Rec[] | null; error: st
     <p className="muted">The platform keeps one list of products. Switch a product off and it leaves the store, the website and the free trial at once; customers who already have it keep it. The website can switch products too: it asks this list, so both sides always show the same.</p>
     <Loading loading={prods.loading && !prods.data} error={prods.error} />
     {prods.data && <table><thead><tr><th>Product</th><th>Description</th><th>On sale</th><th></th></tr></thead><tbody>
-      {prods.data.map((p) => <ProductRow key={p.key} p={p} save={set} />)}
+      {prods.data.map((p) => <ProductRow key={p.key} p={p} save={set} remove={del} />)}
     </tbody></table>}
     <div className="tools"><button onClick={() => setAdding(true)}>Add a product</button></div>
     {adding && <Modal title="Add a product" onClose={() => setAdding(false)}>
@@ -317,12 +321,46 @@ function Products({ prods, onChanged }: { prods: { data: Rec[] | null; error: st
   </Card>;
 }
 
-function ProductRow({ p, save }: { p: Rec; save: (key: string, body: Rec) => Promise<unknown> }) {
+function ProductRow({ p, save, remove }: { p: Rec; save: (key: string, body: Rec) => Promise<unknown>; remove: (p: Rec) => Promise<unknown> }) {
   const [name, setName] = useState(String(p.name)); const [tag, setTag] = useState(String(p.tagline ?? ''));
   return <tr><td><input value={name} style={{ width: 170 }} aria-label={p.key + ' name'} onChange={(e) => setName(e.target.value)} />{!p.built && <div className="muted">Not in the program yet</div>}</td>
     <td><input value={tag} style={{ width: 300 }} aria-label={p.key + ' description'} onChange={(e) => setTag(e.target.value)} /></td>
     <td><input type="checkbox" checked={!!p.onSale} aria-label={name + ' on sale'} onChange={(e) => void save(p.key, { onSale: e.target.checked })} /></td>
-    <td><Act label="Save" run={() => save(p.key, { name, tagline: tag })} /></td></tr>;
+    <td><Act label="Save" run={() => save(p.key, { name, tagline: tag })} />{!p.built && <Act label="Delete" run={() => remove(p)} />}</td></tr>;
+}
+
+/** One more size (edition) of a product: a name, what it allows (for example agents=25) and its prices. */
+function AddSize({ modules, names, plans, start, onClose, onSaved }: { modules: string[]; names: Record<string, string>; plans: Rec[]; start: string; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState({ module: start, label: '', limits: '', year: '', month: '', onprem: '', inr: '' }); const [err, setErr] = useState('');
+  const sample = plans.find((p) => p.module === f.module);
+  const keys = Object.keys((sample?.limits ?? {}) as Rec);
+  const n = (x: string) => (x === '' ? undefined : Number(x));
+  const save = async () => {
+    setErr('');
+    const limits: Rec = {};
+    for (const part of f.limits.split(',').map((x) => x.trim()).filter(Boolean)) {
+      const [k, v] = part.split('=').map((x) => x.trim());
+      if (!k || v === undefined || v === '' || Number.isNaN(Number(v))) { setErr('Limits look like agents=25 (several: agents=25, assets=500).'); return; }
+      limits[k] = Number(v);
+    }
+    try {
+      await api('/api/commerce/plans', { method: 'POST', body: { module: f.module, sizeLabel: f.label, limits, prices: { saas: { usd: { year: n(f.year), month: n(f.month) }, inr: { year: n(f.inr) } }, onprem: { usd: { year: n(f.onprem) } } } } });
+      onSaved();
+    } catch (e) { setErr((e as Error).message); }
+  };
+  return <Modal title="Add a size" onClose={onClose}>
+    <div className="form">
+      <Field label="Product"><select value={f.module} onChange={(e) => setF({ ...f, module: e.target.value })}>{modules.map((m) => <option key={m} value={m}>{names[m] ?? m}</option>)}</select></Field>
+      <Field label="Size name, for example Up to 25 users"><input value={f.label} maxLength={60} onChange={(e) => setF({ ...f, label: e.target.value })} /></Field>
+      <Field label="What it allows (optional)" hint={keys.length ? `This product's other sizes use: ${keys.join(', ')}. Write them like ${keys[0]}=25.` : 'For example agents=25. Leave empty when the size has no limit.'}><input value={f.limits} onChange={(e) => setF({ ...f, limits: e.target.value })} placeholder={keys.length ? keys[0] + '=25' : ''} /></Field>
+      <Field label="SaaS yearly price (USD)"><input type="number" min={0} value={f.year} onChange={(e) => setF({ ...f, year: e.target.value })} /></Field>
+      <Field label="SaaS monthly price (USD)"><input type="number" min={0} value={f.month} onChange={(e) => setF({ ...f, month: e.target.value })} /></Field>
+      <Field label="On-prem yearly price (USD)"><input type="number" min={0} value={f.onprem} onChange={(e) => setF({ ...f, onprem: e.target.value })} /></Field>
+      <Field label="India yearly price (₹, before GST)"><input type="number" min={0} value={f.inr} onChange={(e) => setF({ ...f, inr: e.target.value })} /></Field>
+      <Err text={err} />
+    </div>
+    <div className="tools" style={{ marginTop: 14 }}><button className="primary" onClick={() => void save()}>Add size</button><button onClick={onClose}>Cancel</button></div>
+  </Modal>;
 }
 
 function PriceRow({ name, plan, saved }: { name: string; plan: Rec; saved: () => void }) {
@@ -407,11 +445,13 @@ const BIZ_FIELDS: [string, string, string?][] = [['legalName', 'Legal name'], ['
 function WebsiteLink() {
   const l = useLoad<Rec>('/api/commerce/link');
   const [url, setUrl] = useState<string | null>(null); const [hide, setHide] = useState<boolean | null>(null);
+  const [host, setHost] = useState<string | null>(null); const [epath, setEpath] = useState<string | null>(null);
   const [secret, setSecret] = useState(''); const [test, setTest] = useState<Rec | null>(null); const [err, setErr] = useState(''); const [ok, setOk] = useState('');
   const d = l.data;
   if (!d) return <Loading loading={l.loading} error={l.error} />;
   const u = url ?? String(d.websiteUrl ?? ''); const h = hide ?? !!d.hidePlatformStore;
-  const save = async () => { setErr(''); setOk(''); try { await api('/api/commerce/link', { method: 'PUT', body: { websiteUrl: u.trim(), hidePlatformStore: h } }); setUrl(null); setHide(null); l.reload(); setOk('Saved.'); } catch (e) { setErr((e as Error).message); } };
+  const wh = host ?? String(d.websiteHost ?? ''); const ep = epath ?? String(d.eventPath ?? '');
+  const save = async () => { setErr(''); setOk(''); try { await api('/api/commerce/link', { method: 'PUT', body: { websiteUrl: u.trim(), hidePlatformStore: h, websiteHost: wh.trim(), eventPath: ep.trim() } }); setUrl(null); setHide(null); setHost(null); setEpath(null); l.reload(); setOk('Saved.'); } catch (e) { setErr((e as Error).message); } };
   const make = async () => {
     if (d.hasSecret && !confirm('Make a new secret? The website stops working with the platform until you paste the new one into its Admin › Store.')) return;
     setErr(''); try { const r = await api<Rec>('/api/commerce/link/secret', { method: 'POST', body: {} }); setSecret(String(r.secret)); l.reload(); } catch (e) { setErr((e as Error).message); }
@@ -423,6 +463,8 @@ function WebsiteLink() {
       <p className="muted">The company website sells through this platform: it shows the prices and the checkout, and the platform takes the payment, creates the customer, issues the licence and the invoice, then tells the website. See docs/website-link.md.</p>
       <div className="form">
         <Field label="Website address"><input value={u} onChange={(e) => setUrl(e.target.value)} placeholder="https://www.deskask.in" /></Field>
+        <Field label="Connect to (optional)" hint="Only when this server cannot reach the website's public address through the firewall: the website server's internal address, for example 10.10.10.150. The name in the website address is still used for the certificate."><input value={wh} onChange={(e) => setHost(e.target.value)} placeholder="10.10.10.150" /></Field>
+        <Field label="Event path (optional)" hint="Where the website takes events. Empty uses /store/hooks."><input value={ep} onChange={(e) => setEpath(e.target.value)} placeholder="/store/hooks" /></Field>
         <label className="check"><input type="checkbox" checked={h} disabled={!u.trim()} onChange={(e) => setHide(e.target.checked)} /> Send visitors of the platform's own store page (#/store) to the website</label>
         <div className="actions"><button className="primary" onClick={() => void save()}>Save</button></div>
       </div>

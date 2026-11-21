@@ -31,9 +31,11 @@ public static class Link
     const string Purpose = "commerce.link", RenewPurpose = "commerce.renew";
     static readonly TimeSpan Window = TimeSpan.FromMinutes(5);
 
-    public sealed record Settings(string WebsiteUrl = "", string SecretSealed = "", string SecretHint = "", DateTime? SecretAt = null, bool HidePlatformStore = false)
+    public sealed record Settings(string WebsiteUrl = "", string SecretSealed = "", string SecretHint = "", DateTime? SecretAt = null, bool HidePlatformStore = false, string WebsiteHost = "", string EventPath = "")
     {
         public bool Ready => WebsiteUrl != "" && SecretSealed != "";
+        /// <summary>The path events are posted to on the website (the standard /store/hooks unless the website uses another).</summary>
+        public string Path => EventPath != "" ? EventPath : LinkOut.HookPath;
     }
 
     public static async Task<Settings> LoadAsync(CommerceOptions o, CancellationToken ct)
@@ -169,7 +171,7 @@ public static class Link
             await using (var rd = await c.ExecuteReaderAsync(ct))
                 while (await rd.ReadAsync(ct))
                     recent.Add(new { id = rd.GetString(0), type = rd.GetString(1), attempts = rd.GetInt32(2), created = rd.GetDateTime(3), delivered = rd.IsDBNull(4) ? (DateTime?)null : rd.GetDateTime(4), error = rd.GetString(5), next = rd.GetDateTime(6) });
-            return Results.Ok(new { websiteUrl = s.WebsiteUrl, hasSecret = s.SecretSealed != "", secretHint = s.SecretHint, secretAt = s.SecretAt, hidePlatformStore = s.HidePlatformStore, hookPath = LinkOut.HookPath, recent });
+            return Results.Ok(new { websiteUrl = s.WebsiteUrl, hasSecret = s.SecretSealed != "", secretHint = s.SecretHint, secretAt = s.SecretAt, hidePlatformStore = s.HidePlatformStore, websiteHost = s.WebsiteHost, eventPath = s.EventPath, hookPath = s.Path, recent });
         }));
 
         Console(r.MapPut("/api/commerce/link", async (JsonElement b, CommerceOptions o, IAuditLog audit, CancellationToken ct) =>
@@ -178,11 +180,17 @@ public static class Link
             if (url != "" && (!Uri.TryCreate(url, UriKind.Absolute, out var parsed) || parsed.Scheme != "https" || parsed.PathAndQuery != "/" || parsed.UserInfo != ""))
                 return Results.BadRequest(new { error = "url", detail = "The website address is like https://www.deskask.in, without a path." });
             var hide = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("hidePlatformStore", out var h) && h.ValueKind == JsonValueKind.True;
+            string Opt(string n) => b.ValueKind == JsonValueKind.Object && b.TryGetProperty(n, out var x) && x.ValueKind == JsonValueKind.String ? x.GetString()!.Trim() : "";
+            var host = Opt("websiteHost"); var path = Opt("eventPath");
+            if (host != "" && !System.Text.RegularExpressions.Regex.IsMatch(host, "^[A-Za-z0-9]([A-Za-z0-9.\\-]{0,251}[A-Za-z0-9])?$|^[0-9A-Fa-f:]{2,45}$"))
+                return Results.BadRequest(new { error = "host", detail = "\"Connect to\" is an IP address or a server name, like 10.10.10.150, without https:// or a path." });
+            if (path != "" && !System.Text.RegularExpressions.Regex.IsMatch(path, "^/[A-Za-z0-9/_.\\-]{0,99}$"))
+                return Results.BadRequest(new { error = "path", detail = "The event path starts with / and has letters, digits, / _ - or . only, for example /store/hooks." });
             var s = await LoadAsync(o, ct);
-            s = s with { WebsiteUrl = url, HidePlatformStore = hide && url != "" };
+            s = s with { WebsiteUrl = url, HidePlatformStore = hide && url != "", WebsiteHost = host, EventPath = path == LinkOut.HookPath ? "" : path };
             await SaveAsync(o, s, ct);
-            await audit.WriteAsync("commerce.link_changed", url, hide ? "platform store hidden" : "platform store shown", ct: ct);
-            return Results.Ok(new { websiteUrl = s.WebsiteUrl, hidePlatformStore = s.HidePlatformStore });
+            await audit.WriteAsync("commerce.link_changed", url, (hide ? "platform store hidden" : "platform store shown") + (host != "" ? "; connects to " + host : "") + (s.EventPath != "" ? "; event path " + s.EventPath : ""), ct: ct);
+            return Results.Ok(new { websiteUrl = s.WebsiteUrl, hidePlatformStore = s.HidePlatformStore, websiteHost = s.WebsiteHost, eventPath = s.EventPath });
         }));
 
         // a new shared secret: shown once, to paste into the website's admin (Store › Link)
@@ -210,8 +218,29 @@ public static class LinkOut
 {
     public const string HookPath = "/store/hooks";
     public static HttpMessageHandler? TestHandler { get; set; }
-    static readonly HttpClient Shared = new() { Timeout = TimeSpan.FromSeconds(15) };
-    static HttpClient Client() => TestHandler != null ? new HttpClient(TestHandler, false) { Timeout = TimeSpan.FromSeconds(15) } : Shared;
+    // Redirects are not followed: a redirected POST arrives as a GET without its body and the website then "refuses" it with no hint why.
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, HttpClient> Clients = new();
+
+    /// <summary>
+    /// The client for a website. With a "connect to" address the connection goes to that server (for example the website's internal address, when this
+    /// server cannot reach its own public address through the firewall), while the name in the website address is still used for the Host header and the certificate.
+    /// </summary>
+    static HttpClient Client(string connectTo)
+    {
+        if (TestHandler != null) return new HttpClient(TestHandler, false) { Timeout = TimeSpan.FromSeconds(15) };
+        return Clients.GetOrAdd(connectTo, h =>
+        {
+            var handler = new SocketsHttpHandler { AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(8) };
+            if (h != "")
+                handler.ConnectCallback = async (ctx, token) =>
+                {
+                    var sock = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp) { NoDelay = true };
+                    try { await sock.ConnectAsync(h, ctx.DnsEndPoint.Port, token); return new System.Net.Sockets.NetworkStream(sock, true); }
+                    catch { sock.Dispose(); throw; }
+                };
+            return new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+        });
+    }
 
     public static async Task SendAsync(IServiceProvider sp, string type, object data, CancellationToken ct)
     {
@@ -231,17 +260,32 @@ public static class LinkOut
         var secret = Link.Secret(dp, s);
         if (secret == null || s.WebsiteUrl == "") return (false, "The website address or the shared secret is not set.");
         var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(); var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-        using var req = new HttpRequestMessage(HttpMethod.Post, s.WebsiteUrl + HookPath) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+        var path = s.Path; var url = s.WebsiteUrl + path;
+        using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
         req.Headers.Add(Link.HeaderTs, ts); req.Headers.Add(Link.HeaderNonce, nonce); req.Headers.Add(Link.HeaderEvent, type);
-        req.Headers.Add(Link.HeaderSig, Link.Sign(secret, ts, nonce, "POST", HookPath, body));
+        req.Headers.Add(Link.HeaderSig, Link.Sign(secret, ts, nonce, "POST", path, body));
+        var via = s.WebsiteHost != "" ? " (connecting to " + s.WebsiteHost + ")" : "";
         try
         {
-            using var res = await Client().SendAsync(req, ct);
-            if (res.IsSuccessStatusCode) return (true, "The website answered " + (int)res.StatusCode + ".");
+            using var res = await Client(s.WebsiteHost).SendAsync(req, ct);
+            var code = (int)res.StatusCode;
+            if (res.IsSuccessStatusCode) return (true, "The website answered " + code + " at " + url + via + ".");
             var text = await res.Content.ReadAsStringAsync(ct);
-            return (false, "The website answered " + (int)res.StatusCode + (text.Length > 0 ? ": " + (text.Length > 200 ? text[..200] : text) : "") + ".");
+            var shown = text.Length > 200 ? text[..200] : text;
+            var hint = code switch
+            {
+                301 or 302 or 303 or 307 or 308 => " It redirected to " + (res.Headers.Location?.ToString() ?? "another address") + ". Set the website address to exactly where it ends up (https, with or without www).",
+                401 or 403 => " The website did not accept the signature: check that its secret is the one made here (Shared secret › Make a new secret) and that its clock is right.",
+                404 or 405 => " The website has no event page at " + path + ". Its link page must accept POST there, or set the event path to the one it uses.",
+                _ => ""
+            };
+            return (false, "The website answered " + code + " at " + url + via + (shown.Length > 0 ? ": " + shown : "") + "." + hint);
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException) { return (false, "The website could not be reached: " + e.Message); }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or System.Net.Sockets.SocketException or IOException)
+        {
+            var why = e.InnerException?.Message is { } inner && inner != e.Message ? e.Message + " (" + inner + ")" : e.Message;
+            return (false, "The website could not be reached at " + url + via + ": " + why + ". If the website opens in a browser, this server may not be able to reach its own public address through the firewall: put the website server's internal address in \"Connect to\".");
+        }
     }
 
     public static async Task<(bool, string)> PingAsync(IServiceProvider sp, CancellationToken ct)
