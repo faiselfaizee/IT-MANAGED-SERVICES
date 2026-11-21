@@ -204,6 +204,18 @@ public sealed class TenantResolutionMiddleware
     {
         if (http.Request.Path.StartsWithSegments("/health")) { await next(http); return; }
         // the proxy asks before it requests a certificate for an address: 200 only for an address a customer has proved is theirs
+        // the proxy's own list of every verified customer address (for a certificate script); only with the shared key Platform:ProxyKey, off when none is set
+        if (http.Request.Path.StartsWithSegments("/api/platform/proxy/domains"))
+        {
+            var key = http.RequestServices.GetService<Microsoft.Extensions.Configuration.IConfiguration>()?["Platform:ProxyKey"] ?? "";
+            var sent = http.Request.Headers["X-Proxy-Key"].ToString();
+            var d = http.RequestServices.GetService<ITenantDomains>();
+            var same = key.Length >= 16 && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(key), System.Text.Encoding.UTF8.GetBytes(sent));
+            if (d == null || !same) { http.Response.StatusCode = StatusCodes.Status404NotFound; return; }
+            http.Response.Headers.CacheControl = "no-store";
+            await http.Response.WriteAsJsonAsync(new { hosts = await d.VerifiedHostsAsync(http.RequestAborted) });
+            return;
+        }
         if (http.Request.Path.StartsWithSegments("/api/platform/domain-check"))
         {
             var d = http.RequestServices.GetService<ITenantDomains>();

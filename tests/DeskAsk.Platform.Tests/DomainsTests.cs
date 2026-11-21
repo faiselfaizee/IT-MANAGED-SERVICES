@@ -96,6 +96,15 @@ public class DomainsTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.OK, (await anon.GetAsync("/api/platform/domain-check?domain=desk.svjlasertech.com")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await anon.GetAsync("/api/platform/domain-check?domain=evil.example.com")).StatusCode);
 
+        // the proxy's list needs the shared key, and is off without one
+        var list = new HttpRequestMessage(HttpMethod.Get, "/api/platform/proxy/domains"); list.Headers.Add("X-Proxy-Key", "a-long-shared-proxy-key-1");
+        Assert.Equal(HttpStatusCode.NotFound, (await anon.SendAsync(list)).StatusCode);
+        var keyed = factory.WithWebHostBuilder(b => b.UseSetting("Platform:ProxyKey", "a-long-shared-proxy-key-1")).CreateClient();
+        var ok = new HttpRequestMessage(HttpMethod.Get, "/api/platform/proxy/domains"); ok.Headers.Add("X-Proxy-Key", "a-long-shared-proxy-key-1");
+        Assert.Contains("desk.svjlasertech.com", (await J(await keyed.SendAsync(ok))).GetProperty("hosts").EnumerateArray().Select(x => x.GetString()));
+        var bad = new HttpRequestMessage(HttpMethod.Get, "/api/platform/proxy/domains"); bad.Headers.Add("X-Proxy-Key", "wrong-key-wrong-key-1");
+        Assert.Equal(HttpStatusCode.NotFound, (await keyed.SendAsync(bad)).StatusCode);
+
         Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync("/api/platform/domains/desk.svjlasertech.com")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await anon.GetAsync("/api/platform/domain-check?domain=desk.svjlasertech.com")).StatusCode);
     }
