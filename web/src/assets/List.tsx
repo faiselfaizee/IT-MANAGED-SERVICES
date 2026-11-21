@@ -7,7 +7,7 @@ import { DuplicateNotice, matchesOf } from './Duplicates';
 import { AddSeveral, CustomFields, MainDevicePicker } from './Peripherals';
 
 const STATUSES = ['stock', 'in_use', 'repair', 'retired', 'lost'];
-const label = (s: string) => s.replace('_', ' ');
+const label = (s?: string) => (s ?? '').replace('_', ' ');
 
 /** Filters that come from the dashboard (a ring part), with the words shown for them. */
 const DRILL: Record<string, Record<string, string>> = {
@@ -56,10 +56,10 @@ export default function List() {
     {perms.admin && sel.size > 0 && <BulkAgents ids={[...sel]} total={total} query={q} onSelect={(ids) => setSel(new Set(ids))} onDone={() => { setSel(new Set()); reload(); }} />}
     <Loading loading={loading && !data} error={error} />
     {data && (items.length === 0 ? <Empty>No assets match.</Empty> : <table><thead><tr><th><input type="checkbox" aria-label="Select all" checked={items.every((i) => sel.has(i.id))} onChange={(e) => setSel(e.target.checked ? new Set([...sel, ...items.map((i) => i.id)]) : new Set([...sel].filter((x) => !items.some((i) => i.id === x))))} /></th>
-      <th>Tag</th><th>Name</th><th>Type</th><th>Serial number</th><th>Agent</th><th>Model</th><th>Assigned to</th><th>Site</th><th>Warranty</th></tr></thead><tbody>
+      <th>Tag</th><th>Name</th><th>Type</th><th>Status</th><th>OS</th><th>IP address</th><th>Agent</th><th>Assigned to</th><th>Site</th><th>Warranty</th></tr></thead><tbody>
       {items.map((a) => <tr key={a.id}><td><input type="checkbox" aria-label={'Select ' + a.name} checked={sel.has(a.id)} onChange={() => toggle(a.id)} /></td>
-        <td className="mono">{a.tag}</td><td><a href={`#/assets/${a.id}`}>{a.name}</a></td><td>{a.type ?? ''}</td><td className="mono">{a.serial ?? ''}</td><td><AgentCell a={(a.agent ?? { state: 'none' }) as Rec} /></td>
-        <td>{[a.manufacturer, a.model].filter(Boolean).join(' ')}</td><td>{a.assignedTo}</td><td>{a.site ? <>{a.site}{a.siteCode ? <span className="muted mono"> {a.siteCode}</span> : null}<div className="muted small">{[a.location, a.state, a.country].filter(Boolean).join(', ')}</div></> : a.location}</td><td>{fmtDay(a.warrantyEnd)}</td></tr>)}</tbody></table>)}
+        <td className="mono">{a.tag}</td><td><a href={`#/assets/${a.id}`}>{a.name}</a>{[a.manufacturer, a.model].filter(Boolean).length ? <div className="muted small">{[a.manufacturer, a.model].filter(Boolean).join(' ')}</div> : null}</td><td>{a.type ?? ''}</td><td>{label(a.status)}</td><td>{a.os ?? ''}</td><td className="mono">{a.ip ?? ''}</td><td><AgentCell a={(a.agent ?? { state: 'none' }) as Rec} /></td>
+        <td>{a.assignedTo}</td><td>{a.site ? <>{a.site}{a.siteCode ? <span className="muted mono"> {a.siteCode}</span> : null}<div className="muted small">{[a.location, a.state, a.country].filter(Boolean).join(', ')}</div></> : a.location}</td><td>{fmtDay(a.warrantyEnd)}</td></tr>)}</tbody></table>)}
     <div className="tools" style={{ marginTop: 10 }}><button disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - take))}>Previous</button><span className="muted">{total ? `${skip + 1}–${Math.min(total, skip + take)} of ${total}` : ''}</span><button disabled={skip + take >= total} onClick={() => setSkip(skip + take)}>Next</button></div>
     {several && <AddSeveral onClose={(ch) => { setSeveral(false); if (ch) reload(); }} />}
     {add && <AddAsset onClose={(id) => { setAdd(false); if (id) go(`assets/${id}`); else reload(); }} />}

@@ -852,7 +852,7 @@ public sealed class AssetsModule : IPlatformModule
             var f = ListFilter(q, cfg); if (f.Error != null) return Bad("bad_input", f.Error);
             await using var db = await Open(t, ct);
             var latest = AgentsApi.AgentVersion(cfg); var offSec = AgentsApi.Offline(cfg);
-            await using var c = new NpgsqlCommand($@"select {Cols}, count(*) over(), g.id, g.version, g.last_seen from {From} left join assets.agents g on g.id = a.agent_id and g.deleted_at is null
+            await using var c = new NpgsqlCommand($@"select {Cols}, count(*) over(), g.id, g.version, g.last_seen, trim(a.os_name || ' ' || a.os_version), a.ip_address from {From} left join assets.agents g on g.id = a.agent_id and g.deleted_at is null
                 where (not @sc or a.company_id = any(@scope)) and {f.Sql}
                 order by a.id desc offset @sk limit @tk", db);
             AssetsAccess.Bind(c, scope); f.Bind(c); P(c, "sk", skip); P(c, "tk", take);
@@ -868,6 +868,7 @@ public sealed class AssetsModule : IPlatformModule
                         var online = seen != null && seen.Value > DateTime.UtcNow.AddSeconds(-offSec);
                         row["agent"] = System.Text.Json.JsonSerializer.SerializeToNode(new { state = online ? "online" : "offline", version = ver, lastSeen = seen, updateDue = latest != "" && ver != "" && ver != latest, latest });
                     }
+                    row["os"] = rd.GetString(N + 4); row["ip"] = rd.GetString(N + 5);
                     items.Add(row);
                 }
             if (items.Count == 0 && skip > 0)

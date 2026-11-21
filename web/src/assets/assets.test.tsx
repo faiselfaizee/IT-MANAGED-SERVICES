@@ -118,15 +118,16 @@ test('credentials are grouped by customer and can be filtered by hardware catego
   expect(screen.getByText('FortiGate API')).toBeTruthy();
 });
 
-test('the asset list shows the agent state instead of the asset status', async () => {
+test('the asset list shows the usage status, OS, IP address and the agent state', async () => {
   mockApi({ '/api/assets/summary': { total: 3, byStatus: { in_use: 3 } }, '/api/assets?': { total: 3, items: [
-    { id: 1, tag: 'AST-1', name: 'PC-ON', status: 'in_use', agent: { state: 'online', version: '2.9.3', updateDue: false } },
+    { id: 1, tag: 'AST-1', name: 'PC-ON', status: 'in_use', os: 'Windows 11 Pro 23H2', ip: '10.0.0.21', agent: { state: 'online', version: '2.9.3', updateDue: false } },
     { id: 2, tag: 'AST-2', name: 'PC-OLD', status: 'in_use', agent: { state: 'online', version: '2.8.6', updateDue: true } },
     { id: 3, tag: 'AST-3', name: 'PRINTER', status: 'in_use', agent: { state: 'none' } }] } });
   location.hash = '#/assets/list'; render(<AssetsApp />);
   await waitFor(() => expect(screen.getByText('PC-OLD')).toBeTruthy());
   expect(screen.getByRole('columnheader', { name: 'Agent' })).toBeTruthy();
-  expect(screen.queryByRole('columnheader', { name: 'Status' })).toBeNull();
+  for (const h of ['Status', 'OS', 'IP address']) expect(screen.getByRole('columnheader', { name: h })).toBeTruthy();
+  expect(screen.getByText('Windows 11 Pro 23H2')).toBeTruthy(); expect(screen.getByText('10.0.0.21')).toBeTruthy(); expect(screen.getAllByText('in use').filter((e) => e.tagName === 'TD').length).toBe(3);
   expect(screen.getAllByText('Online').length).toBe(2); expect(screen.getByText('update due')).toBeTruthy(); expect(screen.getAllByText('No agent').some((e) => e.tagName === 'SPAN')).toBe(true);
 });
 
@@ -257,7 +258,7 @@ test('the assets home shows one tile per customer, worst first, and a tile opens
   const acme = metrics('Acme Ltd', 1, { total: 40, inService: 38, agentOnline: 30, agentOffline: 5, nonCompliant: 4, hardwareNotOk: 1 });
   const glob = metrics('Globex', 2, { total: 12, inService: 12, agentOnline: 12 });
   mockApi({ '/api/assets/dashboard?company=1': { customer: acme }, '/api/assets/dashboard': { all: metrics('All customers', null, { total: 52 }), customers: [glob, acme], restricted: false } });
-  location.hash = '#/assets'; render(<AssetsApp />);
+  location.hash = '#/assets/dashboard'; render(<AssetsApp />);
   await waitFor(() => expect(screen.getByText('Acme Ltd')).toBeTruthy());
   const tiles = [...document.querySelectorAll('a.co-tile')].map((a) => a.getAttribute('href'));
   expect(tiles).toEqual(['#/assets/customer/all', '#/assets/customer/1', '#/assets/customer/2']); // all, then the customer with problems
@@ -274,7 +275,7 @@ test('the assets home shows one tile per customer, worst first, and a tile opens
 test('someone limited to one customer lands on that customer', async () => {
   const acme = metrics('Acme Ltd', 1, { total: 3 });
   mockApi({ '/api/assets/dashboard?company=1': { customer: acme }, '/api/assets/dashboard': { all: acme, customers: [acme], restricted: true } });
-  location.hash = '#/assets'; render(<AssetsApp />);
+  location.hash = '#/assets/dashboard'; render(<AssetsApp />);
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Acme Ltd' })).toBeTruthy());
   expect(document.querySelectorAll('a.co-tile').length).toBe(0);
 });
@@ -341,4 +342,12 @@ test('a printer that no controller reads says what to set up', async () => {
   }));
   location.hash = '#/assets/9/printer'; render(<AssetsApp />);
   await waitFor(() => expect(screen.getByText(/Nothing is read from this printer yet/)).toBeTruthy());
+});
+
+test('the Assets menu opens on All assets, and the dashboard stays one click away', async () => {
+  mockApi({ '/api/assets/summary': { total: 1, byStatus: { in_use: 1 } }, '/api/assets?': { total: 1, items: [{ id: 1, tag: 'AST-1', name: 'PC-ON', status: 'in_use', agent: { state: 'none' } }] } });
+  location.hash = '#/assets'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('PC-ON')).toBeTruthy());
+  expect(screen.getByRole('heading', { name: 'All assets' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Dashboard' }).getAttribute('href')).toBe('#/assets/dashboard');
 });

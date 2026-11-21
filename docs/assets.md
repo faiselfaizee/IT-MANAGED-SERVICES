@@ -423,3 +423,8 @@ Set a printer's *Read as* to **Printer or other device (SNMP)** and give it a sa
 Print servers: clear their queues with the library scripts *Clear print queue and restart spooler* and *List printers*. Printers behind a print server are still read directly over SNMP.
 
 Not in 6.5: colour vs black-and-white page split, print-server queue monitoring, SNMPv3 restart. Tested against simulated printers only. Update the site controllers to read printers.
+
+## Assets opens on All assets; basic details in the list (6.8.1)
+
+- Opening Assets (the menu, "Open Assets", the breadcrumb, or coming back from an asset) now lands on **All assets**. The dashboard is Assets › **Dashboard** (`#/assets/dashboard`).
+- The list shows, for every asset: **Status** (usage: in use, in stock, repair, retired, lost), **OS**, **IP address** and the **agent** state (online, offline, update due, no agent), next to tag, name (with make and model), type, person, site and warranty. OS and IP come from the agent or controller and are blank for devices that report none.
