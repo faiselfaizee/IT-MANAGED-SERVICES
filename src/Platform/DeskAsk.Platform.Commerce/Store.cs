@@ -42,8 +42,8 @@ public static class Store
 
     public static async Task<List<Plan>> PlansAsync(NpgsqlConnection db, CancellationToken ct)
     {
-        await using var q = new NpgsqlCommand("select id, module, size_label, limits::text, prices::text, sort from commerce.plans where active
-            and module not in (select key from commerce.products where not on_sale) order by sort, id", db);
+        await using var q = new NpgsqlCommand("select id, module, size_label, limits::text, prices::text, sort from commerce.plans where active " +
+            "and module not in (select key from commerce.products where not on_sale) order by sort, id", db);
         var list = new List<Plan>();
         await using (var rd = await q.ExecuteReaderAsync(ct))
             while (await rd.ReadAsync(ct))
