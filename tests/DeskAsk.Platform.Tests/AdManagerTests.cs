@@ -19,7 +19,7 @@ public sealed class FakeController : IControllerRelay
     public readonly Dictionary<string, string> Passwords = new(StringComparer.OrdinalIgnoreCase);
     public string LastConnPassword = "";
     public string Pinned = "", UntrustedCert = "";   // a controller whose DC shows a certificate it does not trust
-    public bool Down, Refuse;
+    public bool Down, Refuse, OldAgent;
 
     const string Base = "DC=acme,DC=test";
 
@@ -29,7 +29,7 @@ public sealed class FakeController : IControllerRelay
 
     public void Reset()
     {
-        Dir.Clear(); Log.Clear(); Passwords.Clear(); Down = Refuse = false; UntrustedCert = "";
+        Dir.Clear(); Log.Clear(); Passwords.Clear(); Down = Refuse = OldAgent = false; UntrustedCert = "";
         Dir[Base] = O(C("objectClass", "top", "domain", "domainDNS"), C("name", "acme"));
         Dir["OU=Staff," + Base] = O(C("objectClass", "top", "organizationalUnit"), C("name", "Staff"));
         Dir["OU=Sales,OU=Staff," + Base] = O(C("objectClass", "top", "organizationalUnit"), C("name", "Sales"));
@@ -119,6 +119,16 @@ public sealed class FakeController : IControllerRelay
                     var np = op.GetProperty("newParent").GetString()!; var rdn = op.GetProperty("newRdn").GetString()!; Log.Add("rename " + dn + " -> " + rdn + "," + np);
                     if (!Dir.TryGetValue(dn, out var o)) { fail = 32; break; }
                     Dir.Remove(dn); Dir[rdn + "," + np] = o; break;
+                }
+                case "verify":   // agent 6.17: bind as the person to check their own password
+                {
+                    Log.Add("verify " + dn);
+                    if (OldAgent) break;   // an older controller does not know the step and answers without a verdict
+                    var given = op.GetProperty("password").GetString()!;
+                    var right = Passwords.TryGetValue(dn, out var known) && known == given;
+                    var why = right ? "" : Dir.TryGetValue(dn, out var vo) && vo.TryGetValue("userAccountControl", out var uac) && uac.FirstOrDefault() == "514" ? "disabled" : "wrong";
+                    results.Add(new { server = "dc01", valid = right, reason = why }); step++;
+                    continue;
                 }
                 case "setpw":
                     Log.Add("setpw " + dn);

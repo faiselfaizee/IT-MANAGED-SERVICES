@@ -50,3 +50,17 @@ People are matched by their Google account (stored as `google:<id>`) or their em
 4. Users › **Import from Google**: choose people and a role. People who already have an account (by email) are linked instead.
 
 The client secret and the service account key are kept encrypted; the key is never shown again (only the service account's email).
+
+## A company's employees with their Windows password (6.17.0)
+Devices setup › Customers › a company › Users › **Pick from the domain controller**. With one company: Devices setup › Our organisation › Users.
+
+1. The company's domain controller must be set up on its Domain controller tab and read at least once.
+2. Choose people (each needs an email in the directory) and a role, then **Add**. Each person gets an account tied to the company. A customer user with the same email who has no other sign-in link is linked instead.
+3. They sign in on the normal page with their **email and Windows password**.
+
+How it works:
+- DeskAsk finds the person's account in the company's domains and asks the company's **site controller** to bind to the domain controller as that person, on a second connection. The answer is right password or refused, with the reason. The password is passed on once and never kept or logged. An empty password is never tried.
+- The sign-in page tells people when their Windows account is disabled, locked, expired or must change its password. A wrong password and an unknown account show the same message.
+- **The site controller must be agent 6.17 or later.** An older controller does not know the check. Sign-in then says the company's Windows sign-in "cannot be checked right now". Controllers update themselves after the release.
+- The person's DeskAsk two-step code still applies if they turned it on.
+- The audit log writes `auth.login_failed` with `windows: <reason>`.

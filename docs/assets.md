@@ -459,3 +459,4 @@ What moved:
 - Administration › Users lists only your own team (administrators, engineers, viewers). The roles offered for new people from Microsoft, Google or AD sign-in are staff roles.
 
 A customer user's company is kept in one place (Access, `access.user_companies`). The Service Desk reads it there, so a person tied to the company by single-company mode can open tickets straight away. Links made before 6.16 in `servicedesk.people` still count.
+- **Pick from the domain controller** (6.17.0): turns people of the company's directory into users who sign in with their Windows password. See [sign-in.md](sign-in.md#a-companys-employees-with-their-windows-password-6170).
