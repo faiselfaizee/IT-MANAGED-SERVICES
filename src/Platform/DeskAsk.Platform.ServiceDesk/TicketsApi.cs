@@ -131,12 +131,16 @@ public static class TicketsApi
             return Results.Ok(new { total, items });
         }));
 
-        anyone(r.MapGet("/api/servicedesk/summary", async (ClaimsPrincipal u, ITenantContext t, CancellationToken ct) =>
+        anyone(r.MapGet("/api/servicedesk/summary", async (HttpContext http, ClaimsPrincipal u, ITenantContext t, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
             var w = await WhoAsync(u, db, ct);
             await using var c = new NpgsqlCommand { Connection = db };
             var scope = Scope(w, c); P(c, "me", w.Id);
+            // the same counts for one kind of ticket: ?kind=incident or ?kind=request, and ?major=1 for the major incidents
+            var q = http.Request.Query;
+            if (q["kind"].ToString() is "incident" or "request") { P(c, "sk", q["kind"].ToString()); scope += " and t.kind = @sk"; }
+            if (q["major"] == "1") scope += " and t.major";
             c.CommandText = $@"select count(*) filter (where status = 'open'), count(*) filter (where status = 'progress'), count(*) filter (where status = 'hold'),
                 count(*) filter (where status = 'resolved'), count(*) filter (where status = 'closed'),
                 count(*) filter (where status not in ('resolved','closed') and assignee_id is null),
