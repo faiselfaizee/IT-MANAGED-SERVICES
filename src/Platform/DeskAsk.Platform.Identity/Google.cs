@@ -157,6 +157,7 @@ public static class GoogleSso
                 return Error("Only accounts of " + string.Join(", ", domains) + " may sign in here.", 403);
             }
             var ext = "google:" + sub;
+            UserAccount? fresh = null;
             var user = await db.Users.FirstOrDefaultAsync(x => x.ExternalId == ext, ct) ?? await db.Users.FirstOrDefaultAsync(x => x.Email == email, ct);
             if (user == null)
             {
@@ -170,13 +171,14 @@ public static class GoogleSso
                 var name = SsoEndpoints.Str(claims, "name") is { Length: > 0 } nm ? nm : email;
                 user = new UserAccount { Email = email, Name = name.Length > 200 ? name[..200] : name, Role = role };
                 user.PasswordHash = hasher.HashPassword(user, SsoEndpoints.B64(RandomNumberGenerator.GetBytes(32)));
-                db.Users.Add(user);
+                db.Users.Add(user); fresh = user;
                 await audit.WriteAsync("user.created", email, "role=" + role + " (first Google sign-in)", actor: email);
             }
             if (!user.Active) return Error("This account is disabled.", 403);
             // an account already linked to Microsoft or Active Directory keeps that link; Google signs it in by its email
             if (string.IsNullOrEmpty(user.ExternalId)) user.ExternalId = ext;
             await db.SaveChangesAsync(ct);
+            if (fresh != null) await SingleCompanyLink.TryAsync(http.RequestServices, new[] { fresh }, ct);
             await audit.WriteAsync("auth.login", target: email, actor: email, detail: "google");
             await http.SignInAsync(IdentityModule.CookieName, new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", user.Id.ToString()), new Claim("mfa", "1") }, IdentityModule.CookieName)));
             return Results.Redirect(IdentityModule.LocalOrRoot(SsoEndpoints.Str(saved, "ret")));
@@ -248,13 +250,13 @@ public static class GoogleSso
             return Results.Ok(new { items, more = page != null });
         });
         // people chosen from the Workspace directory: created with the role, or linked when they already have an account (by email)
-        g.MapPost("/import", async (JsonElement b, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
+        g.MapPost("/import", async (JsonElement b, IServiceProvider sp, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
         {
             var role = (b.TryGetProperty("role", out var rv) && rv.ValueKind == JsonValueKind.String ? rv.GetString()! : "").Trim().ToLowerInvariant();
             if (!UsersEndpoints.Roles.Contains(role)) return Results.BadRequest(new { error = "Choose a role." });
             if (!b.TryGetProperty("users", out var us) || us.ValueKind != JsonValueKind.Array || us.GetArrayLength() is 0 or > 500) return Results.BadRequest(new { error = "Choose 1 to 500 people." });
             if (await StaffLimit.RefuseImportAsync(ent, db, role, us.EnumerateArray().Select(x => SsoEndpoints.Str(x, "email")), ct) is { } over) return over;
-            int created = 0, linked = 0, skipped = 0;
+            int created = 0, linked = 0, skipped = 0; var madeUsers = new List<UserAccount>();
             foreach (var u in us.EnumerateArray())
             {
                 var email = SsoEndpoints.Str(u, "email").Trim().ToLowerInvariant(); var gid = SsoEndpoints.Str(u, "id"); var name = SsoEndpoints.Str(u, "name").Trim();
@@ -264,9 +266,10 @@ public static class GoogleSso
                 if (exist != null) { if (ext != null && string.IsNullOrEmpty(exist.ExternalId)) { exist.ExternalId = ext; linked++; } else skipped++; continue; }
                 var acc = new UserAccount { Email = email, Name = name == "" ? email : (name.Length > 200 ? name[..200] : name), Role = role, ExternalId = ext };
                 acc.PasswordHash = hasher.HashPassword(acc, SsoEndpoints.B64(RandomNumberGenerator.GetBytes(32)));
-                db.Users.Add(acc); created++;
+                db.Users.Add(acc); created++; madeUsers.Add(acc);
             }
             await db.SaveChangesAsync(ct);
+            await SingleCompanyLink.TryAsync(sp, madeUsers, ct);
             await audit.WriteAsync("user.imported", "google", $"created {created}, linked {linked}, skipped {skipped}, role {role}", ct: ct);
             return Results.Ok(new { created, linked, skipped });
         });

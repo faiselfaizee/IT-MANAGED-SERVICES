@@ -1,3 +1,4 @@
+import { useSingleCompany } from '../mode';
 import { useMemo, useState } from 'react';
 import { api, useInterval, useLoad, type Rec } from '../http';
 import { Empty, Loading } from '../ui';
@@ -24,6 +25,7 @@ export function statusParts(m: Rec, co: string): Part[] {
 
 /** Monitoring home: one tile per customer, worst first, each with a small ring of its device states and its open alerts. */
 export default function Dashboard() {
+  const one = useSingleCompany();
   const { data, error, loading, reload } = useLoad<Rec>('/api/monitoring/dashboard');
   useInterval(reload, 60_000);
   const me = useLoad<Rec>('/api/platform/me');
@@ -34,6 +36,7 @@ export default function Dashboard() {
     .filter((c) => !q || String(c.company).toLowerCase().includes(q.toLowerCase()))
     .sort((a, b) => sort === 'name' ? String(a.company).localeCompare(String(b.company)) : sort === 'devices' ? n(b.devices) - n(a.devices) : attention(b) - attention(a) || String(a.company).localeCompare(String(b.company))),
   [customers, q, sort]);
+  if (one) return <CustomerDash id="all" />;   // one company: its own dashboard is the home page
   if (loading && !data) return <Loading loading error={error} />;
   if (error) return <Loading loading={false} error={error} />;
   if (data?.restricted && customers.length === 1) return <CustomerDash id={coKey(customers[0])} />;

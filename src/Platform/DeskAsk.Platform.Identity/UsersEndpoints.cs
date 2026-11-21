@@ -31,7 +31,7 @@ public static class UsersEndpoints
 
         g.MapGet("/roles", () => Results.Ok(Roles));
 
-        g.MapPost("", async (NewUser b, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
+        g.MapPost("", async (NewUser b, IServiceProvider sp, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
         {
             var email = (b.Email ?? "").Trim().ToLowerInvariant();
             if (email.Length > 320 || !System.Net.Mail.MailAddress.TryCreate(email, out _) || !email.Contains('@')) return Results.BadRequest(new { error = "Enter a valid email address." });
@@ -46,6 +46,7 @@ public static class UsersEndpoints
             u.PasswordHash = hasher.HashPassword(u, b.Password!);
             db.Users.Add(u);
             await db.SaveChangesAsync(ct);
+            await SingleCompanyLink.TryAsync(sp, new[] { u }, ct);
             await audit.WriteAsync("user.created", u.Email, "role=" + role, ct: ct);
             return Results.Created("/api/platform/users/" + u.Id, Row(u));
         });

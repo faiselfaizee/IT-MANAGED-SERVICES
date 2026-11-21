@@ -43,3 +43,10 @@ Under Administration › Licence an administrator types the **licence key** (`DK
 - **Moving to a new server:** **Release this installation** on the old one, then activate the new one with the same key. The vendor can also release it from the console.
 - **No internet:** the Licence page shows the customer id and installation id; the vendor issues a licence file for them, which is pasted under "Install a new licence".
 - The installation needs outbound HTTPS to the licence server for activation and the daily check. Without it the current licence keeps working until it ends.
+
+### Single-company mode: what changes (6.14.0)
+
+With `single_company=1` the organisation's own name is the one company (made the first time anything asks for it) and everything about choosing between customers is hidden:
+- The Assets and Monitoring home pages are the one company's dashboard (no customer tiles); the Service Desk dashboard has no customer tiles; customer pickers, the "By company" report breakdown and the customer name under devices, alerts and tickets are hidden.
+- Every new customer or customer-admin login is tied to the one company at once: first Microsoft or Google sign-in, an import from Entra ID, Google or Active Directory, and an administrator adding someone. Nobody has to pick a company for them.
+- The website's Pricing page (1.6.0) lists sizes with `single_company=1` under "My own company"; create them in the Vendor console with "What it allows" such as `max_assets=100, single_company=1`.

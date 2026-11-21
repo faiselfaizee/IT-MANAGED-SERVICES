@@ -1,3 +1,4 @@
+import { useSingleCompany } from '../mode';
 import { useMemo, useState } from 'react';
 import { useLoad, type Rec } from '../http';
 import { Empty, Loading } from '../ui';
@@ -20,13 +21,14 @@ function agentParts(m: Rec, co: string): Part[] {
 
 /** Assets home: one tile per customer, worst first, each with a small ring of its agents and its main problems. */
 export default function Dashboard() {
-  const { data, error, loading } = useLoad<Rec>('/api/assets/dashboard');
+  const one = useSingleCompany(); const { data, error, loading } = useLoad<Rec>('/api/assets/dashboard');
   const [q, setQ] = useState(''); const [sort, setSort] = useState<'attention' | 'name' | 'assets'>('attention'); const [shown, setShown] = useState(60);
   const customers = (data?.customers ?? []) as Rec[];
   const list = useMemo(() => customers
     .filter((c) => !q || String(c.company).toLowerCase().includes(q.toLowerCase()))
     .sort((a, b) => sort === 'name' ? String(a.company).localeCompare(String(b.company)) : sort === 'assets' ? n(b.total) - n(a.total) : attention(b) - attention(a) || String(a.company).localeCompare(String(b.company))),
   [customers, q, sort]);
+  if (one) return <CustomerDash id="all" />;   // one company: its own dashboard is the home page
   if (loading && !data) return <Loading loading error={error} />;
   if (error) return <Loading loading={false} error={error} />;
   // someone limited to one customer goes straight to that customer's dashboard

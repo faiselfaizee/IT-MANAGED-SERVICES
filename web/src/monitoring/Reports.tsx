@@ -69,7 +69,7 @@ function UptimeReport() {
       <div className="grid two">
         <section><h2>Availability by device</h2>
           {lines.length === 0 ? <Empty>No watched devices.</Empty> : <div className="table-wrap"><table><thead><tr><th>Device</th><th>Down for</th><th>Availability</th><th>Alerts</th></tr></thead>
-            <tbody>{lines.slice(0, 100).map((l) => <tr key={l.id}><td><a href={`#/monitoring/device/${l.id}`}>{l.name}</a><div className="muted small">{l.company}</div></td><td>{mins(l.downMinutes)}</td>
+            <tbody>{lines.slice(0, 100).map((l) => <tr key={l.id}><td><a href={`#/monitoring/device/${l.id}`}>{l.name}</a><div className="muted small for-customers">{l.company}</div></td><td>{mins(l.downMinutes)}</td>
               <td><span className={l.availability < 99 ? 'badge bad' : l.availability < 99.9 ? 'badge warn' : ''}>{pct(l.availability)}</span></td><td>{l.alerts}</td></tr>)}</tbody></table></div>}
         </section>
         <section><h2>Alerts by kind</h2>

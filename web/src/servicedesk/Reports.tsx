@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSingleCompany } from '../mode';
 import { saveFile, useLoad, type Rec } from '../http';
 import { Card, Empty, Err, Loading, fmtDate, useSubmit } from '../ui';
 import { PRIORITY } from './List';
@@ -9,6 +10,7 @@ const pct = (p?: number | null) => (p == null ? 'No data' : `${p}%`);
 
 /** Monthly service report for one company (or all). The PDF is made by the server. */
 export default function Reports({ staff }: { staff: boolean }) {
+  const one = useSingleCompany();
   const [month, setMonth] = useState(thisMonth()); const [company, setCompany] = useState('');
   const companies = useLoad<Rec[]>(staff ? '/api/assets/companies' : null); const cos = Array.isArray(companies.data) ? companies.data : [];
   const r = useLoad<Rec>(`/api/servicedesk/reports/monthly?month=${month}${company ? `&companyId=${company}` : ''}`);
@@ -18,7 +20,7 @@ export default function Reports({ staff }: { staff: boolean }) {
     <h1>Monthly report</h1>
     <div className="tools no-print">
       <label>Month <input type="month" value={month} max={thisMonth()} onChange={(e) => e.target.value && setMonth(e.target.value)} /></label>
-      {staff && <label>Company <select value={company} onChange={(e) => setCompany(e.target.value)}><option value="">All companies</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}
+      {staff && <label className="for-customers">Company <select value={company} onChange={(e) => setCompany(e.target.value)}><option value="">All companies</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}
       <button className="primary" onClick={() => pdf.submit(() => saveFile(`/api/servicedesk/reports/monthly.pdf?month=${month}${company ? `&companyId=${company}` : ''}`, `service-report-${month}.pdf`))} disabled={!d || pdf.busy}>Download PDF</button>
       <button onClick={() => window.print()} disabled={!d}>Print</button>
     </div>
@@ -37,7 +39,7 @@ export default function Reports({ staff }: { staff: boolean }) {
         <Breakdown title="How tickets arrived" rows={d.bySource} />
         <Breakdown title="Most active people" rows={d.byRequester} />
         <Breakdown title="Devices with most tickets" rows={d.byAsset} />
-        {staff && !d.companyId && <Breakdown title="By company" rows={d.byCompany} />}
+        {staff && !d.companyId && !one && <Breakdown title="By company" rows={d.byCompany} />}
       </div>
       <Card title="Tickets opened this month">
         {d.tickets.length === 0 ? <Empty>No tickets were opened this month.</Empty> : <table><thead><tr><th>Ticket</th><th>Subject</th><th>Priority</th><th>Status</th><th>Opened</th><th>Solved</th></tr></thead><tbody>

@@ -66,4 +66,16 @@ public class SingleCompanyTests : IClassFixture<WebApplicationFactory<Program>>
         var id = list[0].GetProperty("id").GetInt32();                                    // a company can still be renamed
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/assets/companies/" + id, Json(new { name = list[0].GetProperty("name").GetString() }))).StatusCode);
     }
+
+    [PgFact]
+    public async Task ANewCustomerLoginIsTiedToTheOneCompanyAtOnce()
+    {
+        var admin = await TestSupport.AdminClient(single);
+        await admin.GetAsync("/api/assets/companies");
+        var pw = "Long-Enough-1"; var email = "cust" + Guid.NewGuid().ToString("N")[..6] + "@sc.test";
+        Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email, name = "Cust", role = "customer", password = pw }))).StatusCode);
+        var cust = await TestSupport.ClientFor(single, email, pw);
+        var mine = await J(await cust.GetAsync("/api/assets/companies"));
+        Assert.Equal(1, mine.GetArrayLength());   // nobody chose a company for them: the one company is theirs
+    }
 }

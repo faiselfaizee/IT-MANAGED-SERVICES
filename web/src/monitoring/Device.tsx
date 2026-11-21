@@ -29,7 +29,7 @@ export default function Device({ id }: { id: string }) {
   const perf = !!(d.agent || d.metricsAt); // a switch or printer has no processor figures to chart
   return <>
     <nav className="crumbs" aria-label="Breadcrumb"><a href="#/monitoring">Monitoring</a><span aria-hidden="true">›</span>
-      <a href={`#/monitoring/customer/${d.companyId ?? 'none'}`}>{d.company}</a><span aria-hidden="true">›</span><span aria-current="page">{d.name}</span></nav>
+      <span className="for-customers"><a href={`#/monitoring/customer/${d.companyId ?? 'none'}`}>{d.company}</a><span aria-hidden="true">›</span></span><span aria-current="page">{d.name}</span></nav>
     <header className="dash-head"><h1>{d.name}</h1><StatusBadge s={d.status} /><p className="muted">{d.tag}{d.ip ? ' · ' + d.ip : ''}{d.os ? ' · ' + d.os : ''}</p>
       <a className="button" href={`#/assets/${d.id}`}>Open the asset</a></header>
 
