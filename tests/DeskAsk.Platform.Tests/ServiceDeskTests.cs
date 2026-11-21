@@ -418,4 +418,24 @@ public class ServiceDeskTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(1, (await J(await x.Eng.GetAsync("/api/servicedesk/tickets?assetId=" + mine[0].Id))).GetProperty("items").GetArrayLength());
         await Sql("delete from assets.assets where name like 'SDDEV %'");
     }
+
+    [PgFact]
+    public async Task ACustomerTiedToACompanyOnlyThroughAccessMayStillOpenTickets()
+    {
+        // 6.16.0: the company of a customer user is kept by Access (Devices setup › Customers › a company › Users, or set by itself in single-company mode)
+        var x = await Start();
+        var r = await x.Admin.PostAsync("/api/platform/users", Json(new { email = "tied@sd.test", name = "Tied", role = "customer", password = Pw }));
+        var id = (await J(r)).GetProperty("id").GetString()!;
+        Assert.Equal(HttpStatusCode.OK, (await x.Admin.PutAsync("/api/platform/access/user-companies/" + id, Json(new { companyId = x.CoA }))).StatusCode);
+        var tied = await TestSupport.ClientFor(factory, "tied@sd.test", Pw);
+        var me = await J(await tied.GetAsync("/api/servicedesk/me"));
+        Assert.Equal("SD Alpha", me.GetProperty("company").GetString()); Assert.True(me.GetProperty("canRaise").GetBoolean());
+        Assert.Equal(HttpStatusCode.Created, (await tied.PostAsync("/api/servicedesk/tickets", Json(new { subject = "Printer jammed" }))).StatusCode);
+        // the people list shows the same company, and switching off "may open tickets" there still applies
+        var row = (await J(await x.Admin.GetAsync("/api/servicedesk/people"))).EnumerateArray().First(p => p.GetProperty("id").GetString() == id);
+        Assert.Equal(x.CoA, row.GetProperty("companyId").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, (await x.Admin.PutAsync("/api/servicedesk/people/" + id, Json(new { companyId = x.CoA, mayRaise = false, mayModify = true }))).StatusCode);
+        Assert.False((await J(await tied.GetAsync("/api/servicedesk/me"))).GetProperty("canRaise").GetBoolean());
+    }
+
 }

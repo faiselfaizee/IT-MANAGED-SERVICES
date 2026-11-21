@@ -18,12 +18,12 @@ import Software from './Software';
 import Licenses, { LicenseDetail } from './Licenses';
 import { RemoteLog, Repository, Settings } from './Admin';
 import { LIFECYCLE_PAGES, useAssetsLite } from './lite';
-import { People, Stock, Types } from './Peripherals';
+import { Stock, Types } from './Peripherals';
 
 type Nav = { key: string; label: string };
 const MENU: { group: string; items: Nav[] }[] = [
   { group: 'Overview', items: [{ key: 'dashboard', label: 'Dashboard' }] },
-  { group: 'Inventory', items: [{ key: 'list', label: 'All assets' }, { key: 'people', label: 'People' }, { key: 'stock', label: 'Stock' }, { key: 'delete-requests', label: 'Delete requests' }] },
+  { group: 'Inventory', items: [{ key: 'list', label: 'All assets' }, { key: 'stock', label: 'Stock' }, { key: 'delete-requests', label: 'Delete requests' }] },
   { group: 'Software', items: [{ key: 'software', label: 'Installed software' }, { key: 'licenses', label: 'Licences & subscriptions' }] },
   { group: 'Contracts', items: [{ key: 'amc', label: 'AMC' }, { key: 'rentals', label: 'Rentals' }, { key: 'renewals', label: 'Renewals' }, { key: 'vendors', label: 'Vendors' }] },
   { group: 'Agents', items: [{ key: 'commands', label: 'Command repository' }, { key: 'remote-log', label: 'Remote activity' }] },
@@ -37,7 +37,7 @@ export default function AssetsApp() {
   const perms = usePerms('assets'); const amcOk = useAmcAccess(); const parts = useHash(); const [, a, b] = parts;
   // administrators see every page; other people see the pages they may read (a customer administrator sees only assets and companies)
   const approval = useLoad<Rec>('/api/assets/delete-approval');
-  const may = (k: string) => (k !== 'delete-requests' || !!approval.data?.required) && (perms.admin || ['dashboard', 'list', 'people', 'stock', 'reports', 'companies', 'locations', 'vendors', 'renewals', 'duplicates', 'licenses'].includes(k) || (k === 'delete-requests' && (perms.modify || perms.delete)) || (perms.readAll && ['software', 'amc', 'rentals'].includes(k)) || (k === 'amc' && amcOk)); const section = /^\d+$/.test(a ?? '') ? 'list' : a === 'customer' ? 'dashboard' : a ?? 'list';
+  const may = (k: string) => (k !== 'delete-requests' || !!approval.data?.required) && (perms.admin || ['dashboard', 'list', 'stock', 'reports', 'companies', 'locations', 'vendors', 'renewals', 'duplicates', 'licenses'].includes(k) || (k === 'delete-requests' && (perms.modify || perms.delete)) || (perms.readAll && ['software', 'amc', 'rentals'].includes(k)) || (k === 'amc' && amcOk)); const section = /^\d+$/.test(a ?? '') ? 'list' : a === 'customer' ? 'dashboard' : a ?? 'list';
   let page;
   if (/^\d+$/.test(a ?? '')) page = <Detail id={a} tab={b ?? 'overview'} />;
   else if (lite && (a === undefined || a === 'dashboard' || LIFECYCLE_PAGES.includes(a ?? ''))) page = a === undefined ? <List key={location.hash} /> : <p className="muted">This part of Asset management is not in your licence. Customers, logins, agents and the device list are under Administration › Devices setup and Assets › All assets.</p>;
@@ -60,7 +60,6 @@ export default function AssetsApp() {
     case 'duplicates': page = <Duplicates />; break;
     case 'remote-log': page = <RemoteLog />; break;
     case 'commands': page = <Repository />; break;
-    case 'people': page = <People />; break;
     case 'stock': page = <Stock />; break;
     case 'types': page = <Types />; break;
     case 'settings': page = <Settings />; break;

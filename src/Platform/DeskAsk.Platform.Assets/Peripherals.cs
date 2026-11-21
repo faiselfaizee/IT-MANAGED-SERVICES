@@ -288,16 +288,18 @@ public static class PeripheralsApi
             return Results.Ok(new { items = rows });
         }));
 
-        readers(r.MapGet("/api/assets/holder", async (string? name, int? companyId, HttpContext http, ITenantContext t, CancellationToken ct) =>
+        readers(r.MapGet("/api/assets/holder", async (string? name, string? also, int? companyId, HttpContext http, ITenantContext t, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(name)) return Bad("Say whose assets to show.");
             var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             await using var db = await Open(t, ct);
             await using var c = new NpgsqlCommand(@"select a.id, a.tag, a.name, coalesce(t.name, ''), a.serial, a.status, a.warranty_end, a.manufacturer, a.model, a.parent_id, coalesce(p.tag, ''), a.custom, coalesce(t.peripheral, false), a.purchase_date
                 from assets.assets a left join assets.types t on t.id = a.type_id left join assets.assets p on p.id = a.parent_id
-                where lower(a.assigned_to) = lower(@n) and a.status not in ('retired','lost') and (not @sc or a.company_id = any(@scope)) and (@co = 0 or a.company_id = @co)
+                where lower(a.assigned_to) = any(@n) and a.status not in ('retired','lost') and (not @sc or a.company_id = any(@scope)) and (@co = 0 or a.company_id = @co)
                 order by (a.parent_id is not null), coalesce(t.peripheral, false), a.id", db);
-            AssetsAccess.Bind(c, scope); P(c, "n", name.Trim()); P(c, "co", companyId ?? 0);
+            // "also": another name the same person goes by (a user's email next to their name)
+            var names = new[] { name.Trim(), (also ?? "").Trim() }.Where(x => x != "").Select(x => x.ToLowerInvariant()).Distinct().ToArray();
+            AssetsAccess.Bind(c, scope); P(c, "n", names); P(c, "co", companyId ?? 0);
             var rows = new List<object>(); await using var rd = await c.ExecuteReaderAsync(ct);
             while (await rd.ReadAsync(ct))
                 rows.Add(new { id = rd.GetInt64(0), tag = rd.GetString(1), name = rd.GetString(2), type = rd.GetString(3), serial = rd.GetString(4), status = rd.GetString(5), warrantyEnd = Date(rd, 6), manufacturer = rd.GetString(7), model = rd.GetString(8),

@@ -1,7 +1,5 @@
-import PersonInput from './PersonInput';
 import { useState } from 'react';
 import { api, useLoad, type Rec } from '../http';
-import { usePerms } from '../perms';
 import { Act, Badge, Card, Empty, Err, Field, Loading, Modal, fmtDay, useSubmit } from '../ui';
 import { PurchaseFields, purchaseBody } from './Purchase';
 
@@ -97,36 +95,9 @@ export function printSheet(holder: string, company: string, items: Rec[]) {
   w.document.close(); w.focus(); w.print();
 }
 
-/** What each person holds: one list, hand several things back at once, give things from stock, print the sheet. */
-export function People() {
-  const perms = usePerms('assets');
-  const [q, setQ] = useState(''); const [who, setWho] = useState<{ name: string; companyId: number | null; company: string } | null>(null);
-  const [newName, setNewName] = useState(''); const [give, setGive] = useState(false);
-  const holders = useLoad<Rec>(`/api/assets/holders?search=${encodeURIComponent(q)}`, [q]);
-  const directory = useLoad<Rec>(`/api/assets/directory-people?limit=500&search=${encodeURIComponent(q)}`, [q]);
-  // people who hold something, then everyone else the customer's domain controller lists (holding nothing yet)
-  const held = (holders.data?.items ?? []) as Rec[];
-  const key = (n: string, c: number | null) => n.toLowerCase() + '|' + (c ?? '');
-  const known = new Set(held.map((h) => key(h.name, h.companyId)));
-  const others = ((directory.data?.items ?? []) as Rec[]).filter((p) => !known.has(key(p.name, p.companyId)))
-    .map((p) => ({ name: p.name, companyId: p.companyId, company: p.company, assets: 0, accessories: 0, detail: [p.email, p.department].filter(Boolean).join(' · ') }));
-  const list = [...held, ...others];
-  return <>
-    <h1>People</h1>
-    <p className="muted">Everything handed to a person: the laptop, the monitors, the phone. Choose a person to see their items, take several back at once or print the sheet they sign.</p>
-    <div className="tools"><input placeholder="Search people" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search people" />
-      {perms.admin && <><PersonInput placeholder="Give things to someone new (name or email)" value={newName} onChange={setNewName} label="Someone new" />
-        <button disabled={!newName.trim()} onClick={() => { setWho({ name: newName.trim(), companyId: null, company: '' }); setGive(true); }}>Give…</button></>}</div>
-    <Loading loading={holders.loading && !holders.data} error={holders.error} />
-    {holders.data && (list.length === 0 ? <Empty>No one holds anything yet. Set up the customer's domain controller under Devices setup to list their people here.</Empty> : <table><thead><tr><th>Person</th><th>Customer</th><th className="num">Items</th><th className="num">Accessories</th></tr></thead><tbody>
-      {list.map((h, i) => <tr key={i} className={who?.name === h.name && who?.companyId === h.companyId ? 'on' : ''}><td><a href="#/assets/people" onClick={(e) => { e.preventDefault(); setWho({ name: h.name, companyId: h.companyId, company: h.company }); }}>{h.name}</a>{h.detail && <div className="muted">{h.detail}</div>}</td><td>{h.company}</td><td className="num">{h.assets}</td><td className="num">{h.accessories}</td></tr>)}</tbody></table>)}
-    {who && <Holder key={who.name + who.companyId} who={who} admin={!!perms.admin} onChanged={holders.reload} onGive={() => setGive(true)} />}
-    {give && who && <Give to={who.name} companyId={who.companyId} onClose={(ch) => { setGive(false); if (ch) { holders.reload(); setWho({ ...who }); } }} />}
-  </>;
-}
-
-function Holder({ who, admin, onChanged, onGive }: { who: { name: string; companyId: number | null; company: string }; admin: boolean; onChanged: () => void; onGive: () => void }) {
-  const { data, error, loading, reload } = useLoad<Rec>(`/api/assets/holder?name=${encodeURIComponent(who.name)}${who.companyId ? `&companyId=${who.companyId}` : ''}`, [who.name, who.companyId]);
+/** What one person holds; `also` is another name they go by (a user's email), so things handed out under either are found. */
+export function Holder({ who, admin, onChanged, onGive }: { who: { name: string; companyId: number | null; company: string; also?: string }; admin: boolean; onChanged: () => void; onGive: () => void }) {
+  const { data, error, loading, reload } = useLoad<Rec>(`/api/assets/holder?name=${encodeURIComponent(who.name)}${who.also ? `&also=${encodeURIComponent(who.also)}` : ''}${who.companyId ? `&companyId=${who.companyId}` : ''}`, [who.name, who.also, who.companyId]);
   const items = (data?.items ?? []) as Rec[]; const [sel, setSel] = useState<Set<number>>(new Set()); const [msg, setMsg] = useState('');
   const toggle = (id: number) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const back = async () => {
@@ -148,7 +119,7 @@ function Holder({ who, admin, onChanged, onGive }: { who: { name: string; compan
 }
 
 /** Hand things from stock to a person. */
-function Give({ to, companyId, onClose }: { to: string; companyId: number | null; onClose: (changed: boolean) => void }) {
+export function Give({ to, companyId, onClose }: { to: string; companyId: number | null; onClose: (changed: boolean) => void }) {
   const [q, setQ] = useState(''); const [sel, setSel] = useState<Set<number>>(new Set());
   const found = useLoad<Rec>(`/api/assets?search=${encodeURIComponent(q)}&status=stock&take=40${companyId ? `&company=${companyId}` : ''}`, [q, companyId]);
   const items = ((found.data?.items ?? []) as Rec[]).filter((a) => !a.assignedTo);

@@ -113,6 +113,15 @@ public sealed class AccessService : IAccess
         await c.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<IReadOnlyDictionary<Guid, int>> UserCompaniesAsync(CancellationToken ct = default)
+    {
+        await using var db = await Open(ct);
+        await using var c = new NpgsqlCommand("select user_id, company_id from access.user_companies", db);
+        var o = new Dictionary<Guid, int>(); await using var rd = await c.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct)) o[rd.GetGuid(0)] = rd.GetInt32(1);
+        return o;
+    }
+
     public async Task<bool> AllowedAsync(ClaimsPrincipal user, string module, string action, int? companyId = null, CancellationToken ct = default)
     {
         var scope = await ScopeAsync(user, module, action, ct);

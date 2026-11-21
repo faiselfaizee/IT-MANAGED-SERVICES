@@ -3,7 +3,7 @@ import Detail from './Detail';
 import List from './List';
 import Dashboard from './Dashboard';
 import NewTicket from './NewTicket';
-import { People, Settings } from './Admin';
+import { Settings } from './Admin';
 import Integrations from './Integrations';
 import Reports from './Reports';
 import { ChangeDetail, ChangeList, NewChange } from './Changes';
@@ -37,7 +37,6 @@ export default function ServiceDeskApp() {
   else if (a === 'settings' && admin) page = <Settings />;
   else if (a === 'reports' && (sees || m?.role === 'cadmin')) page = <Reports staff={sees} />;
   else if (a === 'connections' && admin) page = <Integrations />;
-  else if (a === 'people' && admin) page = <People />;
   else if (a === 'all' || !sees) page = m?.customer ? <MyTickets key="mine" me={m} /> : <List key="all" me={m} />;
   else page = <Dashboard />;
   const menu: { group: string; items: [string, string, boolean][] }[] = [
@@ -48,7 +47,7 @@ export default function ServiceDeskApp() {
     { group: 'Problems', items: [['problems', 'Problems', sees], ['known-errors', 'Known errors', sees]] },
     { group: 'Changes', items: [['changes', 'Changes', sees], ['calendar', 'Change calendar', sees], ['standard', 'Standard changes', sees]] },
     { group: 'Reports', items: [['reports', 'Desk reports', sees || m?.role === 'cadmin']] },
-    { group: 'Settings', items: [['catalog-items', 'Catalogue items', admin], ['cab', 'Change board', admin], ['connections', 'Connections', admin], ['people', 'People', admin], ['settings', 'Settings', admin]] },
+    { group: 'Settings', items: [['catalog-items', 'Catalogue items', admin], ['cab', 'Change board', admin], ['connections', 'Connections', admin], ['settings', 'Settings', admin]] },
   ];
   const section = isId ? '' : a ?? '';
   return <>

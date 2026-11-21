@@ -62,8 +62,9 @@ public static class SettingsApi
         }));
 
         // ---- people who may raise tickets for a company
-        admin(r.MapGet("/api/servicedesk/people", async (ITenantContext t, IUserDirectory users, ICompanyDirectory companies, CancellationToken ct) =>
+        admin(r.MapGet("/api/servicedesk/people", async (ITenantContext t, IUserDirectory users, ICompanyDirectory companies, IAccess access, CancellationToken ct) =>
         {
+            var tied = await access.UserCompaniesAsync(ct);
             await using var db = await Open(t, ct);
             var rows = new Dictionary<Guid, (int? Company, bool Raise, bool Modify)>();
             await using (var c = new NpgsqlCommand("select user_id, company_id, may_raise, may_modify from servicedesk.people", db))
@@ -73,7 +74,8 @@ public static class SettingsApi
             return Results.Ok((await users.ListAsync(ct)).Where(x => x.Role is "customer" or "cadmin").Select(x =>
             {
                 rows.TryGetValue(x.Id, out var p);
-                return new { id = x.Id, name = x.Name, email = x.Email, role = x.Role, active = x.Active, companyId = p.Company, company = p.Company is int i && names.TryGetValue(i, out var n) ? n : null, mayRaise = rows.ContainsKey(x.Id) ? p.Raise : true, mayModify = rows.ContainsKey(x.Id) ? p.Modify : true };
+                int? co = tied.TryGetValue(x.Id, out var tc) ? tc : p.Company;
+                return new { id = x.Id, name = x.Name, email = x.Email, role = x.Role, active = x.Active, companyId = co, company = co is int i && names.TryGetValue(i, out var n) ? n : null, mayRaise = rows.ContainsKey(x.Id) ? p.Raise : true, mayModify = rows.ContainsKey(x.Id) ? p.Modify : true };
             }));
         }));
 

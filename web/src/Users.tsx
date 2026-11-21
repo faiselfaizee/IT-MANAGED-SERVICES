@@ -8,18 +8,25 @@ const ROLES: [string, string][] = [
   ['cadmin', 'Customer administrator'], ['customer', 'Customer'],
 ];
 const roleName = (r: string) => ROLES.find(([k]) => k === r)?.[1] ?? r;
+/** Administration › Users is for your own team; customer administrators and employees are kept on each company (Devices setup › Customers › a company › Users). */
+const STAFF = ROLES.filter(([k]) => k === 'admin' || k === 'engineer' || k === 'viewer');
+const isStaff = (r: string) => STAFF.some(([k]) => k === r);
+/** The choices for "role of new people", keeping an older saved customer role visible until it is changed. */
+const newPeopleRoles = (cur: string) => [...STAFF.filter(([k]) => k !== 'admin'), ...ROLES.filter(([k]) => k === cur && !isStaff(k))];
 
 export default function Users({ meId, embedded = false }: { meId?: string; embedded?: boolean }) {
   const { data, error, loading, reload } = useLoad<Rec[]>('/api/platform/users');
   const [form, setForm] = useState<Rec | null>(null); const [pw, setPw] = useState<Rec | null>(null); const [sso, setSso] = useState<'' | 'settings' | 'import' | 'adsettings' | 'adimport' | 'gsettings' | 'gimport'>('');
-  const list = Array.isArray(data) ? data : [];
+  const all = Array.isArray(data) ? data : []; const list = all.filter((u) => isStaff(u.role)); const customers = all.length - list.length;
+  const one = useSingleCompany();
   return <>
     {embedded ? null : <h1>Users</h1>}
     <div className="tools"><button className="primary" onClick={() => setForm({ email: '', name: '', role: 'engineer', password: '' })}>Add user</button>
       <button onClick={() => setSso('import')}>Import from Microsoft</button><button onClick={() => setSso('settings')}>Microsoft sign-in…</button>
       <button onClick={() => setSso('gimport')}>Import from Google</button><button onClick={() => setSso('gsettings')}>Google sign-in…</button>
       <button onClick={() => setSso('adimport')}>Import from Active Directory</button><button onClick={() => setSso('adsettings')}>Active Directory…</button>
-      <span className="muted">Staff sign in as administrator, engineer or viewer. Customer users see only their own company's tickets.</span></div>
+      <span className="muted">Your team: administrators, engineers and viewers, and how they sign in.</span></div>
+    <p className="muted" role="note">{one ? 'Your employees' : 'Customer administrators and employees'} are added under <a href={one ? '#/setup/company' : '#/setup/companies'}>Devices setup › {one ? 'Our organisation' : 'Customers › a company'} › Users</a>{customers > 0 ? ` (${customers} today)` : ''}.</p>
     <Loading loading={loading && !data} error={error} />
     {data && (list.length === 0 ? <Empty>No users yet.</Empty> : <table><thead><tr><th>Name</th><th>Role</th><th>Two-step</th><th>Status</th><th /></tr></thead><tbody>
       {list.map((u) => <tr key={u.id}>
@@ -58,7 +65,7 @@ function UserForm({ init, self, onClose }: { init: Rec; self: boolean; onClose: 
   return <Modal title={isNew ? 'Add user' : 'Edit user'} onClose={() => onClose(false)}><div className="form">
     <Field label="Name"><input value={v.name} onChange={(e) => set('name', e.target.value)} autoFocus /></Field>
     <Field label="Email"><input type="email" value={v.email} disabled={!isNew} onChange={(e) => set('email', e.target.value)} /></Field>
-    <Field label="Role"><select value={v.role} disabled={self} onChange={(e) => set('role', e.target.value)}>{ROLES.filter(([k]) => !(one && k === 'cadmin')).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
+    <Field label="Role"><select value={v.role} disabled={self} onChange={(e) => set('role', e.target.value)}>{(isStaff(init.role ?? 'engineer') ? STAFF : ROLES).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
     {cust && !one && <Field label="Company"><select value={company} onChange={(e) => setCo(e.target.value)}><option value="">Not linked yet</option>{list.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>}
     {cust && !one && !cos.loading && list.length === 0 && <p className="muted">There are no companies yet. Add them in Assets, Companies, then link this person here or in Service Desk, Customer users. Until a person is linked to a company they cannot open tickets.</p>}
     {isNew && <Field label="Password (at least 10 characters)"><input type="password" autoComplete="new-password" value={v.password} onChange={(e) => set('password', e.target.value)} /></Field>}
@@ -98,7 +105,7 @@ function SsoForm({ init, onClose }: { init: Rec; onClose: () => void }) {
     <Field label={init.hasSecret ? 'Client secret (saved; type a new one to replace it)' : 'Client secret'}><input type="password" value={v.secret} onChange={(e) => set('secret', e.target.value)} autoComplete="new-password" /></Field>
     <label><input type="checkbox" checked={v.autoCreate} onChange={(e) => set('autoCreate', e.target.checked)} /> Create an account at first sign-in for people who have none</label>
     {v.autoCreate && <div className="row"><Field label="Only these email domains (blank: any in the directory)"><input value={v.domains} onChange={(e) => set('domains', e.target.value)} placeholder="acme.com, acme.in" /></Field>
-      <Field label="Role of new people"><select value={v.defaultRole} onChange={(e) => set('defaultRole', e.target.value)}>{ROLES.filter(([k]) => k !== 'admin').map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field></div>}
+      <Field label="Role of new people"><select value={v.defaultRole} onChange={(e) => set('defaultRole', e.target.value)}>{newPeopleRoles(v.defaultRole).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field></div>}
     <label><input type="checkbox" checked={v.enabled} onChange={(e) => set('enabled', e.target.checked)} /> Show "Sign in with Microsoft" on the sign-in page</label>
     <p className="muted small">People are matched by their Microsoft email. Microsoft's own sign-in, including its multi-factor step, replaces the two-step code of DeskAsk for them. Password sign-in keeps working.</p>
     {note && <p className="note" role="status">{note}</p>}
@@ -125,7 +132,7 @@ function GoogleForm({ init, onClose }: { init: Rec; onClose: () => void }) {
     <Field label={init.hasSecret ? 'Client secret (saved; type a new one to replace it)' : 'Client secret'}><input type="password" value={v.secret} onChange={(e) => set('secret', e.target.value)} autoComplete="new-password" /></Field>
     <Field label="Workspace domains allowed to sign in (blank: any Google account that already has a DeskAsk account)"><input value={v.domains} onChange={(e) => set('domains', e.target.value)} placeholder="acme.com, acme.in" /></Field>
     <label><input type="checkbox" checked={v.autoCreate} onChange={(e) => set('autoCreate', e.target.checked)} /> Create an account at first sign-in for people of these domains who have none</label>
-    {v.autoCreate && <Field label="Role of new people"><select value={v.defaultRole} onChange={(e) => set('defaultRole', e.target.value)}>{ROLES.filter(([k]) => k !== 'admin').map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>}
+    {v.autoCreate && <Field label="Role of new people"><select value={v.defaultRole} onChange={(e) => set('defaultRole', e.target.value)}>{newPeopleRoles(v.defaultRole).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>}
     <h3 style={{ margin: '6px 0 0', fontSize: 14 }}>Importing users (optional)</h3>
     <p className="muted small">Create a service account in the same project, turn on the Admin SDK API, and download a JSON key. In the Google Admin console (Security › API controls › Domain-wide delegation) add the service account's client id with the scope <code>https://www.googleapis.com/auth/admin.directory.user.readonly</code>.</p>
     <Field label={init.serviceAccount ? `Service account key (saved: ${init.serviceAccount}; choose a new file to replace it)` : 'Service account key (JSON file)'}><input type="file" accept=".json,application/json" onChange={(e) => readFile(e.target.files?.[0])} /></Field>
@@ -155,7 +162,7 @@ function ImportEntra({ onClose, base = '/api/platform/sso/entra', title = 'Impor
           {items.length === 0 && <p className="muted">Nobody found.</p>}
           {items.map((u) => <label key={u.id} style={{ display: 'block' }}><input type="checkbox" disabled={u.exists} checked={sel.has(u.id)} onChange={() => pick(u)} /> {u.name} <span className="muted">{u.email}</span> {u.exists && <Badge tone="ok">has an account</Badge>} {u.guest && <Badge>guest</Badge>} {!u.enabled && <Badge tone="bad">disabled in Microsoft</Badge>}</label>)}
         </div>
-        <Field label={`Role for the ${sel.size} chosen`}><select value={role} onChange={(e) => setRole(e.target.value)}>{ROLES.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
+        <Field label={`Role for the ${sel.size} chosen`}><select value={role} onChange={(e) => setRole(e.target.value)}>{STAFF.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
         <p className="muted small">Imported people sign in with their directory account. For customer roles, link the person to a company afterwards (Edit).</p>
         <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button>
           <button className="primary" disabled={f.busy || sel.size === 0} onClick={() => f.submit(async () => { const r = await api<Rec>(`${base}/import`, { body: { role, users: ((data.items ?? []) as Rec[]).filter((u) => sel.has(u.id)) } }); setDone(`${r.created} added, ${r.linked} linked, ${r.skipped} skipped.`); })}>Import {sel.size}</button></div></>}
