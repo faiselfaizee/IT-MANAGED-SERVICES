@@ -21,6 +21,7 @@ A limit is written `module:limit=number`; several limits of one module are joine
 |---|---|---|---|
 | assets | `max_assets` | assets in service (not retired or lost) | adding by hand, CSV import, discovery and automatic agent installs stop; bringing a retired asset back is refused |
 | assets | `customer_write=1` | (a switch) | customer administrators may be given more than read access |
+| assets, monitoring or servicedesk | `single_company=1` | (a switch, 6.9.0) | **single-company mode** for an organisation that runs its own IT: its own name is the one company (made automatically) and a second company is refused (409 `single_company`). `GET /api/platform/mode` tells the web. Set it on a product size in the Vendor console (Price list › Add a size › "What it allows": `max_assets=100, single_company=1`), so end-customer plans carry it and MSP plans do not |
 | monitoring | `max_devices` | assets with "Monitor this asset" on, in service | the oldest devices up to the limit are watched, the rest are not (the Monitoring dashboard says how many); switching monitoring on for more is refused |
 | servicedesk | `agents` | active administrators and engineers | adding, importing or promoting another administrator or engineer is refused, and so is creation at first Microsoft or Google sign-in with such a role; viewers and customer users are not counted |
 | adsuite | `max_domains` | AD domains | adding another domain is refused |

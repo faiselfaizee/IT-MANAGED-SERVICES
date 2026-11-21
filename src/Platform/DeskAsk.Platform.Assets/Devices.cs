@@ -249,10 +249,16 @@ public static class AssetsDevice
         var amcEdit = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin", "cadmin")).RequireFoundation();
 
         // ---------------------------------------------------------------- companies
-        scoped(r.MapGet("/api/assets/companies", async (HttpContext http, ITenantContext t, CancellationToken ct) =>
+        scoped(r.MapGet("/api/assets/companies", async (HttpContext http, ITenantContext t, IEntitlements ent, CancellationToken ct) =>
         {
             var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             await using var db = await Open(t, ct);
+            // single-company mode: the customer's own name is the one company, made the first time it is needed
+            if ((await ent.CurrentAsync(ct)).SingleCompany)
+            {
+                await using var one = new NpgsqlCommand("insert into assets.companies (name) select @n where not exists (select 1 from assets.companies) on conflict do nothing", db); P(one, "n", t.Require().Name.Length > 120 ? t.Require().Name[..120] : t.Require().Name);
+                await one.ExecuteNonQueryAsync(ct);
+            }
             await using var c = new NpgsqlCommand(@"select c.id, c.name, c.code, c.contact_name, c.contact_email, c.phone, c.address, c.notes, c.status, c.remote_allowed,
                 (select count(*) from assets.assets a where a.company_id = c.id), c.renewal_to from assets.companies c where (not @sc or c.id = any(@scope)) order by lower(c.name)", db).Scoped(scope);
             var rows = new List<object>(); await using var rd = await c.ExecuteReaderAsync(ct);
@@ -290,7 +296,15 @@ public static class AssetsDevice
             }
             catch (PostgresException e) when (e.SqlState == "23505") { return Results.Conflict(new { error = "company_exists" }); }
         }
-        admin(r.MapPost("/api/assets/companies", (JsonElement body, ITenantContext t, IAuditLog audit, CancellationToken ct) => SaveCompany(null, body, t, audit, ct)));
+        admin(r.MapPost("/api/assets/companies", async (JsonElement body, ITenantContext t, IEntitlements ent, IAuditLog audit, CancellationToken ct) =>
+        {
+            if ((await ent.CurrentAsync(ct)).SingleCompany)
+            {
+                await using var db = await Open(t, ct); await using var n = new NpgsqlCommand("select count(*) from assets.companies", db);
+                if ((long)(await n.ExecuteScalarAsync(ct))! >= 1) return Results.Json(new { error = "single_company", detail = "This plan is for one company. Your organisation is the one company; a second cannot be added." }, statusCode: 409);
+            }
+            return await SaveCompany(null, body, t, audit, ct);
+        }));
         admin(r.MapPut("/api/assets/companies/{id:int}", (int id, JsonElement body, ITenantContext t, IAuditLog audit, CancellationToken ct) => SaveCompany(id, body, t, audit, ct)));
         admin(r.MapDelete("/api/assets/companies/{id:int}", async (int id, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
         {

@@ -89,6 +89,9 @@ public sealed record License(LicenseState State, LicensePayload? Payload, string
     public bool ReadOnly(string module) => State == LicenseState.Expired && Payload != null && Payload.Modules.ContainsKey(module);
     public int? Limit(string module, string name) =>
         Has(module) && Payload!.Modules[module].Limits is { } l && l.TryGetValue(name, out var v) ? v : null;
+    /// <summary>Single-company mode (a plan for an organisation that runs its own IT): the customer's own name is the one company, and no second company can be added.
+    /// Set by `single_company=1` on any licensed module.</summary>
+    public bool SingleCompany => InForce && Payload != null && Payload.Modules.Values.Any(m => m.Limits is { } l && l.TryGetValue(LicenseLimits.SingleCompany, out var v) && v == 1);
 }
 
 /// <summary>
@@ -102,10 +105,11 @@ public static class LicenseLimits
     public const string Agents = "agents";                 // servicedesk: active staff accounts (administrators and engineers)
     public const string MaxDomains = "max_domains";        // adsuite: AD domains
     public const string MaxUsers = "max_users";            // vault: people who have set up the Vault
+    public const string SingleCompany = "single_company";  // any module: 1 = single-company mode (a switch, not a count)
     /// <summary>Every limit the licence tool accepts, by module.</summary>
     public static readonly Dictionary<string, string[]> Known = new()
     {
-        [Modules.Assets] = new[] { MaxAssets, "customer_write" }, [Modules.Monitoring] = new[] { MaxDevices }, [Modules.ServiceDesk] = new[] { Agents },
+        [Modules.Assets] = new[] { MaxAssets, "customer_write", SingleCompany }, [Modules.Monitoring] = new[] { MaxDevices, SingleCompany }, [Modules.ServiceDesk] = new[] { Agents, SingleCompany },
         [Modules.AdSuite] = new[] { MaxDomains }, [Modules.Vault] = new[] { MaxUsers }, [Modules.Backup] = new[] { MaxDevices },
     };
 }
