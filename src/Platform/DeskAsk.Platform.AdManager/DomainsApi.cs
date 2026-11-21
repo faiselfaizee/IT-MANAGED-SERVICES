@@ -128,7 +128,7 @@ internal static class DomainsApi
         }), key);
 
         // Try the connection: the service account signs in, the base DN is found, and the controller answers.
-        AdModule.AdminOnly(r.MapPost("/api/adsuite/domains/{id:int}/test", async (int id, ITenantContext t, IDataProtectionProvider dp, IControllerRelay relay, IAuditLog audit, CancellationToken ct) =>
+        async Task<IResult> TestDomain(int id, ITenantContext t, IDataProtectionProvider dp, IControllerRelay relay, IAuditLog audit, CancellationToken ct)
         {
             await using var db = await AdModule.Open(t, ct);
             var d = await Dir.LoadAsync(db, dp, t, id, ct); if (d == null) return Results.NotFound();
@@ -144,7 +144,8 @@ internal static class DomainsApi
             await using (var c = new NpgsqlCommand("update adsuite.domains set last_ok = case when @e = '' then now() else last_ok end, last_error = @e where id = @i", db)) { AdModule.P(c, "e", AdModule.Clip(error, 500)); AdModule.P(c, "i", id); await c.ExecuteNonQueryAsync(ct); }
             await audit.WriteAsync("adsuite.domain.test", d.Name, error ?? "ok", null, ct);
             return Results.Ok(new { ok = error == null, error, hint, server, host, namingContext = context, tls = d.Tls, tlsProblem = tlsKind, cert, trusted = d.CertSha256 });
-        }), key);
+        }
+        AdModule.AdminOnly(r.MapPost("/api/adsuite/domains/{id:int}/test", (int id, ITenantContext t, IDataProtectionProvider dp, IControllerRelay relay, IAuditLog audit, CancellationToken ct) => TestDomain(id, t, dp, relay, audit, ct)), key);
 
         // Trust exactly the certificate the domain controller showed (its SHA-256), whatever its name or issuer; empty to check it normally again.
         AdModule.AdminOnly(r.MapPost("/api/adsuite/domains/{id:int}/trust", async (int id, JsonElement body, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
@@ -157,6 +158,69 @@ internal static class DomainsApi
             await audit.WriteAsync(fp == "" ? "adsuite.domain.untrust" : "adsuite.domain.trust", name, fp, null, ct);
             return Results.Ok(new { ok = true });
         }), key);
+
+        // ---------------------------------------------------------------- the customer's domain controller, set up from Devices setup (Assets or Monitoring is enough)
+        RouteHandlerBuilder Setup(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireFoundation();
+
+        async Task<int?> DomainOf(NpgsqlConnection db, int companyId, CancellationToken ct)
+        {
+            await using var c = new NpgsqlCommand("select id from adsuite.domains where company_id = @co order by id limit 1", db); AdModule.P(c, "co", companyId);
+            return await c.ExecuteScalarAsync(ct) as int?;
+        }
+
+        Setup(r.MapGet("/api/directory/companies/{companyId:int}", async (int companyId, ITenantContext t, IControllerRelay relay, CancellationToken ct) =>
+        {
+            await using var db = await AdModule.Open(t, ct);
+            object? domain = null;
+            await using (var c = new NpgsqlCommand("select id, name, base_dn, servers, tls, bind_dn, controller_id, enabled, last_ok, last_error, people_synced_at, people_count, people_error from adsuite.domains where company_id = @co order by id limit 1", db))
+            {
+                AdModule.P(c, "co", companyId);
+                await using var rd = await c.ExecuteReaderAsync(ct);
+                if (await rd.ReadAsync(ct))
+                    domain = new
+                    {
+                        id = rd.GetInt32(0), name = rd.GetString(1), baseDn = rd.GetString(2), servers = rd.GetString(3), tls = rd.GetBoolean(4), bindDn = rd.GetString(5), controllerId = rd.GetString(6), enabled = rd.GetBoolean(7),
+                        lastOk = rd.IsDBNull(8) ? (DateTime?)null : rd.GetDateTime(8), lastError = rd.GetString(9), syncedAt = rd.IsDBNull(10) ? (DateTime?)null : rd.GetDateTime(10), people = rd.GetInt32(11), syncError = rd.GetString(12),
+                    };
+            }
+            var ctrls = (await relay.ControllersAsync(ct)).Where(c => c.CompanyId == null || c.CompanyId == companyId).Select(c => new { id = c.Id, name = c.Name, online = c.Online });
+            return Results.Ok(new { domain, controllers = ctrls });
+        }));
+
+        // saves the one domain controller of this customer (the password is only needed the first time or when it changes)
+        Setup(r.MapPut("/api/directory/companies/{companyId:int}", async (int companyId, JsonElement body, ClaimsPrincipal u, ITenantContext t, IDataProtectionProvider dp, ICompanyDirectory co, IControllerRelay rl, IAuditLog a, CancellationToken ct) =>
+        {
+            if (body.ValueKind != JsonValueKind.Object) return AdModule.Bad("bad_input", "Send the domain controller details.");
+            var node = System.Text.Json.Nodes.JsonNode.Parse(body.GetRawText())!.AsObject();
+            node["companyId"] = companyId;
+            if (string.IsNullOrWhiteSpace(node["name"]?.ToString())) node["name"] = "Domain controller";
+            await using var db = await AdModule.Open(t, ct);
+            var existing = await DomainOf(db, companyId, ct);
+            return await Save(existing, JsonSerializer.SerializeToElement(node), u, t, dp, co, rl, a, ct);
+        }));
+
+        Setup(r.MapPost("/api/directory/companies/{companyId:int}/test", async (int companyId, ITenantContext t, IDataProtectionProvider dp, IControllerRelay relay, IAuditLog audit, CancellationToken ct) =>
+        {
+            await using var db = await AdModule.Open(t, ct);
+            return await DomainOf(db, companyId, ct) is int id ? await TestDomain(id, t, dp, relay, audit, ct) : Results.NotFound();
+        }));
+
+        Setup(r.MapPost("/api/directory/companies/{companyId:int}/sync", async (int companyId, ITenantContext t, IDataProtectionProvider dp, IControllerRelay relay, IDirectoryPeople people, IAuditLog audit, CancellationToken ct) =>
+        {
+            await using var db = await AdModule.Open(t, ct);
+            var res = await PeopleSync.SyncCompanyAsync(db, companyId, dp, t, relay, people, ct);
+            await audit.WriteAsync("directory.sync", "company " + companyId, res.Ok ? res.Count + " people" : res.Error, null, ct);
+            return Results.Ok(new { ok = res.Ok, count = res.Count, error = res.Error });
+        }));
+
+        Setup(r.MapDelete("/api/directory/companies/{companyId:int}", async (int companyId, ITenantContext t, IDirectoryPeople people, IAuditLog audit, CancellationToken ct) =>
+        {
+            await using var db = await AdModule.Open(t, ct);
+            await using (var c = new NpgsqlCommand("delete from adsuite.domains where company_id = @co", db)) { AdModule.P(c, "co", companyId); if (await c.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound(); }
+            await people.ReplaceAsync(companyId, Array.Empty<DirectoryPerson>(), ct);
+            await audit.WriteAsync("directory.removed", "company " + companyId, "", null, ct);
+            return Results.NoContent();
+        }));
 
         AdModule.AdminOnly(r.MapGet("/api/adsuite/controllers", async (int? companyId, IControllerRelay relay, CancellationToken ct) =>
             Results.Ok((await relay.ControllersAsync(ct)).Where(c => companyId == null || c.CompanyId == null || c.CompanyId == companyId).Select(c => new { id = c.Id, name = c.Name, companyId = c.CompanyId, online = c.Online, version = c.Version }))), key);

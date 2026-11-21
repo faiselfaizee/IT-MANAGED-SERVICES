@@ -18,6 +18,16 @@ public interface ITenantCatalog
     Task<IReadOnlyList<TenantInfo>> ListActiveAsync(CancellationToken ct = default);
 }
 
+/// <summary>A person read from a customer's domain controller. Key is the account name, unique inside the customer.</summary>
+public sealed record DirectoryPerson(string Key, string Name, string Email, string Upn, string Department, string Title, bool Enabled);
+
+/// <summary>The people pulled from customers' domain controllers, kept by the Assets module so they can be listed and chosen when assets are handed out.</summary>
+public interface IDirectoryPeople
+{
+    /// <summary>Makes the customer's list exactly the people given (added, changed, removed).</summary>
+    Task ReplaceAsync(int companyId, IReadOnlyList<DirectoryPerson> people, CancellationToken ct = default);
+}
+
 /// <summary>A customer's own web address (desk.example.com) next to the built-in one. Token is what the customer puts in DNS to prove the address is theirs.</summary>
 public sealed record DomainRef(string Host, string Token, bool Verified, bool Primary, DateTime? VerifiedAt);
 
