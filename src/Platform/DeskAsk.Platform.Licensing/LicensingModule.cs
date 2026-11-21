@@ -205,6 +205,9 @@ public sealed class LicensingModule : IPlatformModule
             return Results.Ok(Modules.All.Select(m => new { key = m, licensed = l.Has(m), readOnly = l.ReadOnly(m) }));
         }).RequireAuthorization();
 
+        // single-company mode: the web hides everything about several customer companies while this is true
+        r.MapGet("/api/platform/mode", async (IEntitlements e, CancellationToken ct) => Results.Ok(new { singleCompany = (await e.CurrentAsync(ct)).SingleCompany })).RequireAuthorization();
+
         r.MapGet("/api/platform/license/check/{module}", async (string module, IEntitlements e, CancellationToken ct) =>
             (await e.CurrentAsync(ct)).Has(module) ? Results.Ok(new { licensed = true }) : Results.Json(new { error = "module_not_licensed", module }, statusCode: 402)).RequireAuthorization();
 

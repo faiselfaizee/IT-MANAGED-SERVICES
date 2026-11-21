@@ -105,3 +105,7 @@ Vendor console › Business details has an **Invoice design** card with the same
 - **Later upgrade:** when the customer adds Asset management, the same agents already report; nothing is reinstalled.
 - **No duplicates:** an agent enrolling takes over a device a site controller already added when exactly one unclaimed device has the same network adapter (MAC); with several candidates it adds the device and leaves them to the Duplicates page.
 - **Monitoring-only screens:** Assets shows as "Devices" with the device list, locations, kinds and settings; Asset management tabs (services, commands, shell, remote) are hidden.
+
+## End-customer plans: single-company mode (6.9.0)
+
+A size can carry `single_company=1` (Add a size › What it allows, for example `max_assets=100, single_company=1`). A tenant bought with such a size runs in single-company mode: the customer's own name is the one company, a second company is refused, and (from the next releases) the screens about several customers are hidden. Create separate end-customer sizes with this switch; MSP sizes leave it out. The tenant administrator cannot change it. Plan: `claude/single-company-mode-and-custom-domain-plan-2026-11-21` in the project.
