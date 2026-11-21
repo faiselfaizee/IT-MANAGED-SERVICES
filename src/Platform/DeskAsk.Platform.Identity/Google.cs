@@ -28,9 +28,10 @@ public sealed record GoogleConfig(bool Enabled, string ClientId, string Secret, 
     public bool Ready => Enabled && ClientId != "" && Secret != "";
     public string[] DomainList => Domains.Split(new[] { ',', ';', ' ', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim().TrimStart('@').ToLowerInvariant()).Distinct().ToArray();
 
-    public static async Task<GoogleConfig> LoadAsync(ISettings s, IDataProtectionProvider dp, CancellationToken ct)
+    /// <summary>The installation's own setup (company null) or one customer company's.</summary>
+    public static async Task<GoogleConfig> LoadAsync(ISettings s, IDataProtectionProvider dp, CancellationToken ct, int? company = null)
     {
-        var raw = await s.GetAsync(Key, ct);
+        var raw = await s.GetAsync(CompanySso.KeyFor(Key, company), ct);
         if (string.IsNullOrWhiteSpace(raw)) return None;
         try
         {
@@ -43,10 +44,10 @@ public sealed record GoogleConfig(bool Enabled, string ClientId, string Secret, 
         catch (JsonException) { return None; }
     }
 
-    public Task SaveAsync(ISettings s, IDataProtectionProvider dp, CancellationToken ct)
+    public Task SaveAsync(ISettings s, IDataProtectionProvider dp, CancellationToken ct, int? company = null)
     {
         string Seal(string x) => x == "" ? "" : dp.CreateProtector(Purpose).Protect(x);
-        return s.SetAsync(Key, JsonSerializer.Serialize(new { enabled = Enabled, clientId = ClientId, secret = Seal(Secret), domains = Domains, autoCreate = AutoCreate, defaultRole = DefaultRole,
+        return s.SetAsync(CompanySso.KeyFor(Key, company), JsonSerializer.Serialize(new { enabled = Enabled, clientId = ClientId, secret = Seal(Secret), domains = Domains, autoCreate = AutoCreate, defaultRole = DefaultRole,
             serviceAccount = Seal(ServiceAccount), adminEmail = AdminEmail }), ct);
     }
 }
@@ -105,18 +106,19 @@ public static class GoogleSso
 
     public static void Map(IEndpointRouteBuilder r)
     {
-        r.MapGet("/account/sso/google", async (HttpContext http, ISettings st, IDataProtectionProvider dp, IConfiguration cfg, string? returnUrl) =>
+        r.MapGet("/account/sso/google", async (HttpContext http, ISettings st, IDataProtectionProvider dp, IConfiguration cfg, string? returnUrl, int? company, string? hint) =>
         {
-            var c = await GoogleConfig.LoadAsync(st, dp, http.RequestAborted);
+            var c = await GoogleConfig.LoadAsync(st, dp, http.RequestAborted, company);
             if (!c.Ready) return Error("Sign in with Google is not switched on.");
             var state = SsoEndpoints.B64(RandomNumberGenerator.GetBytes(24)); var nonce = SsoEndpoints.B64(RandomNumberGenerator.GetBytes(24)); var verifier = SsoEndpoints.B64(RandomNumberGenerator.GetBytes(48));
-            var saved = dp.CreateProtector("identity.gsso.state").Protect(JsonSerializer.Serialize(new { state, nonce, verifier, ret = IdentityModule.LocalOrRoot(returnUrl), exp = DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds() }));
+            var saved = dp.CreateProtector("identity.gsso.state").Protect(JsonSerializer.Serialize(new { state, nonce, verifier, ret = IdentityModule.LocalOrRoot(returnUrl), co = company, exp = DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds() }));
             http.Response.Cookies.Append(StateCookie, saved, new CookieOptions { HttpOnly = true, Secure = http.Request.IsHttps, SameSite = SameSiteMode.Lax, MaxAge = TimeSpan.FromMinutes(10), Path = "/account/sso" });
             var challenge = SsoEndpoints.B64(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
             var domains = c.DomainList;
             var url = $"{Accounts(cfg)}/o/oauth2/v2/auth?client_id={Uri.EscapeDataString(c.ClientId)}&response_type=code&redirect_uri={Uri.EscapeDataString(Callback(http))}"
                 + $"&scope={Uri.EscapeDataString("openid email profile")}&state={state}&nonce={nonce}&code_challenge={challenge}&code_challenge_method=S256&prompt=select_account"
-                + (domains.Length == 1 ? "&hd=" + Uri.EscapeDataString(domains[0]) : "");
+                + (domains.Length == 1 ? "&hd=" + Uri.EscapeDataString(domains[0]) : "")
+                + (hint is { Length: > 3 and < 321 } h && h.Contains('@') ? "&login_hint=" + Uri.EscapeDataString(h) : "");
             return Results.Redirect(url);
         }).AllowAnonymous();
 
@@ -124,10 +126,11 @@ public static class GoogleSso
         {
             var q = http.Request.Query; var ct = http.RequestAborted;
             if (q.ContainsKey("error")) return Error("Google did not sign you in: " + q["error"]);
-            var c = await GoogleConfig.LoadAsync(st, dp, ct); if (!c.Ready) return Error("Sign in with Google is not switched on.");
             JsonElement saved;
             try { saved = JsonDocument.Parse(dp.CreateProtector("identity.gsso.state").Unprotect(http.Request.Cookies[StateCookie] ?? "")).RootElement.Clone(); }
             catch { return Error("The sign-in took too long or was started in another browser. Start again."); }
+            int? co = saved.TryGetProperty("co", out var cv) && cv.ValueKind == JsonValueKind.Number ? cv.GetInt32() : null;
+            var c = await GoogleConfig.LoadAsync(st, dp, ct, co); if (!c.Ready) return Error("Sign in with Google is not switched on.");
             http.Response.Cookies.Delete(StateCookie, new CookieOptions { Path = "/account/sso" });
             if (saved.GetProperty("exp").GetInt64() < DateTimeOffset.UtcNow.ToUnixTimeSeconds() || q["state"] != SsoEndpoints.Str(saved, "state") || string.IsNullOrEmpty(q["code"])) return Error("The sign-in could not be checked. Start again.");
 
@@ -159,6 +162,11 @@ public static class GoogleSso
             var ext = "google:" + sub;
             UserAccount? fresh = null;
             var user = await db.Users.FirstOrDefaultAsync(x => x.ExternalId == ext, ct) ?? await db.Users.FirstOrDefaultAsync(x => x.Email == email, ct);
+            if (user != null && await CompanySso.RefuseAsync(http, co, user, ct) is { } notOurs)
+            {
+                await audit.WriteAsync("auth.sso_refused", target: email, detail: "google, company " + co, actor: email);
+                return Error(notOurs, 403);
+            }
             if (user == null)
             {
                 if (!c.AutoCreate || domains.Length == 0)
@@ -166,7 +174,7 @@ public static class GoogleSso
                     await audit.WriteAsync("auth.sso_refused", target: email, detail: "google, no account", actor: email);
                     return Error("There is no DeskAsk account for " + email + ". Ask an administrator to add or import you.", 403);
                 }
-                var role = UsersEndpoints.Roles.Contains(c.DefaultRole) && c.DefaultRole != "admin" ? c.DefaultRole : "customer";
+                var role = CompanySso.RoleOk(co, c.DefaultRole) ? c.DefaultRole : "customer";
                 if (StaffLimit.IsStaff(role) && await StaffLimit.RefuseAsync(ent, db, 1, ct) != null) return Error("All staff accounts of the licence are in use. Ask an administrator to add you.", 403);
                 var name = SsoEndpoints.Str(claims, "name") is { Length: > 0 } nm ? nm : email;
                 user = new UserAccount { Email = email, Name = name.Length > 200 ? name[..200] : name, Role = role };
@@ -178,24 +186,28 @@ public static class GoogleSso
             // an account already linked to Microsoft or Active Directory keeps that link; Google signs it in by its email
             if (string.IsNullOrEmpty(user.ExternalId)) user.ExternalId = ext;
             await db.SaveChangesAsync(ct);
-            if (fresh != null) await SingleCompanyLink.TryAsync(http.RequestServices, new[] { fresh }, ct);
-            await audit.WriteAsync("auth.login", target: email, actor: email, detail: "google");
+            if (fresh != null) await CompanySso.TieAsync(http.RequestServices, co, new[] { fresh }, ct);
+            await audit.WriteAsync("auth.login", target: email, actor: email, detail: co == null ? "google" : "google, company " + co);
             await http.SignInAsync(IdentityModule.CookieName, new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", user.Id.ToString()), new Claim("mfa", "1") }, IdentityModule.CookieName)));
             return Results.Redirect(IdentityModule.LocalOrRoot(SsoEndpoints.Str(saved, "ret")));
         }).AllowAnonymous();
 
-        var g = r.MapGroup("/api/platform/sso/google").RequireAuthorization(p => p.RequireRole("admin"));
+        foreach (var g in new[] { r.MapGroup("/api/platform/sso/google"), r.MapGroup("/api/companies/{companyId:int}/sso/google") })
+        {
+        g.RequireAuthorization(p => p.RequireRole("admin"));
         g.MapGet("", async (HttpContext http, ISettings st, IDataProtectionProvider dp, CancellationToken ct) =>
         {
-            var c = await GoogleConfig.LoadAsync(st, dp, ct);
+            var co = CompanySso.Of(http); if (!await CompanySso.ExistsAsync(http, co, ct)) return Results.NotFound();
+            var c = await GoogleConfig.LoadAsync(st, dp, ct, co);
             string? saEmail = null;
             if (c.ServiceAccount != "") { var sa = ServiceAccount(c.ServiceAccount); saEmail = sa.Email; sa.Key?.Dispose(); }
             return Results.Ok(new { enabled = c.Enabled, clientId = c.ClientId, hasSecret = c.Secret != "", domains = c.Domains, autoCreate = c.AutoCreate, defaultRole = c.DefaultRole,
                 serviceAccount = saEmail ?? "", adminEmail = c.AdminEmail, redirectUri = Callback(http) });
         });
-        g.MapPut("", async (JsonElement b, ISettings st, IDataProtectionProvider dp, IAuditLog audit, CancellationToken ct) =>
+        g.MapPut("", async (HttpContext http, JsonElement b, ISettings st, IDataProtectionProvider dp, IAuditLog audit, CancellationToken ct) =>
         {
-            var old = await GoogleConfig.LoadAsync(st, dp, ct);
+            var co = CompanySso.Of(http); if (!await CompanySso.ExistsAsync(http, co, ct)) return Results.NotFound();
+            var old = await GoogleConfig.LoadAsync(st, dp, ct, co);
             bool Has(string n, out JsonElement v) { v = default; return b.ValueKind == JsonValueKind.Object && b.TryGetProperty(n, out v); }
             string T(string n, string cur) => Has(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()!.Trim() : cur;
             string Secret(string n, string cur) => Has(n, out var v) && v.ValueKind == JsonValueKind.String && v.GetString()!.Trim() != "" ? v.GetString()!.Trim() : cur;
@@ -204,28 +216,30 @@ public static class GoogleSso
             var auto = Has("autoCreate", out var au) ? au.ValueKind == JsonValueKind.True : old.AutoCreate;
             var role = T("defaultRole", old.DefaultRole); var domains = T("domains", old.Domains); var admin = T("adminEmail", old.AdminEmail).ToLowerInvariant();
             if (clientId != "" && !clientId.EndsWith(".apps.googleusercontent.com")) return Results.BadRequest(new { error = "The client id ends with .apps.googleusercontent.com." });
-            if (!UsersEndpoints.Roles.Contains(role) || role == "admin") return Results.BadRequest(new { error = "New people can be created as engineer, viewer, customer administrator or customer." });
+            if (co != null && !CompanySso.RoleOk(co, role)) role = "customer";
+            if (!CompanySso.RoleOk(co, role)) return Results.BadRequest(new { error = CompanySso.RoleError(co) });
             if (enabled && (clientId == "" || secret == "")) return Results.BadRequest(new { error = "Enter the client id and secret before switching it on." });
             var cfgNew = new GoogleConfig(enabled, clientId, secret, domains, auto, role, sa, admin);
+            if (co != null && enabled && cfgNew.DomainList.Length == 0) return Results.BadRequest(new { error = "Give the company's Workspace domains: the sign-in page finds the company by them." });
             if (auto && cfgNew.DomainList.Length == 0) return Results.BadRequest(new { error = "To create people at their first sign-in, give the Workspace domains they come from." });
             if (cfgNew.DomainList.Any(d => !d.Contains('.') || d.Contains('@'))) return Results.BadRequest(new { error = "Give domains like acme.com." });
             if (admin != "" && !admin.Contains('@')) return Results.BadRequest(new { error = "The Workspace administrator is an email address." });
             if (sa != old.ServiceAccount) { var (_, key, err) = ServiceAccount(sa); if (key == null) return Results.BadRequest(new { error = err }); key.Dispose(); }
-            await cfgNew.SaveAsync(st, dp, ct);
-            await audit.WriteAsync("identity.google_changed", ct: ct);
+            await cfgNew.SaveAsync(st, dp, ct, co);
+            await audit.WriteAsync("identity.google_changed", co == null ? "" : "company:" + co, ct: ct);
             return Results.Ok(new { ok = true });
         });
-        g.MapPost("/test", async (ISettings st, IDataProtectionProvider dp, IConfiguration cfg, CancellationToken ct) =>
+        g.MapPost("/test", async (HttpContext http, ISettings st, IDataProtectionProvider dp, IConfiguration cfg, CancellationToken ct) =>
         {
-            var c = await GoogleConfig.LoadAsync(st, dp, ct);
+            var c = await GoogleConfig.LoadAsync(st, dp, ct, CompanySso.Of(http));
             var (token, err) = await DirectoryToken(c, cfg, ct); if (token == null) return Results.BadRequest(new { error = err });
             using var req = new HttpRequestMessage(HttpMethod.Get, Directory(cfg) + "/admin/directory/v1/users?customer=my_customer&maxResults=1"); req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             using var resp = await SsoEndpoints.Client().SendAsync(req, ct);
             return resp.IsSuccessStatusCode ? Results.Ok(new { ok = true }) : Results.BadRequest(new { error = $"Signed in, but the directory could not be read ({(int)resp.StatusCode}). Turn on the Admin SDK API in the service account's Google Cloud project." });
         });
-        g.MapGet("/users", async (ISettings st, IDataProtectionProvider dp, IConfiguration cfg, IdentityDb db, CancellationToken ct) =>
+        g.MapGet("/users", async (HttpContext http, ISettings st, IDataProtectionProvider dp, IConfiguration cfg, IdentityDb db, CancellationToken ct) =>
         {
-            var c = await GoogleConfig.LoadAsync(st, dp, ct);
+            var c = await GoogleConfig.LoadAsync(st, dp, ct, CompanySso.Of(http));
             var (token, err) = await DirectoryToken(c, cfg, ct); if (token == null) return Results.BadRequest(new { error = err });
             var have = (await db.Users.AsNoTracking().Select(x => x.Email).ToListAsync(ct)).ToHashSet();
             var items = new List<object>(); string? page = ""; var pages = 0;
@@ -250,10 +264,11 @@ public static class GoogleSso
             return Results.Ok(new { items, more = page != null });
         });
         // people chosen from the Workspace directory: created with the role, or linked when they already have an account (by email)
-        g.MapPost("/import", async (JsonElement b, IServiceProvider sp, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
+        g.MapPost("/import", async (HttpContext http, JsonElement b, IServiceProvider sp, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
         {
+            var co = CompanySso.Of(http); if (!await CompanySso.ExistsAsync(http, co, ct)) return Results.NotFound();
             var role = (b.TryGetProperty("role", out var rv) && rv.ValueKind == JsonValueKind.String ? rv.GetString()! : "").Trim().ToLowerInvariant();
-            if (!UsersEndpoints.Roles.Contains(role)) return Results.BadRequest(new { error = "Choose a role." });
+            if (!CompanySso.ImportRoleOk(co, role)) return Results.BadRequest(new { error = co == null ? "Choose a role." : CompanySso.RoleError(co) });
             if (!b.TryGetProperty("users", out var us) || us.ValueKind != JsonValueKind.Array || us.GetArrayLength() is 0 or > 500) return Results.BadRequest(new { error = "Choose 1 to 500 people." });
             if (await StaffLimit.RefuseImportAsync(ent, db, role, us.EnumerateArray().Select(x => SsoEndpoints.Str(x, "email")), ct) is { } over) return over;
             int created = 0, linked = 0, skipped = 0; var madeUsers = new List<UserAccount>();
@@ -263,15 +278,21 @@ public static class GoogleSso
                 if (!email.Contains('@') || email.Length > 320) { skipped++; continue; }
                 var ext = gid == "" ? null : "google:" + gid;
                 var exist = await db.Users.FirstOrDefaultAsync(x => x.Email == email, ct);
-                if (exist != null) { if (ext != null && string.IsNullOrEmpty(exist.ExternalId)) { exist.ExternalId = ext; linked++; } else skipped++; continue; }
+                if (exist != null)
+                {
+                    if (!await CompanySso.MayLinkAsync(sp, co, exist, ct)) { skipped++; continue; }
+                    if (ext != null && string.IsNullOrEmpty(exist.ExternalId)) { exist.ExternalId = ext; linked++; madeUsers.Add(exist); } else skipped++;
+                    continue;
+                }
                 var acc = new UserAccount { Email = email, Name = name == "" ? email : (name.Length > 200 ? name[..200] : name), Role = role, ExternalId = ext };
                 acc.PasswordHash = hasher.HashPassword(acc, SsoEndpoints.B64(RandomNumberGenerator.GetBytes(32)));
                 db.Users.Add(acc); created++; madeUsers.Add(acc);
             }
             await db.SaveChangesAsync(ct);
-            await SingleCompanyLink.TryAsync(sp, madeUsers, ct);
-            await audit.WriteAsync("user.imported", "google", $"created {created}, linked {linked}, skipped {skipped}, role {role}", ct: ct);
+            await CompanySso.TieAsync(sp, co, madeUsers, ct);
+            await audit.WriteAsync("user.imported", co == null ? "google" : "google, company:" + co, $"created {created}, linked {linked}, skipped {skipped}, role {role}", ct: ct);
             return Results.Ok(new { created, linked, skipped });
         });
+        }
     }
 }

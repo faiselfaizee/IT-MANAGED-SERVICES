@@ -64,3 +64,15 @@ How it works:
 - **The site controller must be agent 6.17 or later.** An older controller does not know the check. Sign-in then says the company's Windows sign-in "cannot be checked right now". Controllers update themselves after the release.
 - The person's DeskAsk two-step code still applies if they turned it on.
 - The audit log writes `auth.login_failed` with `windows: <reason>`.
+
+## A company's own Microsoft 365 or Google Workspace (6.18.0)
+Devices setup › Customers › a company › **Sign-in** (with one company: Devices setup › Our organisation › Sign-in).
+
+- **Microsoft 365:** the company's own app registration in *their* Entra tenant (directory id, application id, secret), with the redirect address shown (`https://<DeskAsk address>/account/sso/microsoft/callback`, the same for every company). **Email domains are required**: they decide which company's sign-in a person is sent to.
+- **Google Workspace:** the company's own OAuth client and Workspace domains. Optionally add a service account for importing people.
+- **Create at first sign-in** makes new people *Employee* or *Customer administrator* of that company, never staff.
+- **Import people** lists the company's directory and creates company users. An existing customer user with the same email, not tied to another company, is linked. Staff accounts are never taken over.
+
+On the sign-in page, **Sign in with your company account** asks for the email and sends the person to the company whose domains match (Microsoft first, then Google). Each company's settings are kept apart (`identity.entra.company.<id>`, `identity.google.company.<id>`).
+
+A company's sign-in only signs in that company's own users. If the email belongs to a staff account or to another company's user, it is refused (`auth.sso_refused`). Administration › Users › Microsoft/Google sign-in stays for your own team.

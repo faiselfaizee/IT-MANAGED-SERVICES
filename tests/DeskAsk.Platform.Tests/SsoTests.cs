@@ -43,10 +43,10 @@ public class SsoTests : IClassFixture<WebApplicationFactory<Program>>
         }
     }
 
-    async Task<HttpResponseMessage> SignInWithMicrosoft(FakeMicrosoft ms, string? ret = null)
+    async Task<HttpResponseMessage> SignInWithMicrosoft(FakeMicrosoft ms, string? ret = null, string? startAt = null)
     {
         var browser = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = true });
-        var start = await browser.GetAsync("/account/sso/microsoft" + (ret != null ? "?returnUrl=" + Uri.EscapeDataString(ret) : ""));
+        var start = await browser.GetAsync(startAt ?? "/account/sso/microsoft" + (ret != null ? "?returnUrl=" + Uri.EscapeDataString(ret) : ""));
         Assert.Equal(HttpStatusCode.Redirect, start.StatusCode);
         var loc = new Uri(start.Headers.Location!.ToString()); var q = System.Web.HttpUtility.ParseQueryString(loc.Query);
         Assert.Contains($"/{Tid}/oauth2/v2.0/authorize", loc.AbsolutePath); Assert.Equal(Cid, q["client_id"]); Assert.Equal("S256", q["code_challenge_method"]);
@@ -119,4 +119,54 @@ public class SsoTests : IClassFixture<WebApplicationFactory<Program>>
         }
         finally { SsoEndpoints.TestHandler = null; }
     }
+
+    [PgFact]
+    public async Task ACompanySignsInItsOwnPeopleWithItsOwnMicrosoft()
+    {
+        var ms = new FakeMicrosoft(); SsoEndpoints.TestHandler = ms;
+        try
+        {
+            var admin = await TestSupport.AdminClient(factory);
+            await Sql("delete from core.settings where key like 'identity.entra%'; delete from identity.users where \"Email\" like '%@cosso.test' or \"Email\" like '%@other.test'");
+            var co = (await J(await admin.PostAsync("/api/assets/companies", Json(new { name = "Co SSO " + Guid.NewGuid().ToString("N")[..6] })))).GetProperty("id").GetInt32();
+            var path = $"/api/companies/{co}/sso/microsoft";
+            Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/api/companies/987654/sso/microsoft")).StatusCode);
+            // a company's setup needs its email domains (the sign-in page finds the company by them) and makes only customer users
+            Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync(path, Json(new { enabled = true, tenantId = Tid, clientId = Cid, secret = "s3cret" }))).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync(path, Json(new { enabled = true, tenantId = Tid, clientId = Cid, secret = "s3cret", domains = "cosso.test", autoCreate = true, defaultRole = "cadmin" }))).StatusCode);
+            Assert.Equal("cadmin", (await J(await admin.GetAsync(path))).GetProperty("defaultRole").GetString());
+            Assert.False((await J(await admin.GetAsync("/api/platform/sso"))).GetProperty("enabled").GetBoolean());   // the installation's own sign-in is untouched
+
+            // the sign-in page offers the company way in, and the email finds the company
+            var login = await factory.CreateClient().GetStringAsync("/account/login");
+            Assert.Contains("Sign in with your company account", login); Assert.DoesNotContain(">Sign in with Microsoft<", login);
+            var plain = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var find = await plain.GetAsync("/account/sso/company?email=ana%40cosso.test&returnUrl=%2Fservicedesk");
+            Assert.Equal(HttpStatusCode.Redirect, find.StatusCode);
+            var to = find.Headers.Location!.ToString();
+            Assert.StartsWith($"/account/sso/microsoft?company={co}&hint=ana%40cosso.test", to);
+            Assert.Equal(HttpStatusCode.NotFound, (await plain.GetAsync("/account/sso/company?email=ana%40nowhere.test")).StatusCode);
+
+            // a new person is created as the company's customer administrator and tied to the company
+            ms.Oid = "co-oid-1"; ms.Email = "ana@cosso.test"; ms.Name = "Ana";
+            var ok = await SignInWithMicrosoft(ms, startAt: to);
+            Assert.Equal(HttpStatusCode.Redirect, ok.StatusCode); Assert.Equal("/servicedesk", ok.Headers.Location!.ToString());
+            var ana = (await J(await admin.GetAsync("/api/platform/users"))).EnumerateArray().Single(x => x.GetProperty("email").GetString() == "ana@cosso.test");
+            Assert.Equal("cadmin", ana.GetProperty("role").GetString());
+            Assert.Contains((await J(await admin.GetAsync("/api/platform/access/user-companies"))).EnumerateArray(), x => x.GetProperty("userId").GetString() == ana.GetProperty("id").GetString() && x.GetProperty("companyId").GetInt32() == co);
+
+            // the company's sign-in never lets in someone else's account with the same email (staff, or another company's user)
+            Assert.Equal(HttpStatusCode.Created, (await admin.PostAsync("/api/platform/users", Json(new { email = "eng@cosso.test", name = "Eng", role = "engineer", password = "Long-Password-1" }))).StatusCode);
+            ms.Oid = "co-oid-2"; ms.Email = "eng@cosso.test";
+            var refused = await SignInWithMicrosoft(ms, startAt: $"/account/sso/microsoft?company={co}");
+            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+
+            // importing from the company's directory makes company users only
+            Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync(path + "/entra/import", Json(new { role = "engineer", users = new[] { new { id = "x", email = "x@cosso.test", name = "X" } } }))).StatusCode);
+            var imp = await J(await admin.PostAsync(path + "/entra/import", Json(new { role = "customer", users = new[] { new { id = "co-oid-3", email = "bo@cosso.test", name = "Bo" }, new { id = "co-oid-2", email = "eng@cosso.test", name = "Eng" } } })));
+            Assert.Equal(1, imp.GetProperty("created").GetInt32()); Assert.Equal(1, imp.GetProperty("skipped").GetInt32());   // the engineer is not taken over
+        }
+        finally { SsoEndpoints.TestHandler = null; }
+    }
+
 }
