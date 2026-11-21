@@ -143,6 +143,18 @@ public static class CommerceDb
               id bigserial primary key, event_id text not null unique, type text not null, body text not null,
               attempts int not null default 0, next_at timestamptz not null default now(), delivered_at timestamptz, last_error text not null default '', created_at timestamptz not null default now());
             create index on commerce.link_outbox (next_at) where delivered_at is null;"),
+        new(5, "products on sale: one list for the platform and the website", @"
+            create table commerce.products (
+              key text primary key, name text not null, tagline text not null default '', sort int not null default 0,
+              on_sale boolean not null default true, created_at timestamptz not null default now());
+            insert into commerce.products (key, name, tagline, sort) values
+              ('servicedesk', 'Service Desk', 'Tickets with service levels and customer sign-in', 10),
+              ('assets', 'Asset management', 'Every device, licence and contract', 20),
+              ('monitoring', 'Monitoring', 'Alerts for devices that are down, busy, full or failing', 30),
+              ('adsuite', 'AD Manager', 'Active Directory users, groups and policies', 40),
+              ('vault', 'Vault', 'Shared passwords and secrets', 50),
+              ('backup', 'Backup', 'Results of the backup software your customers run', 60)
+              on conflict do nothing;"),
     };
 
     public static async Task<string?> GetSettingAsync(CommerceOptions o, string key, CancellationToken ct)

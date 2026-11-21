@@ -104,6 +104,17 @@ public static class VendorConsole
             return Results.Ok(new { saved = true });
         }));
 
+        // ------------------------------------------------------------------ products on sale (the website sees the same list)
+        Console(r.MapGet("/api/commerce/products", async (CommerceOptions o, CancellationToken ct) => Results.Ok(await Products.ListViewAsync(o, ct))));
+        Console(r.MapPut("/api/commerce/products/{key}", async (string key, JsonElement b, ClaimsPrincipal u, IServiceProvider sp, CancellationToken ct) =>
+        {
+            bool? sale = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("onSale", out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False ? v.GetBoolean() : null;
+            return Products.Result(await Products.SetAsync(sp, key, sale, b.ValueKind == JsonValueKind.Object && b.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null,
+                b.ValueKind == JsonValueKind.Object && b.TryGetProperty("tagline", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null, Who(u), ct), new { saved = true });
+        }));
+        Console(r.MapPost("/api/commerce/products", async (JsonElement b, ClaimsPrincipal u, IServiceProvider sp, CancellationToken ct) =>
+            Products.Result(await Products.AddAsync(sp, b, Who(u), ct), new { saved = true })));
+
         // ------------------------------------------------------------------ customers and subscriptions
         Console(r.MapGet("/api/commerce/accounts", async (CommerceOptions o, CancellationToken ct) =>
         {

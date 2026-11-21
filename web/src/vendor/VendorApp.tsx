@@ -265,14 +265,61 @@ function Unlinked() {
 
 function Prices() {
   const plans = useLoad<Rec[]>('/api/commerce/plans');
-  const byModule = useMemo(() => MODS.map((m) => ({ m, rows: (plans.data ?? []).filter((p) => p.module === m.key) })), [plans.data]);
-  return <Card title="Price list">
-    <p className="muted">Yearly and monthly prices for SaaS, the yearly on-prem price, and the India price in rupees before GST. The store (release 6.1) sells from this list.</p>
-    <Loading loading={plans.loading && !plans.data} error={plans.error} />
-    {plans.data && <table><thead><tr><th>Module</th><th>Size</th><th>SaaS yearly (USD)</th><th>SaaS monthly (USD)</th><th>On-prem yearly (USD)</th><th>India yearly (₹)</th><th>On sale</th><th></th></tr></thead><tbody>
-      {byModule.flatMap(({ m, rows }) => rows.map((p) => <PriceRow key={p.id} name={m.name} plan={p} saved={plans.reload} />))}
+  const prods = useLoad<Rec[]>('/api/commerce/products');
+  const names = useMemo(() => Object.fromEntries((prods.data ?? []).map((p) => [String(p.key), String(p.name)])), [prods.data]);
+  const modules = useMemo(() => [...new Set([...(prods.data ?? []).map((p) => String(p.key)), ...(plans.data ?? []).map((p) => String(p.module))])], [prods.data, plans.data]);
+  return <>
+    <Products prods={prods} onChanged={() => { prods.reload(); plans.reload(); }} />
+    <Card title="Price list">
+      <p className="muted">Yearly and monthly prices for SaaS, the yearly on-prem price, and the India price in rupees before GST. The store (release 6.1) sells from this list.</p>
+      <Loading loading={plans.loading && !plans.data} error={plans.error} />
+      {plans.data && <table><thead><tr><th>Module</th><th>Size</th><th>SaaS yearly (USD)</th><th>SaaS monthly (USD)</th><th>On-prem yearly (USD)</th><th>India yearly (₹)</th><th>On sale</th><th></th></tr></thead><tbody>
+        {modules.flatMap((m) => (plans.data ?? []).filter((p) => p.module === m).map((p) => <PriceRow key={p.id} name={names[m] ?? m} plan={p} saved={plans.reload} />))}
+      </tbody></table>}
+    </Card>
+  </>;
+}
+
+/** The products on sale. Switching one off removes it from the store and the website at once; the website can switch products too and sees this same list. */
+function Products({ prods, onChanged }: { prods: { data: Rec[] | null; error: string; loading: boolean }; onChanged: () => void }) {
+  const [adding, setAdding] = useState(false); const [err, setErr] = useState('');
+  const [f, setF] = useState({ key: '', name: '', tagline: '', sizeLabel: '', year: '', inr: '' });
+  const set = (id: string, body: Rec) => api('/api/commerce/products/' + id, { method: 'PUT', body }).then(onChanged);
+  const add = async () => {
+    setErr('');
+    const n = (x: string) => (x === '' ? undefined : Number(x));
+    try {
+      await api('/api/commerce/products', { method: 'POST', body: { key: f.key, name: f.name, tagline: f.tagline, sizeLabel: f.sizeLabel, limits: {}, prices: { saas: { usd: { year: n(f.year) }, inr: { year: n(f.inr) } } } } });
+      setAdding(false); setF({ key: '', name: '', tagline: '', sizeLabel: '', year: '', inr: '' }); onChanged();
+    } catch (e) { setErr((e as Error).message); }
+  };
+  return <Card title="Products on sale">
+    <p className="muted">The platform keeps one list of products. Switch a product off and it leaves the store, the website and the free trial at once; customers who already have it keep it. The website can switch products too: it asks this list, so both sides always show the same.</p>
+    <Loading loading={prods.loading && !prods.data} error={prods.error} />
+    {prods.data && <table><thead><tr><th>Product</th><th>Description</th><th>On sale</th><th></th></tr></thead><tbody>
+      {prods.data.map((p) => <ProductRow key={p.key} p={p} save={set} />)}
     </tbody></table>}
+    <div className="tools"><button onClick={() => setAdding(true)}>Add a product</button></div>
+    {adding && <Modal title="Add a product" onClose={() => setAdding(false)}>
+      <Field label="Code (letters and digits, for example helpdesk2)"><input value={f.key} onChange={(e) => setF({ ...f, key: e.target.value })} maxLength={20} /></Field>
+      <Field label="Name"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={60} /></Field>
+      <Field label="Description"><input value={f.tagline} onChange={(e) => setF({ ...f, tagline: e.target.value })} maxLength={200} /></Field>
+      <Field label="First size, for example Up to 10 users"><input value={f.sizeLabel} onChange={(e) => setF({ ...f, sizeLabel: e.target.value })} maxLength={60} /></Field>
+      <Field label="SaaS yearly price (USD)"><input type="number" min={0} value={f.year} onChange={(e) => setF({ ...f, year: e.target.value })} /></Field>
+      <Field label="India yearly price (₹, before GST)"><input type="number" min={0} value={f.inr} onChange={(e) => setF({ ...f, inr: e.target.value })} /></Field>
+      <p className="muted">A product that is not part of the program yet is listed and can be sold, but customers receive it only when a release that contains it is installed.</p>
+      <Err text={err} />
+      <div className="tools"><button className="primary" onClick={add}>Add product</button><button onClick={() => setAdding(false)}>Cancel</button></div>
+    </Modal>}
   </Card>;
+}
+
+function ProductRow({ p, save }: { p: Rec; save: (key: string, body: Rec) => Promise<unknown> }) {
+  const [name, setName] = useState(String(p.name)); const [tag, setTag] = useState(String(p.tagline ?? ''));
+  return <tr><td><input value={name} style={{ width: 170 }} aria-label={p.key + ' name'} onChange={(e) => setName(e.target.value)} />{!p.built && <div className="muted">Not in the program yet</div>}</td>
+    <td><input value={tag} style={{ width: 300 }} aria-label={p.key + ' description'} onChange={(e) => setTag(e.target.value)} /></td>
+    <td><input type="checkbox" checked={!!p.onSale} aria-label={name + ' on sale'} onChange={(e) => void save(p.key, { onSale: e.target.checked })} /></td>
+    <td><Act label="Save" run={() => save(p.key, { name, tagline: tag })} /></td></tr>;
 }
 
 function PriceRow({ name, plan, saved }: { name: string; plan: Rec; saved: () => void }) {
