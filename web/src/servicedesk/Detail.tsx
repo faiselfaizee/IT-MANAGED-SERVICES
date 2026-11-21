@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { api, go, saveFile, upload, useLoad, type Rec } from '../http';
-import { Act, Badge, Card, Dl, Err, Loading, fmtDate, fmtBytes, useSubmit } from '../ui';
+import { Act, Badge, Card, Dl, Err, Field, Loading, fmtDate, fmtBytes, useSubmit } from '../ui';
 import { CustomCard, useFields } from './Fields';
 import { KIND, KindBadge, LEVEL, PRIORITY, PriorityBadge, STATUS, SlaBadge, StatusBadge } from './List';
 import { KnownErrorHints } from './Itil';
@@ -50,6 +50,7 @@ export default function Detail({ id }: { id: string }) {
               </> : null}
           </div>
         </Card>
+        {(can.rate || data?.rating) && <Rating id={id} done={t.status === 'resolved' || closed} rating={data?.rating as Rec | null} canRate={!!can.rate} reload={reload} />}
         <CustomCard defs={fieldDefs} values={(data?.custom ?? {}) as Rec} edit={!!can.edit} save={patch} />
         <Related id={id} />
         {can.edit && <KnownErrorHints id={id} />}
@@ -109,5 +110,20 @@ function Related({ id }: { id: string }) {
   return <Card title="Related">
     {problems.length > 0 && <><b>Problems</b><ul>{problems.map((p) => <li key={p.id}><a href={`#/servicedesk/problems/${p.id}`}>{p.number}</a> {p.title} <span className="muted">· {String(p.status).replace('_', ' ')}</span></li>)}</ul></>}
     {changes.length > 0 && <><b>Changes</b><ul>{changes.map((c) => <li key={c.id}><a href={`#/servicedesk/changes/${c.id}`}>{c.number}</a> {c.title} <span className="muted">· {c.status}</span></li>)}</ul></>}
+  </Card>;
+}
+
+/** "Did we solve it?": a thumbs up or down with an optional comment, once the ticket is resolved. */
+function Rating({ id, done, rating, canRate, reload }: { id: string; done: boolean; rating: Rec | null; canRate: boolean; reload: () => void }) {
+  const [comment, setComment] = useState(''); const f = useSubmit(reload);
+  const send = (up: boolean) => f.submit(() => api(`/api/servicedesk/tickets/${id}/rating`, { body: { up, comment } }));
+  if (!rating && !(canRate && done)) return null;
+  return <Card title="Did we solve it?">
+    {rating && <p>{rating.up ? '👍 Solved' : '👎 Not solved'}{rating.comment ? ': ' + rating.comment : ''}</p>}
+    {canRate && done && <div className="form">
+      <Field label="Comment (optional)"><input value={comment} maxLength={2000} onChange={(e) => setComment(e.target.value)} /></Field>
+      <Err text={f.err} />
+      <div className="actions" style={{ justifyContent: 'flex-start' }}><button className="primary" disabled={f.busy} onClick={() => send(true)}>👍 Solved</button><button disabled={f.busy} onClick={() => send(false)}>👎 Not solved</button></div>
+    </div>}
   </Card>;
 }

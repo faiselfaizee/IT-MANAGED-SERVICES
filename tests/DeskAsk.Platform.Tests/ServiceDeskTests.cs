@@ -342,4 +342,58 @@ public class ServiceDeskTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.DoesNotContain(people.EnumerateArray(), p => p.GetProperty("email").GetString() == "eng@sd.test");
         Assert.Equal(HttpStatusCode.Forbidden, (await x.Eng.GetAsync("/api/servicedesk/people")).StatusCode);
     }
+
+    [PgFact]
+    public async Task ArticlesAreWrittenByStaffAndShownByVisibilityWhileResolvedTicketsAreRatedByTheirCustomer()
+    {
+        var x = await Start();
+        await Sql("truncate servicedesk.articles restart identity cascade");
+        // only staff write; a customer is refused
+        Assert.Equal(HttpStatusCode.Forbidden, (await x.CustA.PostAsync("/api/servicedesk/kb", Json(new { title = "Mine", published = true }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await x.Eng.PostAsync("/api/servicedesk/kb", Json(new { title = "" }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await x.Eng.PostAsync("/api/servicedesk/kb", Json(new { title = "For one", visibility = "company" }))).StatusCode);   // needs a company
+        async Task<int> Article(object body) { var r = await x.Eng.PostAsync("/api/servicedesk/kb", Json(body)); Assert.Equal(HttpStatusCode.OK, r.StatusCode); return (await J(r)).GetProperty("id").GetInt32(); }
+        var wifi = await Article(new { title = "Reset your Wi-Fi password", body = "Open Settings, then Network. Choose Forget and join again.", tags = "wifi, network", visibility = "everyone", published = true });
+        var alpha = await Article(new { title = "Alpha VPN setup", body = "Only for Alpha staff.", visibility = "company", companyId = x.CoA, published = true });
+        var staffOnly = await Article(new { title = "Internal runbook", body = "Staff only.", visibility = "staff", published = true });
+        var draft = await Article(new { title = "Printer drivers draft", body = "Not ready.", visibility = "everyone", published = false });
+        async Task<List<int>> Ids(HttpClient c, string url) => (await J(await c.GetAsync(url))).EnumerateArray().Select(e => e.GetProperty("id").GetInt32()).ToList();
+        Assert.Equal(new[] { wifi }, await Ids(x.CustB, "/api/servicedesk/kb"));                                   // another company: only the public one
+        Assert.Equal(new[] { wifi, alpha }.OrderBy(i => i), (await Ids(x.CustA, "/api/servicedesk/kb")).OrderBy(i => i));   // its own company's one as well, never drafts or staff-only
+        Assert.Equal(4, (await Ids(x.Eng, "/api/servicedesk/kb")).Count);                                          // staff see everything, drafts too
+        Assert.Equal(new[] { wifi }, await Ids(x.CustA, "/api/servicedesk/kb?q=wifi"));                           // search by tag, title or text
+        Assert.Equal(new[] { wifi }, await Ids(x.CustA, "/api/servicedesk/kb?q=forget%20and%20join"));
+        Assert.Empty(await Ids(x.CustA, "/api/servicedesk/kb?q=100%25"));                                          // % is not a wildcard
+        Assert.Equal(HttpStatusCode.NotFound, (await x.CustB.GetAsync("/api/servicedesk/kb/" + alpha)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await x.CustA.GetAsync("/api/servicedesk/kb/" + staffOnly)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await x.CustA.GetAsync("/api/servicedesk/kb/" + draft)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await x.CustA.GetAsync("/api/servicedesk/kb/" + wifi)).StatusCode);
+        Assert.Equal(1, (await J(await x.Eng.GetAsync("/api/servicedesk/kb/" + wifi))).GetProperty("views").GetInt32());   // reading counts; staff reading does not
+        // helpful votes: one per person, changeable
+        Assert.Equal(HttpStatusCode.OK, (await x.CustA.PostAsync($"/api/servicedesk/kb/{wifi}/vote", Json(new { helpful = true }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await x.CustB.PostAsync($"/api/servicedesk/kb/{wifi}/vote", Json(new { helpful = false }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await x.CustB.PostAsync($"/api/servicedesk/kb/{wifi}/vote", Json(new { helpful = true }))).StatusCode);
+        var voted = await J(await x.Eng.GetAsync("/api/servicedesk/kb/" + wifi));
+        Assert.Equal(2, voted.GetProperty("helpful").GetInt32()); Assert.Equal(0, voted.GetProperty("notHelpful").GetInt32());
+        Assert.Equal(HttpStatusCode.NotFound, (await x.CustB.PostAsync($"/api/servicedesk/kb/{alpha}/vote", Json(new { helpful = true }))).StatusCode);
+        // unpublishing hides it from customers; deleting is for staff
+        Assert.Equal(HttpStatusCode.OK, (await x.Eng.PutAsync("/api/servicedesk/kb/" + wifi, Json(new { title = "Reset your Wi-Fi password", visibility = "everyone", published = false }))).StatusCode);
+        Assert.Empty(await Ids(x.CustB, "/api/servicedesk/kb"));
+        Assert.Equal(HttpStatusCode.Forbidden, (await x.CustA.DeleteAsync("/api/servicedesk/kb/" + alpha)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await x.Eng.DeleteAsync("/api/servicedesk/kb/" + alpha)).StatusCode);
+
+        // ---- rating: the customer rates once the ticket is resolved; staff and other companies cannot
+        var id = await Open(x.CustA, new { subject = "Cannot print" });
+        Assert.Equal(HttpStatusCode.BadRequest, (await x.CustA.PostAsync($"/api/servicedesk/tickets/{id}/rating", Json(new { up = true }))).StatusCode);   // not resolved yet
+        Assert.Equal(HttpStatusCode.OK, (await Status(x.Eng, id, "resolved", "Restarted the spooler.")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await x.Eng.PostAsync($"/api/servicedesk/tickets/{id}/rating", Json(new { up = true }))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await x.CustB.PostAsync($"/api/servicedesk/tickets/{id}/rating", Json(new { up = true }))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await x.CustA.PostAsync($"/api/servicedesk/tickets/{id}/rating", Json(new { comment = "no verdict" }))).StatusCode);
+        Assert.True((await Get(x.CustA, id)).GetProperty("can").GetProperty("rate").GetBoolean());
+        Assert.Equal(HttpStatusCode.OK, (await x.CustA.PostAsync($"/api/servicedesk/tickets/{id}/rating", Json(new { up = false, comment = "Came back the next day" }))).StatusCode);
+        var rated = (await Get(x.Eng, id)).GetProperty("rating");
+        Assert.False(rated.GetProperty("up").GetBoolean()); Assert.Equal("Came back the next day", rated.GetProperty("comment").GetString());
+        Assert.Equal(HttpStatusCode.OK, (await x.CustA.PostAsync($"/api/servicedesk/tickets/{id}/rating", Json(new { up = true }))).StatusCode);   // may change their mind
+        Assert.True((await Get(x.Eng, id)).GetProperty("rating").GetProperty("up").GetBoolean());
+    }
 }
