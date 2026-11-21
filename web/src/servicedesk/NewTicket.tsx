@@ -12,6 +12,7 @@ export default function NewTicket({ me }: { me: Rec | null }) {
   const staff = !!me?.staff;
   const settings = useLoad<Rec>('/api/servicedesk/settings');
   const companies = useLoad<Rec[]>(staff ? '/api/assets/companies' : null);
+  const mine = useLoad<Rec[]>(staff ? null : '/api/servicedesk/my-devices'); const devices = Array.isArray(mine.data) ? mine.data : []; const [device, setDevice] = useState('');
   const wanted = new URLSearchParams((location.hash.split('?')[1] ?? '')).get('kind') === 'request' ? 'request' : 'incident';
   const [v, setV] = useState<Rec>({ kind: wanted, impact: '', urgency: '', priorityChosen: false, subject: '', description: '', priority: 'medium', category: '', companyId: '', requesterName: '', requesterEmail: '' });
   const set = (k: string, x: unknown) => setV({ ...v, [k]: x });
@@ -35,6 +36,7 @@ export default function NewTicket({ me }: { me: Rec | null }) {
         <Field label="Priority"><select value={v.priority} onChange={(e) => setV({ ...v, priority: e.target.value, priorityChosen: true })}>{Object.entries(PRIORITY).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
         <Field label="Category"><select value={v.category} onChange={(e) => set('category', e.target.value)}><option value="">Not sure</option>{cats.map((c) => <option key={c}>{c}</option>)}</select></Field>
       </div>
+      {!staff && devices.length > 0 && <Field label="Which device is it about?"><select value={device} onChange={(e) => setDevice(e.target.value)}><option value="">Not about a device</option>{devices.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.tag})</option>)}</select></Field>}
       {defs.map((d) => <FieldInput key={d.key} def={d} value={cv[d.key]} onChange={(x) => setCv({ ...cv, [d.key]: x })} />)}
       {staff && <>
         <Field label="Company"><select value={v.companyId} onChange={(e) => set('companyId', e.target.value)}><option value="">None</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
@@ -45,6 +47,7 @@ export default function NewTicket({ me }: { me: Rec | null }) {
         <button className="primary" disabled={f.busy || !v.subject.trim() || !!missingRequired(defs, cv, staff)} onClick={() => f.submit(async () => {
           const body: Rec = { subject: v.subject, description: v.description, category: v.category, kind: v.kind, priority: v.priority };
           if (v.kind === 'incident') { if (v.impact) body.impact = v.impact; if (v.urgency) body.urgency = v.urgency; } const cu = sendable(defs, cv); if (Object.keys(cu).length) body.custom = cu;
+          if (!staff && device) body.assetId = Number(device);
           if (staff) { if (v.companyId) body.companyId = Number(v.companyId); if (v.requesterName || v.requesterEmail) { body.requesterName = v.requesterName; body.requesterEmail = v.requesterEmail; } }
           const r = await api<Rec>('/api/servicedesk/tickets', { body }); go('servicedesk/' + r.id);
         })}>Open ticket</button></div>

@@ -396,4 +396,25 @@ public class ServiceDeskTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.OK, (await x.CustA.PostAsync($"/api/servicedesk/tickets/{id}/rating", Json(new { up = true }))).StatusCode);   // may change their mind
         Assert.True((await Get(x.Eng, id)).GetProperty("rating").GetProperty("up").GetBoolean());
     }
+
+    [PgFact]
+    public async Task CustomersPickOnlyTheirOwnDevicesOnANewTicket()
+    {
+        var x = await Start();
+        await Sql($"delete from assets.assets where name like 'SDDEV %'");
+        await Sql($"insert into assets.assets (name, status, company_id, assigned_to) values ('SDDEV Pat laptop','in_use',{x.CoA},'a@sd.test'), ('SDDEV Other laptop','in_use',{x.CoA},'Somebody Else'), ('SDDEV Old laptop','retired',{x.CoA},'a@sd.test'), ('SDDEV Beta server','in_use',{x.CoB},'')");
+        async Task<List<(long Id, string Name)>> Mine(HttpClient c) => (await J(await c.GetAsync("/api/servicedesk/my-devices"))).EnumerateArray().Select(e => (e.GetProperty("id").GetInt64(), e.GetProperty("name").GetString()!)).ToList();
+        var mine = await Mine(x.CustA);
+        Assert.Equal(new[] { "SDDEV Pat laptop" }, mine.Select(m => m.Name));                       // only theirs; not a colleague's, not a retired one
+        Assert.Equal(new[] { "SDDEV Beta server" }, (await Mine(x.CustB)).Select(m => m.Name));    // a customer administrator sees the company's devices
+        Assert.Empty(await Mine(x.NoCompany)); Assert.Empty(await Mine(x.Eng));
+        var other = await Scalar<long>("select id from assets.assets where name = 'SDDEV Other laptop'");
+        var r = await x.CustA.PostAsync("/api/servicedesk/tickets", Json(new { subject = "Laptop is slow", assetId = other }));
+        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);                                     // someone else's device is refused
+        var id = await Open(x.CustA, new { subject = "Laptop is slow", assetId = mine[0].Id });
+        var t = (await Get(x.CustA, id)).GetProperty("ticket");
+        Assert.Equal(mine[0].Id, t.GetProperty("assetId").GetInt64()); Assert.Contains("SDDEV Pat laptop", t.GetProperty("asset").GetString());
+        Assert.Equal(1, (await J(await x.Eng.GetAsync("/api/servicedesk/tickets?assetId=" + mine[0].Id))).GetProperty("items").GetArrayLength());
+        await Sql("delete from assets.assets where name like 'SDDEV %'");
+    }
 }

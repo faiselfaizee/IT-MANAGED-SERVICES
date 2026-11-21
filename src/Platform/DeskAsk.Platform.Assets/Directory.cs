@@ -35,4 +35,22 @@ public sealed class AssetsDirectory : ICompanyDirectory, IAssetDirectory
         await using var r = await c.ExecuteReaderAsync(ct);
         return await r.ReadAsync(ct) ? new AssetRef(r.GetInt64(0), r.GetString(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetInt32(3)) : null;
     }
+
+    public async Task<IReadOnlyList<AssetRef>> ListForPersonAsync(int companyId, string name, string email, bool wholeCompany, CancellationToken ct = default)
+    {
+        var l = new List<AssetRef>();
+        try
+        {
+            await using var db = await Open(ct);
+            await using var c = new NpgsqlCommand(@"select id, tag, name, company_id from assets.assets
+                where company_id = @co and status not in ('retired','lost')
+                  and (@all or (assigned_to <> '' and (lower(assigned_to) = lower(@n) or lower(assigned_to) = lower(@e))))
+                order by lower(name) limit 200", db);
+            c.Parameters.AddWithValue("co", companyId); c.Parameters.AddWithValue("all", wholeCompany); c.Parameters.AddWithValue("n", name ?? ""); c.Parameters.AddWithValue("e", email ?? "");
+            await using var r = await c.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct)) l.Add(new AssetRef(r.GetInt64(0), r.GetString(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetInt32(3)));
+        }
+        catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UndefinedTable) { /* Asset management is not set up for this customer */ }
+        return l;
+    }
 }

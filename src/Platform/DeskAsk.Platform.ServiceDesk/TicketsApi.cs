@@ -217,6 +217,16 @@ public static class TicketsApi
             return Results.Ok(new { ticket, custom = customValues, comments, attachments = files, rating, can = new { edit = w.Staff, comment = canModify, internalNote = w.Staff, status = w.Staff || canModify, rate = w.Customer && canModify } });
         }));
 
+        // the devices a customer can name on a new ticket: their own (a customer administrator: the company's)
+        anyone(r.MapGet("/api/servicedesk/my-devices", async (ClaimsPrincipal u, ITenantContext t, IAssetDirectory assets, CancellationToken ct) =>
+        {
+            await using var db = await Open(t, ct);
+            var w = await WhoAsync(u, db, ct);
+            if (!w.Customer || w.CompanyId is not int co) return Results.Ok(Array.Empty<object>());
+            var list = await assets.ListForPersonAsync(co, w.Name, w.Email, w.Role == "cadmin", ct);
+            return Results.Ok(list.Select(a => new { id = a.Id, tag = a.Tag, name = a.Name }));
+        }));
+
         // ---------------------------------------------------------------- open a ticket
         anyone(r.MapPost("/api/servicedesk/tickets", async (JsonElement b, ClaimsPrincipal u, ITenantContext t, ISettings s, ICompanyDirectory companies, IAssetDirectory assets, IUserDirectory users, IMailQueue mailq, IAuditLog audit, CancellationToken ct) =>
         {
@@ -257,6 +267,14 @@ public static class TicketsApi
                         var asset = await assets.GetAsync(aid, ct) ?? throw new FormatException("assetId " + aid + " does not exist");
                         assetId = asset.Id; assetName = asset.Tag + " " + asset.Name; company ??= asset.CompanyId;
                     }
+                }
+                else if (w.Customer && w.CompanyId is int myCo && b.TryGetProperty("assetId", out var cav) && cav.ValueKind != JsonValueKind.Null)
+                {
+                    // an employee may name one of their own devices (a customer administrator, any device of the company)
+                    if (cav.ValueKind != JsonValueKind.Number || !cav.TryGetInt64(out var caid)) throw new FormatException("assetId must be a number");
+                    var mine = await assets.ListForPersonAsync(myCo, w.Name, w.Email, w.Role == "cadmin", ct);
+                    var pick = mine.FirstOrDefault(x => x.Id == caid) ?? throw new FormatException("Choose one of your own devices from the list.");
+                    assetId = pick.Id; assetName = pick.Tag + " " + pick.Name;
                 }
             }
             catch (FormatException e) { return Bad("bad_request", e.Message); }

@@ -204,6 +204,8 @@ public interface ICompanyDirectory
 public interface IAssetDirectory
 {
     Task<AssetRef?> GetAsync(long id, CancellationToken ct = default);
+    /// <summary>The devices in a company that are assigned to this person (by name or email); with wholeCompany, all of the company's devices. Retired and lost ones are left out. Empty when Asset management is not set up.</summary>
+    Task<IReadOnlyList<AssetRef>> ListForPersonAsync(int companyId, string name, string email, bool wholeCompany, CancellationToken ct = default);
 }
 
 /// <summary>A person who can sign in, as other modules may see them. The Identity module owns the accounts.</summary>

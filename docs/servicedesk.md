@@ -40,3 +40,9 @@ Staff tick **Major incident** on the ticket (incidents only). The ticket shows a
 - **Rating:** when a ticket is resolved or closed, the customer who raised it (or a colleague who may change the ticket) can give a thumbs up or down and a short comment, and change their mind. Staff and other companies cannot. Staff see the rating on the ticket. Audited as `servicedesk.ticket_rated`; articles as `servicedesk.article_created/updated/deleted`.
 - API: `GET/POST /api/servicedesk/kb`, `GET/PUT/DELETE /api/servicedesk/kb/{id}`, `POST /api/servicedesk/kb/{id}/vote`, `POST /api/servicedesk/tickets/{id}/rating`.
 - Not yet: rating in the monthly report and dashboard; articles from known errors; mail link to rate. Next release in this wave: better My tickets and picking the affected device.
+
+## My tickets and the affected device (6.8.0)
+
+- **My tickets** (customers): the ticket list opens as My tickets with groups **Open**, **Waiting for you** (the ticket is on hold for their reply; shown with a count and a badge), **Finished** and **All**, a search box, the due date in plain words ("We aim to fix it in 3 hours", "Overdue by 2 days", "Waiting for your reply"), and a **Reopen** button on resolved or closed tickets. Staff keep the full ticket list.
+- **Which device is it about?** On New ticket a customer picks one of their own devices from Asset management without having access to Assets: the devices assigned to them (by name or email), and for a customer administrator all of the company's devices. Retired and lost devices are left out. The ticket carries the device, so staff see its tag and details; the server refuses any other device. If Asset management is not set up the list is empty and the field is not shown. API: `GET /api/servicedesk/my-devices`; `assetId` on `POST /api/servicedesk/tickets`.
+- Not yet: copy a colleague on a ticket (needs a mail and permission design), rating in reports.
