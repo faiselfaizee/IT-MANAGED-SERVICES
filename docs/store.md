@@ -92,3 +92,8 @@ The About and policy pages start as the draft from the legal review and are edit
 ## Invoice design
 
 Vendor console › Business details has an **Invoice design** card with the same colours as the report design (table header colour and letters, borders, letters, headings) plus a foot line and a **closing note** (payment terms, bank details or thanks, up to 600 characters; empty uses the standard "Paid in full" wording). **Download a sample invoice** makes a PDF from a made-up customer using the saved design, so you can check it before the next real invoice. Changes are audited as `commerce.invoice_style_changed`. Invoices already sent are not changed; new ones use the saved design.
+
+## Sizes and deleting a product (6.5.4)
+
+- **More sizes:** Vendor console › Price list › **Add a size** adds another edition (name, what it allows such as `agents=25`, prices) to any product. The same name twice is refused. Use the On sale tick of a size to hide it without deleting it.
+- **Delete a product:** the **Delete** button on a product removes it and its sizes. Only a product that is not part of the program and that no order or subscription uses can be deleted; otherwise switch it off. The website receives `product.changed` with `deleted: true` and `onSale: false`. Audited as `commerce.product_deleted` and `commerce.size_added`.

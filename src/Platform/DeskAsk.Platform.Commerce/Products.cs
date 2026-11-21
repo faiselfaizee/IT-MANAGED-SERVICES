@@ -97,6 +97,65 @@ public static class Products
         return null;
     }
 
+    /// <summary>
+    /// Removes a product and its sizes for good. Only a product that is not part of the program and that nobody ever bought can go; anything else is switched off instead.
+    /// The website hears product.changed with deleted = true (and onSale = false), so one that only knows product.changed also hides it.
+    /// </summary>
+    public static async Task<(string Error, string Detail, int Status)?> DeleteAsync(IServiceProvider sp, string key, string by, CancellationToken ct)
+    {
+        var o = sp.GetRequiredService<CommerceOptions>();
+        Product gone;
+        await using (var db = await CommerceDb.OpenAsync(o, ct))
+        {
+            var p = (await ListAsync(db, ct)).FirstOrDefault(x => x.Key == key);
+            if (p == null) return ("not_found", "There is no product '" + key + "'.", 404);
+            if (p.Built) return ("product_built_in", "This product is part of the program, so it cannot be deleted. Switch it off to take it out of the store and the website.", 409);
+            await using (var used = new NpgsqlCommand("select (select count(*) from commerce.subscriptions where jsonb_exists(lines, @k)) + (select count(*) from commerce.orders where jsonb_exists(lines, @k))", db))
+            {
+                used.Parameters.AddWithValue("k", key);
+                if (Convert.ToInt64(await used.ExecuteScalarAsync(ct)) > 0) return ("product_in_use", "Customers or orders already use this product, so it cannot be deleted. Switch it off instead: customers who have it keep it.", 409);
+            }
+            await using var tx = await db.BeginTransactionAsync(ct);
+            await using (var d1 = new NpgsqlCommand("delete from commerce.plans where module = @k", db, tx)) { d1.Parameters.AddWithValue("k", key); await d1.ExecuteNonQueryAsync(ct); }
+            await using (var d2 = new NpgsqlCommand("delete from commerce.products where key = @k", db, tx)) { d2.Parameters.AddWithValue("k", key); await d2.ExecuteNonQueryAsync(ct); }
+            await tx.CommitAsync(ct);
+            gone = p with { OnSale = false, Sizes = 0 };
+        }
+        await sp.GetRequiredService<IAuditLog>().WriteAsync("commerce.product_deleted", key, gone.Name + "; by " + by, ct: ct);
+        try { await LinkOut.SendAsync(sp, "product.changed", new { key = gone.Key, name = gone.Name, tagline = gone.Tagline, sort = gone.Sort, onSale = false, built = false, sizes = 0, deleted = true }, ct); }
+        catch (Exception e) when (e is NpgsqlException or HttpRequestException or InvalidOperationException) { /* kept for a later attempt or not set up */ }
+        return null;
+    }
+
+    /// <summary>Adds another size (edition) with its prices to a product. limits are what the size allows, for example { "agents": 10 }.</summary>
+    public static async Task<(string Error, string Detail, int Status)?> AddSizeAsync(IServiceProvider sp, JsonElement b, string by, CancellationToken ct)
+    {
+        var module = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("module", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString()!.Trim() : "";
+        var label = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("sizeLabel", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString()!.Trim() : "";
+        if (label.Length is < 1 or > 60) return ("label_missing", "Give the size a name, for example \"Up to 25 users\".", 400);
+        if (!b.TryGetProperty("prices", out var prices) || prices.ValueKind != JsonValueKind.Object) return ("prices_missing", "Prices are missing.", 400);
+        var limits = b.TryGetProperty("limits", out var lim) && lim.ValueKind == JsonValueKind.Object ? lim.GetRawText() : "{}";
+        var o = sp.GetRequiredService<CommerceOptions>();
+        Product now;
+        await using (var db = await CommerceDb.OpenAsync(o, ct))
+        {
+            if (!(await ListAsync(db, ct)).Any(x => x.Key == module)) return ("not_found", "There is no product '" + module + "'.", 404);
+            try
+            {
+                await using var pl = new NpgsqlCommand("insert into commerce.plans (module, size_label, limits, prices, sort) values (@k, @l, @lim, @p, coalesce((select max(sort) from commerce.plans where module = @k), 0) + 10)", db);
+                pl.Parameters.AddWithValue("k", module); pl.Parameters.AddWithValue("l", label);
+                pl.Parameters.Add(new NpgsqlParameter("lim", NpgsqlDbType.Jsonb) { Value = limits });
+                pl.Parameters.Add(new NpgsqlParameter("p", NpgsqlDbType.Jsonb) { Value = prices.GetRawText() });
+                await pl.ExecuteNonQueryAsync(ct);
+            }
+            catch (PostgresException e) when (e.SqlState == "23505") { return ("label_taken", "This product already has a size with that name.", 409); }
+            now = (await ListAsync(db, ct)).First(x => x.Key == module);
+        }
+        await sp.GetRequiredService<IAuditLog>().WriteAsync("commerce.size_added", module, label + "; by " + by, ct: ct);
+        await Announce(sp, now, ct);
+        return null;
+    }
+
     /// <summary>Tells the website. A website that cannot be reached never blocks the change: the event is kept and retried.</summary>
     static async Task Announce(IServiceProvider sp, Product p, CancellationToken ct)
     {
