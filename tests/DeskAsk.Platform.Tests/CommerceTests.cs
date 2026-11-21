@@ -102,7 +102,7 @@ public class CommerceTests : IClassFixture<WebApplicationFactory<Program>>
             Assert.DoesNotContain((await J(await admin.GetAsync("/api/commerce/unlinked"))).EnumerateArray(), x => x.GetProperty("tenantId").GetString() == "oldco");
 
             // 4. a SaaS subscription licenses the customer at once; a change reaches them at once
-            Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync("/api/commerce/subscriptions", Json(new { kind = "saas", tenantId = "dev", lines = new { monitoring = new { max_devices = 50 } }, endsAt = Day(365), account = new { name = "Acme", email = "a@acme.test" } }))).StatusCode);   // monitoring needs assets
+            Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync("/api/commerce/subscriptions", Json(new { kind = "saas", tenantId = "dev", lines = new { nosuchmodule = new { } }, endsAt = Day(365), account = new { name = "Acme", email = "a@acme.test" } }))).StatusCode);   // unknown module
             Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync("/api/commerce/subscriptions", Json(new { kind = "saas", tenantId = "nobody", lines = new { servicedesk = new { } }, endsAt = Day(365), account = new { name = "Acme", email = "a@acme.test" } }))).StatusCode);   // no such customer
             var saas = await admin.PostAsync("/api/commerce/subscriptions", Json(new { kind = "saas", tenantId = "dev", plan = "business", lines = new { servicedesk = new { agents = 10 } }, endsAt = Day(365), account = new { name = "Acme Ltd", email = "a@acme.test", gstin = "29ABCDE1234F1Z5" } }));
             Assert.True(saas.IsSuccessStatusCode, await saas.Content.ReadAsStringAsync());

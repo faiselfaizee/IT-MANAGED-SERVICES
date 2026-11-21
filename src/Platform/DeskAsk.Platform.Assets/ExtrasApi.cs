@@ -140,8 +140,8 @@ public static class ExtrasApi
 
     public static void Map(IEndpointRouteBuilder r, string key)
     {
-        RouteHandlerBuilder Admin(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
-        RouteHandlerBuilder Anyone(RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Read, allCompanies: true);
+        RouteHandlerBuilder Admin(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireFoundation();
+        RouteHandlerBuilder Anyone(RouteHandlerBuilder b) => b.RequireAuthorization().RequireFoundation().RequireAccess(key, Acts.Read, allCompanies: true);
 
         // ================================================================ service checks
         Anyone(r.MapGet("/api/assets/{id:long}/checks", async (long id, ITenantContext t, CancellationToken ct) =>

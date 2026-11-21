@@ -197,7 +197,7 @@ public static class DuplicatesApi
                 })
                 .OrderByDescending(g => g.items.Length).ThenBy(g => g.company).Take(200).ToArray();
             return Results.Ok(new { groups });
-        }).RequireAuthorization(p => p.RequireRole(AssetsAccess.Readers)).RequireModule(key).RequireAccess(key, Acts.Read);
+        }).RequireAuthorization(p => p.RequireRole(AssetsAccess.Readers)).RequireFoundation().RequireAccess(key, Acts.Read);
 
         // keep one asset and retire the others of the same device
         r.MapPost("/api/assets/merge", async (JsonElement b, HttpContext http, ClaimsPrincipal u, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
@@ -256,7 +256,7 @@ public static class DuplicatesApi
             await tx.CommitAsync(ct);
             await audit.WriteAsync("assets.merged", keep.ToString(), $"{string.Join(", ", tags)} into {k.Value.Tag}", ct: ct);
             return Results.Ok(new { ok = true, kept = k.Value.Tag, merged = tags });
-        }).RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Modify);
+        }).RequireAuthorization().RequireFoundation().RequireAccess(key, Acts.Modify);
     }
 }
 
@@ -302,7 +302,7 @@ public static class DuplicateOverride
     {
         // the web asks whether to offer "Add anyway"
         r.MapGet("/api/assets/duplicates/override", async (HttpContext http, CancellationToken ct) => Results.Ok(new { allowed = await AllowedAsync(http, ct) }))
-            .RequireAuthorization().RequireModule(key);
+            .RequireAuthorization().RequireFoundation();
 
         r.MapGet("/api/assets/settings/duplicate-override", async (ISettings s, IUserDirectory users, IAccess access, CancellationToken ct) =>
         {
@@ -310,7 +310,7 @@ public static class DuplicateOverride
             var people = (await users.ListAsync(ct)).Where(u => u.Active && u.Role != "customer" && u.Role != "admin").OrderBy(u => u.Name).Select(u => new { id = u.Id, name = u.Name, email = u.Email, role = u.Role });
             var groups = (await access.GroupsAsync(ct)).OrderBy(g => g.Name).Select(g => new { id = g.Id, name = g.Name });
             return Results.Ok(new { users = who.Users, groups = who.Groups, choices = new { users = people, groups } });
-        }).RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
+        }).RequireAuthorization(p => p.RequireRole("admin")).RequireFoundation();
 
         r.MapPut("/api/assets/settings/duplicate-override", async (JsonElement body, ISettings s, IUserDirectory users, IAccess access, IAuditLog audit, CancellationToken ct) =>
         {
@@ -329,6 +329,6 @@ public static class DuplicateOverride
             await s.SetAsync(Key, JsonSerializer.Serialize(who, Opt), ct);
             await audit.WriteAsync("assets.duplicate_override_set", "settings", $"{who.Users.Count} people, {who.Groups.Count} groups", ct: ct);
             return Results.Ok(new { ok = true });
-        }).RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
+        }).RequireAuthorization(p => p.RequireRole("admin")).RequireFoundation();
     }
 }

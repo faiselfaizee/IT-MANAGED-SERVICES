@@ -110,7 +110,6 @@ public static class Store
             lines.Add(new QuoteLine(module, p.Id, ModuleName(module) + ", " + p.SizeLabel + (r.Kind == "onprem" ? ", on-prem" : "") + (r.Period == "year" ? ", 1 year" : ", 1 month"), price.Value));
             licence[module] = new Dictionary<string, int>(p.Limits);
         }
-        if (licence.ContainsKey(Modules.Monitoring) && !licence.ContainsKey(Modules.Assets)) return (null, "Monitoring needs Asset management: add an Asset management size too.");
         var gross = lines.Sum(l => l.Amount);
         var discount = lines.Count >= 4 ? Math.Round(gross * 0.25m, 2) : 0m;   // suite discount: 4 or more modules
         var subtotal = gross - discount;

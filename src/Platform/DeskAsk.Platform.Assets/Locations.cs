@@ -69,8 +69,8 @@ public static class LocationsApi
 
     public static void Map(IEndpointRouteBuilder r, string key)
     {
-        RouteHandlerBuilder Read(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole(AssetsAccess.Readers)).RequireModule(key).RequireAccess(key, Acts.Read);
-        RouteHandlerBuilder Write(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole(AssetsAccess.Readers)).RequireModule(key);
+        RouteHandlerBuilder Read(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole(AssetsAccess.Readers)).RequireFoundation().RequireAccess(key, Acts.Read);
+        RouteHandlerBuilder Write(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole(AssetsAccess.Readers)).RequireFoundation();
 
         // ------------------------------------------------------------ locations
         Read(r.MapGet("/api/assets/places", async (int? company, HttpContext http, ITenantContext t, CancellationToken ct) =>

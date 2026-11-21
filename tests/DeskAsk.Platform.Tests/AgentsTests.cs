@@ -223,4 +223,31 @@ public class AgentsTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(new[] { "uninstall" }, msgs);
         Assert.Equal(HttpStatusCode.Unauthorized, (await a.Client.GetAsync("/agent/v1/poll?wait=0")).StatusCode);
     }
+
+    [PgFact]
+    public async Task AnAgentTakesOverADeviceThatAControllerAlreadyAddedInsteadOfAddingItTwice()
+    {
+        var api = await Admin(); var (co, tok) = await Setup(api);
+        // what a scan or a site controller leaves behind: no serial number, no agent, but the network adapter's address
+        await Sql("insert into assets.assets (name, status, company_id, category, hostname, ip_address, mac_addresses, source) values ('Reception PC', 'in_use', " + co + ", 'IT hardware', '', '192.168.0.113', '[\"30:56:0f:62:c2:47\"]'::jsonb, 'collector')");
+        await Sql("insert into assets.assets (name, status, company_id, category, hostname, ip_address, mac_addresses, source) values ('Other PC', 'in_use', " + co + ", 'IT hardware', '', '192.168.0.50', '[\"aa:bb:cc:dd:ee:01\"]'::jsonb, 'collector')");
+        var before = (await J(await api.GetAsync("/api/assets?pageSize=50"))).GetProperty("total").GetInt32();
+        var a = await Enroll(tok, host: "DESKTOP-NEW", serial: "SN-7654321");   // the test inventory has the adapter 30-56-0f-62-c2-47
+        var after = (await J(await api.GetAsync("/api/assets?pageSize=50"))).GetProperty("total").GetInt32();
+        Assert.Equal(before, after);                                            // no second device
+        var d = await J(await api.GetAsync("/api/assets/" + a.AssetId + "/device"));
+        Assert.Equal("Reception PC", (await J(await api.GetAsync("/api/assets/" + a.AssetId))).GetProperty("asset").GetProperty("name").GetString());
+        Assert.True(d.GetProperty("agent").GetProperty("online").GetBoolean());
+    }
+
+    [PgFact]
+    public async Task TwoDevicesWithTheSameAdapterAreNotGuessedAtButAddedForTheDuplicatesPage()
+    {
+        var api = await Admin(); var (co, tok) = await Setup(api);
+        foreach (var n in new[] { "A", "B" })
+            await Sql("insert into assets.assets (name, status, company_id, category, hostname, ip_address, mac_addresses, source) values ('Dup " + n + "', 'in_use', " + co + ", 'IT hardware', '', '192.168.0.9', '[\"30:56:0f:62:c2:47\"]'::jsonb, 'collector')");
+        var a = await Enroll(tok, host: "DESKTOP-NEW", serial: "SN-7654321");
+        var name = (await J(await api.GetAsync("/api/assets/" + a.AssetId))).GetProperty("asset").GetProperty("name").GetString();
+        Assert.Equal("DESKTOP-NEW", name);   // a new device: with two candidates nothing is taken over
+    }
 }

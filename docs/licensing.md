@@ -11,7 +11,7 @@ deskask-license issue --key vendor-private.pem --tenant acme --plan business --d
   --modules servicedesk:agents=10,assets:max_assets=300,monitoring:max_devices=150,vault:max_users=25
 ```
 
-Module names: `servicedesk`, `assets`, `monitoring`, `adsuite` (AD Manager), `vault`, `backup`. **Monitoring needs `assets`** in the same licence (it watches the devices Assets holds).
+Module names: `servicedesk`, `assets`, `monitoring`, `adsuite` (AD Manager), `vault`, `backup`. Monitoring can be licensed on its own (6.6.0): customers, logins, agents and discovery are shared "foundation" under Administration › Devices setup and work with either `assets` or `monitoring`. With Monitoring only, the device cap is `monitoring:max_devices`.
 
 ## Limits
 

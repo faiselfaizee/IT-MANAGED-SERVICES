@@ -752,9 +752,9 @@ public sealed class AssetsModule : IPlatformModule
 
     public void MapEndpoints(IEndpointRouteBuilder r)
     {
-        var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(Key);
-        var delegated = (string action, RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(Key).RequireAccess(Key, action);
-        var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(Key).RequireAccess(Key, Acts.Read);
+        var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireFoundation();
+        var delegated = (string action, RouteHandlerBuilder b) => b.RequireAuthorization().RequireFoundation().RequireAccess(Key, action);
+        var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireFoundation().RequireAccess(Key, Acts.Read);
 
         AssetsDevice.Map(r, Key);
         AgentsApi.Map(r, Key);

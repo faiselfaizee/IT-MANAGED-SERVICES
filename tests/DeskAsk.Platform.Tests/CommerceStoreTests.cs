@@ -229,7 +229,8 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
             var subs = await J(await admin.GetAsync("/api/commerce/subscriptions?q=" + trial));
             var ts = subs.EnumerateArray().Single().GetProperty("sub");
             Assert.Equal("trial", ts.GetProperty("state").GetString());
-            Assert.True(ts.GetProperty("lines").TryGetProperty("assets", out _));   // monitoring brings asset management
+            Assert.True(ts.GetProperty("lines").TryGetProperty("monitoring", out _));
+            Assert.False(ts.GetProperty("lines").TryGetProperty("assets", out _));   // Monitoring works on its own: no Asset management is added
             var tsId = ts.GetProperty("id").GetString();
             var ends = ts.GetProperty("endsAt").GetDateTime();
             var ext = await J(await admin.PostAsync("/api/commerce/subscriptions/" + tsId + "/extend", Json(new { days = 7 })));

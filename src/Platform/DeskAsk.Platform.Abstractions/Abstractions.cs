@@ -144,10 +144,29 @@ public static class EntitlementExtensions
             return Results.Json(new { error = "module_not_licensed", module }, statusCode: 402);
         });
 
-    /// <summary>True when count is still below the licensed limit (no limit = unlimited). Call before creating the next item.</summary>
+    /// <summary>
+    /// The customers, logins, agents, controllers, scans and the device list are shared by Asset management and Monitoring: they work when the licence includes either.
+    /// Asset management's own pages (warranty, contracts, software, licences, reports, exports, remote tools) still need Asset management.
+    /// </summary>
+    public static RouteHandlerBuilder RequireFoundation(this RouteHandlerBuilder b) =>
+        b.AddEndpointFilter(async (ctx, next) =>
+        {
+            var lic = await ctx.HttpContext.RequestServices.GetRequiredService<IEntitlements>().CurrentAsync(ctx.HttpContext.RequestAborted);
+            if (lic.Has(Modules.Assets) || lic.Has(Modules.Monitoring)) return await next(ctx);
+            if (lic.ReadOnly(Modules.Assets) || lic.ReadOnly(Modules.Monitoring))
+                return HttpMethods.IsGet(ctx.HttpContext.Request.Method) || HttpMethods.IsHead(ctx.HttpContext.Request.Method)
+                    ? await next(ctx)
+                    : Results.Json(new { error = "license_expired", module = Modules.Assets, readOnly = true, detail = "The licence has ended, so this is read-only. Renew the licence to make changes again." }, statusCode: 402);
+            return Results.Json(new { error = "module_not_licensed", module = Modules.Assets }, statusCode: 402);
+        });
+
+    /// <summary>True when count is still below the licensed limit (no limit = unlimited). Call before creating the next item.
+    /// Without Asset management in the licence, the devices Monitoring watches are limited by its max_devices instead of max_assets.</summary>
     public static async Task<bool> WithinLimitAsync(this IEntitlements e, string module, string limit, long currentCount, CancellationToken ct = default)
     {
-        var l = (await e.CurrentAsync(ct)).Limit(module, limit);
+        var lic = await e.CurrentAsync(ct);
+        if (module == Modules.Assets && limit == LicenseLimits.MaxAssets && !lic.Has(Modules.Assets) && lic.Has(Modules.Monitoring)) { module = Modules.Monitoring; limit = LicenseLimits.MaxDevices; }
+        var l = lic.Limit(module, limit);
         return l == null || currentCount < l;
     }
 }

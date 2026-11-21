@@ -133,8 +133,8 @@ public static class PrinterApi
 
     public static void Map(IEndpointRouteBuilder r, string key)
     {
-        var readers = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole(AssetsAccess.Readers)).RequireModule(key).RequireAccess(key, Acts.Read);
-        var staff = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin", "engineer")).RequireModule(key);
+        var readers = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole(AssetsAccess.Readers)).RequireFoundation().RequireAccess(key, Acts.Read);
+        var staff = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin", "engineer")).RequireFoundation();
 
         readers(r.MapGet("/api/assets/{id:long}/printer", async (long id, HttpContext http, ITenantContext t, CancellationToken ct) =>
         {
