@@ -102,8 +102,10 @@ public static class Activation
 
         // the administrator types the licence key: exchange it for a licence bound to this installation
         r.MapPost("/api/platform/license/activate", async (JsonElement b, HttpContext http, ISettings s, IDataProtectionProvider dp, IConfiguration cfg, ITenantContext t,
-            LicenseResolver res, IAuditLog audit, CancellationToken ct) =>
+            LicenseResolver res, IAuditLog audit, ILoggerFactory logs, CancellationToken ct) =>
         {
+            try
+            {
             var key = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("key", out var k) && k.ValueKind == JsonValueKind.String ? k.GetString()!.Trim().ToUpperInvariant() : "";
             if (key.Length is < 10 or > 64) return Results.BadRequest(new { error = "key_missing", detail = "Type the licence key, for example DKA-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX." });
             var installation = (await Installation.GetAsync(s, create: true, ct))!;
@@ -120,6 +122,13 @@ public static class Activation
             await SaveAsync(s, dp, new ActivationState(url, id, secret, key[^4..], DateTime.UtcNow, DateTime.UtcNow, "Activated."), ct);
             await audit.WriteAsync("license.activated", "key ending " + key[^4..], "installation " + installation, ct: ct);
             return Results.Ok(LicensingModule.Summary(await res.CurrentAsync(ct), t, res.Vendor));
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                // say what failed instead of a bare 500, and keep the full error in the server log
+                logs.CreateLogger("DeskAsk.Licensing").LogError(e, "Activating a licence key failed for customer {Tenant}", t.Current?.Id);
+                return Results.Json(new { error = "activation_failed", detail = "The key could not be activated: " + e.GetType().Name + ": " + e.Message + " (see the DeskAsk log for the full error)." }, statusCode: 500);
+            }
         }).RequireAuthorization(p => p.RequireRole("admin"));
 
         r.MapPost("/api/platform/license/refresh", async (HttpContext http, IAuditLog audit, CancellationToken ct) =>

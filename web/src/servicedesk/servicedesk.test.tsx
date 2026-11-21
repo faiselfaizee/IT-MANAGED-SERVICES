@@ -25,7 +25,7 @@ test('list shows tickets with their service level and the staff-only filters', a
     '/api/servicedesk/me': staffMe, '/api/servicedesk/summary': { open: 3, progress: 1, hold: 2, unassigned: 4, mine: 1, overdue: 1 },
     '/api/servicedesk/tickets?': { total: 1, items: [ticket()] },
   });
-  location.hash = '#/servicedesk'; render(<ServiceDeskApp />);
+  location.hash = '#/servicedesk/all'; render(<ServiceDeskApp />);
   await waitFor(() => expect(screen.getByText('Printer down')).toBeTruthy());
   expect(screen.getByText('Due soon')).toBeTruthy(); expect(screen.getAllByText('High').length).toBeGreaterThan(0);
   expect(screen.getByLabelText('Assigned to')).toBeTruthy();
@@ -96,4 +96,16 @@ test('a required extra field must be filled in before a ticket can be opened', a
   expect((screen.getByText('Open ticket') as HTMLButtonElement).disabled).toBe(true);
   fireEvent.change(screen.getByRole('combobox', { name: /Site code/ }), { target: { value: 'DEL' } });
   await waitFor(() => expect((screen.getByText('Open ticket') as HTMLButtonElement).disabled).toBe(false));
+});
+
+test('the dashboard shows circles for the desk and one tile per customer', async () => {
+  const row = (over: Record<string, unknown>) => ({ companyId: 1, company: 'Acme', open: 2, progress: 1, hold: 1, overdue: 1, unassigned: 2, critical: 0, done: 5, ...over });
+  mockApi({
+    '/api/servicedesk/me': staffMe,
+    '/api/servicedesk/dashboard': { restricted: false, all: row({ companyId: null, company: 'All customers', open: 3, progress: 2, hold: 1, overdue: 1, unassigned: 3, done: 9 }), tiles: [row({}), row({ companyId: 2, company: 'Globex', open: 1, progress: 1, hold: 0, overdue: 0, unassigned: 1, done: 4 })] },
+  });
+  location.hash = '#/servicedesk'; render(<ServiceDeskApp />);
+  await waitFor(() => expect(screen.getByText('Globex')).toBeTruthy());
+  expect(screen.getByText('Acme')).toBeTruthy(); expect(screen.getByText('Open tickets')).toBeTruthy(); expect(screen.getByText('Service level')).toBeTruthy();
+  expect(screen.getAllByRole('link', { name: 'All tickets' }).length).toBeGreaterThan(0);
 });

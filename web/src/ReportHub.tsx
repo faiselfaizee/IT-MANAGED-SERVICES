@@ -14,7 +14,8 @@ export function ReportList({ title, intro, entries }: { title: string; intro: st
     <div className="report-list">
       {groups.map((g) => <section key={g} aria-labelledby={'rg-' + g}>
         <h2 id={'rg-' + g}>{g}</h2>
-        <ul>{entries.filter((e) => e.group === g).map((e) => <li key={e.key}><a href={e.href}>{e.title}</a><span className="muted">{e.about}</span></li>)}</ul>
+        <div className="report-cards">{entries.filter((e) => e.group === g).map((e) => <a key={e.key} href={e.href} className="report-card" aria-label={e.title}>
+          <b>{e.title}</b><span className="muted">{e.about}</span></a>)}</div>
       </section>)}
     </div>
   </>;

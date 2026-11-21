@@ -123,6 +123,15 @@ public static class Link
 
         Signed(r.MapGet("/api/link/v1/ping", () => Results.Ok(new { ok = true, platform = "DeskAsk" })));
 
+        // the website's admin lists the products and switches one on or off: the platform keeps the one list, so both sides always show the same
+        Signed(r.MapGet("/api/link/v1/products", async (CommerceOptions o, CancellationToken ct) => Results.Ok(await Products.ListViewAsync(o, ct))));
+        Signed(r.MapPost("/api/link/v1/products/{key}", async (string key, JsonElement b, IServiceProvider sp, CancellationToken ct) =>
+        {
+            bool? sale = b.ValueKind == JsonValueKind.Object && b.TryGetProperty("onSale", out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False ? v.GetBoolean() : null;
+            return Products.Result(await Products.SetAsync(sp, key, sale, b.ValueKind == JsonValueKind.Object && b.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null,
+                b.ValueKind == JsonValueKind.Object && b.TryGetProperty("tagline", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null, "the website", ct), new { saved = true });
+        }));
+
         // what a renewal link stands for: the customer, their contact details and their current plan, so the website can fill in the checkout
         Signed(r.MapGet("/api/link/v1/renew", async (string? token, CommerceOptions o, IDataProtectionProvider dp, CancellationToken ct) =>
         {

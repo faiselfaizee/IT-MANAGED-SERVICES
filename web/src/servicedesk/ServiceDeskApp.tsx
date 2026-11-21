@@ -1,6 +1,7 @@
 import { useHash, useLoad, type Rec } from '../http';
 import Detail from './Detail';
 import List from './List';
+import Dashboard from './Dashboard';
 import NewTicket from './NewTicket';
 import { People, Settings } from './Admin';
 import Integrations from './Integrations';
@@ -34,9 +35,10 @@ export default function ServiceDeskApp() {
   else if (a === 'reports' && (sees || m?.role === 'cadmin')) page = <Reports staff={sees} />;
   else if (a === 'connections' && admin) page = <Integrations />;
   else if (a === 'people' && admin) page = <People />;
-  else page = <List key="all" me={m} />;
+  else if (a === 'all' || !sees) page = <List key="all" me={m} />;
+  else page = <Dashboard />;
   const menu: { group: string; items: [string, string, boolean][] }[] = [
-    { group: 'Overview', items: [['', 'All tickets', true], ['new', 'New ticket', !!m?.canRaise]] },
+    { group: 'Overview', items: [['', 'Dashboard', sees], ['all', 'All tickets', true], ['new', 'New ticket', !!m?.canRaise]] },
     { group: 'Incidents', items: [['incidents', 'Incidents', true], ['major', 'Major incidents', sees]] },
     { group: 'Service requests', items: [['catalog', 'Service catalogue', !!m?.canRaise || staff], ['requests', 'Requests', true], ['approvals', 'Approvals', staff]] },
     { group: 'Problems', items: [['problems', 'Problems', sees], ['known-errors', 'Known errors', sees]] },

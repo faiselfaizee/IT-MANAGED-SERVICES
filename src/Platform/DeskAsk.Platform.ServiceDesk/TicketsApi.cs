@@ -148,6 +148,34 @@ public static class TicketsApi
             return Results.Ok(new { open = rd.GetInt64(0), progress = rd.GetInt64(1), hold = rd.GetInt64(2), resolved = rd.GetInt64(3), closed = rd.GetInt64(4), unassigned = rd.GetInt64(5), mine = rd.GetInt64(6), overdue = rd.GetInt64(7), critical = rd.GetInt64(8) });
         }));
 
+        // the dashboard: counts per customer (staff and viewers see every customer, a customer's own people only their company)
+        anyone(r.MapGet("/api/servicedesk/dashboard", async (ClaimsPrincipal u, ITenantContext t, CancellationToken ct) =>
+        {
+            await using var db = await Open(t, ct);
+            var w = await WhoAsync(u, db, ct);
+            await using var c = new NpgsqlCommand { Connection = db };
+            var scope = Scope(w, c);
+            c.CommandText = $@"select t.company_id, coalesce(max(t.company_name), ''),
+                count(*) filter (where status = 'open'), count(*) filter (where status = 'progress'), count(*) filter (where status = 'hold'),
+                count(*) filter (where status not in ('resolved','closed') and paused_at is null and resolve_due < now()),
+                count(*) filter (where status not in ('resolved','closed') and assignee_id is null),
+                count(*) filter (where status not in ('resolved','closed') and priority = 'critical'),
+                count(*) filter (where status in ('resolved','closed') and resolved_at > now() - interval '30 days')
+                from servicedesk.tickets t where {scope} group by t.company_id order by 2";
+            var tiles = new List<Dictionary<string, object?>>();
+            await using (var rd = await c.ExecuteReaderAsync(ct))
+                while (await rd.ReadAsync(ct))
+                    tiles.Add(new Dictionary<string, object?>
+                    {
+                        ["companyId"] = rd.IsDBNull(0) ? null : rd.GetInt32(0), ["company"] = rd.IsDBNull(0) ? "No company" : rd.GetString(1),
+                        ["open"] = rd.GetInt64(2), ["progress"] = rd.GetInt64(3), ["hold"] = rd.GetInt64(4), ["overdue"] = rd.GetInt64(5),
+                        ["unassigned"] = rd.GetInt64(6), ["critical"] = rd.GetInt64(7), ["done"] = rd.GetInt64(8),
+                    });
+            var all = new Dictionary<string, object?> { ["companyId"] = null, ["company"] = "All customers" };
+            foreach (var k in new[] { "open", "progress", "hold", "overdue", "unassigned", "critical", "done" }) all[k] = tiles.Sum(x => (long)x[k]!);
+            return Results.Ok(new { restricted = !(w.Staff || w.Role == "viewer"), all, tiles });
+        }));
+
         // ---------------------------------------------------------------- one ticket
         anyone(r.MapGet("/api/servicedesk/tickets/{id:long}", async (long id, ClaimsPrincipal u, ITenantContext t, ISettings s, CancellationToken ct) =>
         {

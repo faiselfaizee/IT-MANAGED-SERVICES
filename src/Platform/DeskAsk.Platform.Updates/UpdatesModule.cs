@@ -42,8 +42,29 @@ public sealed class UpdatesModule : IPlatformModule
         catch (Exception) { return null; }
     }
 
+    /// <summary>
+    /// On the shared SaaS server (one with a customer catalog) the program is updated by the vendor only: the customers' administrators never see the
+    /// update page and these addresses answer 404 for them. On a customer's own installation the administrator updates it, as before.
+    /// </summary>
+    public static bool Allowed(IConfiguration cfg, ITenantContext t)
+    {
+        var shared = !string.IsNullOrWhiteSpace(cfg["Platform:CatalogConnection"]) || !string.IsNullOrWhiteSpace(cfg["Licensing:CatalogConnection"]);
+        if (!shared) return true;
+        var vendor = cfg["Commerce:VendorTenant"] is { Length: > 0 } v ? v : "platform";
+        return t.Current?.Id == vendor;
+    }
+
+    static async ValueTask<object?> VendorOnly(EndpointFilterInvocationContext ctx, EndpointFilterDelegate next)
+    {
+        var sp = ctx.HttpContext.RequestServices;
+        return Allowed(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<ITenantContext>()) ? await next(ctx) : Results.NotFound(new { error = "not_found" });
+    }
+
     public void MapEndpoints(IEndpointRouteBuilder r)
     {
+        // what the menu needs: may this customer's administrators update the program?
+        r.MapGet("/api/platform/updates/access", (IConfiguration cfg, ITenantContext t) => Results.Ok(new { allowed = Allowed(cfg, t) })).RequireAuthorization(p => p.RequireRole("admin"));
+
         r.MapGet("/api/platform/updates", (IConfiguration cfg) =>
         {
             var dir = Dir(cfg);
@@ -61,7 +82,7 @@ public sealed class UpdatesModule : IPlatformModule
                 if (IdRx.IsMatch(d.Name) && !seen.Contains(d.Name) && ReadJson(Path.Combine(d.FullName, "job.json")) is { } q)
                     queued.Add(new { id = d.Name, file = q.TryGetProperty("file", out var fe) ? fe.GetString() : "", by = q.TryGetProperty("by", out var be) ? be.GetString() : "" });
             return Results.Ok(new { installed = true, serviceAlive = alive, status, jobs, queued });
-        }).RequireAuthorization(p => p.RequireRole("admin"));
+        }).RequireAuthorization(p => p.RequireRole("admin")).AddEndpointFilter(VendorOnly);
 
         r.MapPost("/api/platform/updates", async (HttpContext http, IConfiguration cfg, IAuditLog audit, CancellationToken ct) =>
         {
@@ -113,7 +134,7 @@ public sealed class UpdatesModule : IPlatformModule
             finally { if (!ok) { try { Directory.Delete(folder, true); } catch (Exception) { } } }
             await audit.WriteAsync("update.uploaded", name, $"{total} bytes, SHA-256 {sha}", ct: ct);
             return Results.Json(new { ok = true, id, sha256 = sha, size = total, note = "The updater verifies the signature before it changes anything." }, statusCode: 202);
-        }).RequireAuthorization(p => p.RequireRole("admin"));
+        }).RequireAuthorization(p => p.RequireRole("admin")).AddEndpointFilter(VendorOnly);
 
         // The same upload in small pieces (the web page sends about 5 MB at a time), so no proxy or firewall with a time limit can cut it off:
         // POST ?upload=<id>&at=<bytes already sent>[&done=1][&name=..&force=1]; the body is the next piece.
@@ -181,7 +202,7 @@ public sealed class UpdatesModule : IPlatformModule
                 return Results.Json(new { ok = true, id, sha256 = sha, size = total, note = "The updater verifies the signature before it changes anything." }, statusCode: 202);
             }
             finally { if (!ok && done) { try { Directory.Delete(folder, true); } catch (Exception) { } } }
-        }).RequireAuthorization(p => p.RequireRole("admin"));
+        }).RequireAuthorization(p => p.RequireRole("admin")).AddEndpointFilter(VendorOnly);
 
         r.MapDelete("/api/platform/updates/{id}", async (string id, IConfiguration cfg, IAuditLog audit, CancellationToken ct) =>
         {
@@ -193,6 +214,6 @@ public sealed class UpdatesModule : IPlatformModule
             try { Directory.Delete(folder, true); } catch (Exception e) { return Results.Json(new { error = "cannot_remove", reason = e.Message }, statusCode: 409); }
             await audit.WriteAsync("update.cancelled", id, ct: ct);
             return Results.Ok(new { ok = true });
-        }).RequireAuthorization(p => p.RequireRole("admin"));
+        }).RequireAuthorization(p => p.RequireRole("admin")).AddEndpointFilter(VendorOnly);
     }
 }

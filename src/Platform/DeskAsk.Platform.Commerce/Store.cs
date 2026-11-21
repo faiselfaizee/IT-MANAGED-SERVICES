@@ -42,12 +42,14 @@ public static class Store
 
     public static async Task<List<Plan>> PlansAsync(NpgsqlConnection db, CancellationToken ct)
     {
-        await using var q = new NpgsqlCommand("select id, module, size_label, limits::text, prices::text, sort from commerce.plans where active order by sort, id", db);
-        await using var rd = await q.ExecuteReaderAsync(ct);
+        await using var q = new NpgsqlCommand("select id, module, size_label, limits::text, prices::text, sort from commerce.plans where active
+            and module not in (select key from commerce.products where not on_sale) order by sort, id", db);
         var list = new List<Plan>();
-        while (await rd.ReadAsync(ct))
-            list.Add(new Plan(rd.GetInt32(0), rd.GetString(1), rd.GetString(2), JsonSerializer.Deserialize<Dictionary<string, int>>(rd.GetString(3)) ?? new(),
-                JsonDocument.Parse(rd.GetString(4)).RootElement.Clone(), rd.GetInt32(5)));
+        await using (var rd = await q.ExecuteReaderAsync(ct))
+            while (await rd.ReadAsync(ct))
+                list.Add(new Plan(rd.GetInt32(0), rd.GetString(1), rd.GetString(2), JsonSerializer.Deserialize<Dictionary<string, int>>(rd.GetString(3)) ?? new(),
+                    JsonDocument.Parse(rd.GetString(4)).RootElement.Clone(), rd.GetInt32(5)));
+        await LoadNamesAsync(db, ct);
         return list;
     }
 
@@ -77,9 +79,16 @@ public static class Store
     public sealed record Quote(string Currency, string Kind, string Period, List<QuoteLine> Lines, decimal Discount, decimal Subtotal, List<TaxLine> Taxes, decimal Tax, decimal Total,
         string TaxNote, Dictionary<string, Dictionary<string, int>> Licence);
 
-    static readonly Dictionary<string, string> ModuleNames = new()
-    { ["servicedesk"] = "Service Desk", ["assets"] = "Asset management", ["monitoring"] = "Monitoring", ["adsuite"] = "AD Manager", ["vault"] = "Vault", ["backup"] = "Backup" };
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> ModuleNames = new(new Dictionary<string, string>
+    { ["servicedesk"] = "Service Desk", ["assets"] = "Asset management", ["monitoring"] = "Monitoring", ["adsuite"] = "AD Manager", ["vault"] = "Vault", ["backup"] = "Backup" });
     public static string ModuleName(string m) => ModuleNames.TryGetValue(m, out var n) ? n : m;
+    /// <summary>Product names the vendor changed or added (commerce.products), kept for ModuleName.</summary>
+    public static async Task LoadNamesAsync(NpgsqlConnection db, CancellationToken ct)
+    {
+        await using var q = new NpgsqlCommand("select key, name from commerce.products", db);
+        await using var rd = await q.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct)) ModuleNames[rd.GetString(0)] = rd.GetString(1);
+    }
 
     /// <summary>Works out an order. Returns the quote, or the reason it cannot be sold that way.</summary>
     public static (Quote? Quote, string? Error) Make(QuoteRequest r, List<Plan> plans, Business biz)

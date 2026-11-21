@@ -56,7 +56,12 @@ The command prints the first administrator's password once. If it was lost: `des
 
 ## Making it reachable
 `-Urls http://localhost:5000` is only for this machine. Two ways to publish it:
-- **IIS as the front door (recommended):** install URL Rewrite and Application Request Routing, create a site with your certificate, and add a reverse-proxy rule to `http://localhost:5000`. The proxy must pass the original host name on (ARR: "Preserve client host header"), because each customer is found by the address they use. When the platform listens on this machine only, it believes the proxy's `X-Forwarded-Proto` (sign-in needs to know the outside address was https); `Platform:TrustProxyHeaders=true` does the same for other setups. The setup page does all of this for you. When you give the site host names such as `platform.deskask.in`, it also adds `*.deskask.in`, so customers created later (trials and purchases, for example `acme.deskask.in`) open without any IIS change; a site with a more specific name on the same server (such as `www.deskask.in`) still gets its own traffic. On an existing install, add it once: `New-WebBinding -Name 'DeskAsk' -Protocol http -Port 80 -HostHeader '*.deskask.in'`.
+- **IIS as the front door (recommended):** install URL Rewrite and Application Request Routing, create a site with your certificate, and add a reverse-proxy rule to `http://localhost:5000`. The proxy must pass the original host name on (ARR: "Preserve client host header"), because each customer is found by the address they use. When the platform listens on this machine only, it believes the proxy's `X-Forwarded-Proto` (sign-in needs to know the outside address was https); `Platform:TrustProxyHeaders=true` does the same for other setups. The setup page does all of this for you. When you give the site host names such as `platform.deskask.in`, it also adds `*.deskask.in`, so customers created later (trials and purchases, for example `acme.deskask.in`) open without any IIS change; a site with a more specific name on the same server (such as `www.deskask.in`) still gets its own traffic. On an existing install (made before this was added), run it once on the IIS server, in an elevated PowerShell:
+  ```powershell
+  Import-Module WebAdministration
+  New-WebBinding -Name 'DeskAsk' -Protocol http -Port 80 -HostHeader '*.deskask.in'
+  ```
+  Until this binding exists, a new customer's address (for example `acme.deskask.in`) does not open, even though the customer was created correctly. If the https is ended by another proxy (HAProxy, OPNsense) in front of IIS, it also needs its own wildcard rule for `*.deskask.in`.
 - **Another proxy in front of IIS (HAProxy, nginx, a firewall):** when that proxy ends the https connection and talks plain http to IIS, it must send `X-Forwarded-Proto: https` (HAProxy: `http-request set-header X-Forwarded-Proto https` on the https frontend). Also send `X-Forwarded-Ssl: on`: IIS passes it on untouched, so it works even when the IIS site was made by an older setup that replaces X-Forwarded-Proto. The IIS site keeps that header; without it sign-in stops with "This server only accepts HTTPS requests" (ID2083).
 - **Direct:** `-Urls "https://+:443"` needs a certificate configured for Kestrel; the script opens the firewall port when the address is not local.
 
@@ -67,7 +72,10 @@ Either upload the new `.dkb` in the platform (two-step sign-in required), or run
 `.\install-windows.ps1 -Uninstall` removes the service and task and keeps data and configuration. Add `-RemoveFiles` to delete `C:\DeskAsk` too (customer databases stay in PostgreSQL).
 
 ## Licence
-Put the vendor public key and licence into `config\deskask.json` as `Licensing:VendorPublicKeyPem` and `Licensing:File` (see ADR 0008), then restart the service: `Restart-Service DeskAskPlatform`.
+The vendor public key is built into every release, so nothing needs to go into the configuration. Do **not** add `Licensing:VendorPublicKeyPem` unless you were given a different key: a value that is not a valid key is ignored and Administration › Licence shows a warning (see Troubleshooting). Customers activate with their licence key on Administration › Licence. On the shared SaaS server, customers' licences come from the catalog; `Licensing:AllowUnlicensed` is a development switch and is ignored there.
+
+## Who updates the program
+On a customer's own installation the administrator updates it (Administration › Updates). On the shared SaaS server only the vendor's own customer (`Commerce:VendorTenant`, default `platform`) sees and may use Updates; every other customer's administrators get no Updates page and those addresses answer 404.
 
 ## If something fails
-`C:\DeskAsk\logs\updater.log`, the Windows Application event log (source "DeskAskPlatform"), and `Get-Service DeskAskPlatform`.
+`C:\DeskAsk\logs\updater.log`, the Windows Application event log (source "DeskAskPlatform"), and `Get-Service DeskAskPlatform`. Common problems and their fixes are in [troubleshooting.md](troubleshooting.md).

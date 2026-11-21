@@ -207,8 +207,10 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const inSub = parts[0] === 'subscription' && isAdmin;
   const brand = useBrand();
   const inMail = parts[0] === 'mail' && isAdmin;
-  const inUpdates = parts[0] === 'updates' && isAdmin;
   const commerce = useLoad<Rec>(fetcher || !isAdmin ? null : '/api/commerce/status', [isAdmin]);
+  const upd = useLoad<Rec>(fetcher || !isAdmin ? null : '/api/platform/updates/access', [isAdmin]);
+  const canUpdate = isAdmin && upd.data?.allowed !== false;   // the shared server is updated by the vendor only
+  const inUpdates = parts[0] === 'updates' && canUpdate;
   const isVendor = isAdmin && !!commerce.data?.enabled;
   const inVendor = parts[0] === 'vendor' && isVendor;
   const readOnly = Array.isArray(mods.data) ? mods.data.filter((m) => m.readOnly).length > 0 : false;
@@ -236,7 +238,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
         {isAdmin ? <div className="side-group"><h4>Administration</h4>
           <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a>
           <a href="#/mail" className={inMail ? 'on' : ''}><Icon name="mail" />Mail</a>
-          <a href="#/updates" className={inUpdates ? 'on' : ''}><Icon name="updates" />Updates</a>
+          {canUpdate ? <a href="#/updates" className={inUpdates ? 'on' : ''}><Icon name="updates" />Updates</a> : null}
           <a href="#/licence" className={inLicence ? 'on' : ''}><Icon name="licence" />Licence</a>
           <a href="#/subscription" className={inSub ? 'on' : ''}><Icon name="licence" />Subscription</a>
           <a href="#/branding" className={inBranding ? 'on' : ''}><Icon name="branding" />Branding</a>

@@ -45,3 +45,7 @@ up to 60 minutes, for 3 days (job `commerce.link`). Vendor console › Website l
 Administration › Subscription › **Renew** / **Add or change modules** open `https://www.deskask.in/pricing?renew=<link>` (valid 3 days). The website
 asks `GET renew?token=` for the customer, their contact details and current plan, fills the checkout, and sends `renew` with it; only then may
 the customer's own address be bought again. A renewal before the paid period ends adds the new period after it.
+
+## Products on sale (6.5.1)
+
+The platform keeps one list of products (Vendor console › Prices › Products on sale). `GET /api/link/v1/plans` only returns sizes of products that are on sale, so switching a product off in the console removes it from the website, quotes and the free trial at once. `GET /api/link/v1/products` lists every product (key, name, tagline, onSale, built, sizes); `POST /api/link/v1/products/{key}` with `{ "onSale": true|false, "name": "...", "tagline": "..." }` (signed like every other call) lets the website's admin switch a product or rename it. Every change, from either side, is sent to the website as the event `product.changed` with the product's new state, so the website can refresh what it caches. A product added in the console that the program does not contain yet (`built: false`) can be listed and sold, but customers receive it only when a release that contains it is installed.

@@ -90,7 +90,9 @@ public sealed class LicenseResolver : IEntitlements
     public async Task<License> ComputeAsync(CancellationToken ct = default)
     {
         var t = tenant.Require();
-        if (cfg.GetValue<bool>("Licensing:AllowUnlicensed"))
+        // The development switch is never honoured on a shared SaaS server (one with a customer catalog): a customer there has the licence the catalog holds, nothing else.
+        var shared = !string.IsNullOrWhiteSpace(cfg["Platform:CatalogConnection"]) || !string.IsNullOrWhiteSpace(cfg["Licensing:CatalogConnection"]);
+        if (cfg.GetValue<bool>("Licensing:AllowUnlicensed") && !shared)
             return new License(LicenseState.Valid, new LicensePayload(1, t.Id, "development", 0, 0, long.MaxValue / 2, 0, Modules.All.ToDictionary(m => m, _ => new ModuleGrant())), "");
         var tokens = new List<string>();
         var up = await settings.GetAsync(SettingKey, ct);
@@ -214,7 +216,7 @@ public sealed class LicensingModule : IPlatformModule
             if (string.IsNullOrWhiteSpace(token) || token.Length > 20000) return Results.BadRequest(new { error = "token_missing" });
             if (await res.InstallAsync(token, "upload", ct) is { } refused) return Results.Json(refused.Body, statusCode: refused.Status);
             var l = await res.CurrentAsync(ct);
-            await audit.WriteAsync("license.installed", l.Payload?.Plan ?? "", "expires " + (l.Payload == null ? "" : DateTimeOffset.FromUnixTimeSeconds(l.Payload.Expires).UtcDateTime.ToString("yyyy-MM-dd")) + "; modules " + string.Join(",", l.Payload?.Modules.Keys ?? Enumerable.Empty<string>()), ct: ct);
+            await audit.WriteAsync("license.installed", l.Payload?.Plan ?? "", "expires " + (l.Payload == null ? "" : DateTimeOffset.FromUnixTimeSeconds(Math.Min(l.Payload.Expires, 253370764800L)).UtcDateTime.ToString("yyyy-MM-dd")) + "; modules " + string.Join(",", l.Payload?.Modules.Keys ?? Enumerable.Empty<string>()), ct: ct);
             return Results.Ok(Summary(l, t, vendor));
         }).RequireAuthorization(p => p.RequireRole("admin"));
     }
