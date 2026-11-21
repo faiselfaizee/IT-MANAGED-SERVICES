@@ -80,7 +80,7 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(54400m, Store.Make(new("onprem", "year", new() { ["servicedesk"] = 1 }, "IN", "33", ""), plans, biz).Quote!.Subtotal);   // on-prem: 20% less
         var suite = Store.Make(new("saas", "year", new() { ["servicedesk"] = 1, ["assets"] = 2, ["monitoring"] = 3, ["vault"] = 4 }, "IN", "33", ""), plans, biz).Quote!;
         Assert.Equal(68000m, suite.Discount);   // 25% of 4 x 68,000
-        Assert.Contains("Asset management", Store.Make(new("saas", "year", new() { ["monitoring"] = 3 }, "IN", "33", ""), plans, biz).Error);
+        Assert.Null(Store.Make(new("saas", "year", new() { ["monitoring"] = 3 }, "IN", "33", ""), plans, biz).Error);   // Monitoring can be bought alone (6.6.0)
         Assert.NotNull(Store.Make(new("onprem", "month", new() { ["servicedesk"] = 1 }, "IN", "33", ""), plans, biz).Error);
         Assert.Equal("Rupees One Lakh Fifty Three Thousand Five Hundred Only", Invoices.Words(153500m, "INR"));
         Assert.Equal("US Dollars Two Thousand Four Hundred Eighty Five and Fifty Cents Only", Invoices.Words(2485.50m, "USD"));
