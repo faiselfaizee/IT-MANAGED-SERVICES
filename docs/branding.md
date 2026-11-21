@@ -41,3 +41,13 @@ Two per-customer settings: `branding` (the values and a logo version number used
 ## Browser-tab icon (6.3)
 
 Administration › Branding › Browser-tab icon: upload a square PNG, SVG or ICO (up to 128 KB; 32 x 32 or 64 x 64 pixels is enough). It is used in the browser tab, bookmarks and on the sign-in pages. Without one, the logo is used; without a logo, the standard DeskAsk icon. "Go back to the standard look" removes it too.
+
+## Reports and exports (PDF) design
+
+Administration › Branding has a **Reports and exports (PDF)** card. It sets the look of every PDF this installation makes: the service report, the uptime report and the asset export.
+
+- **Table header colour** and **Table header letters**: the band over each table and its text. The standard is the logo's teal `#207178` with white letters.
+- **Borders**, **Letters**, **Headings and lines**: black borders and text by default; the teal rule under headings.
+- **Line at the foot of every page**: for example your company name and website (up to 120 characters).
+
+Colours are written `#rrggbb`. The small preview on the card shows the table as it will print. **Save design** keeps it; **Use the standard design** puts the logo colours back (press Save to keep that). Each change is written to the audit log (`branding.pdf_changed`, `branding.pdf_reset`).

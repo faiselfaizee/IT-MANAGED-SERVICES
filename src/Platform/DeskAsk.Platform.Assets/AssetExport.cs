@@ -225,9 +225,9 @@ public static class AssetExport
     }
 
     // ------------------------------------------------------------------ PDF: one asset as a document
-    public static byte[] Pdf(Full f, string organisation = "")
+    public static byte[] Pdf(Full f, string organisation = "", PdfStyle? style = null)
     {
-        var p = new PdfDoc();
+        var p = new PdfDoc(style);
         p.Heading(f.Name == "" ? f.Tag : f.Name, 20);
         p.Paragraph(string.Join("  -  ", new[] { f.Tag, f.Company, f.Category }.Where(s => s != "")), 11);
         p.Paragraph("Asset details report, created " + DateTime.UtcNow.ToString("d MMMM yyyy HH:mm 'UTC'", CultureInfo.InvariantCulture) + (organisation == "" ? "" : " by " + organisation), 8.5);
@@ -260,14 +260,14 @@ public static class AssetExport
         static int Offline(IConfiguration cfg) => int.TryParse(cfg["Assets:AgentOfflineSeconds"], out var s) && s > 0 ? s : 900;
 
         // one asset, as a PDF document
-        Scoped(r.MapGet("/api/assets/{id:long}/export.pdf", async (HttpContext http, long id, ITenantContext t, IAuditLog audit, IConfiguration cfg, CancellationToken ct) =>
+        Scoped(r.MapGet("/api/assets/{id:long}/export.pdf", async (HttpContext http, long id, ITenantContext t, IAuditLog audit, IConfiguration cfg, ISettings pdfSettings, CancellationToken ct) =>
         {
             await using var db = await AgentsApi.Open(t, ct);
             if (!await AssetsAccess.InScope(db, id, await AssetsAccess.ScopeAsync(http, Acts.Read), ct)) return Results.NotFound();
             var f = await Build(db, id, Offline(cfg), ct, 300);
             if (f == null) return Results.NotFound();
             await audit.WriteAsync("assets.exported_pdf", id.ToString(), f.Tag, ct: ct);
-            return Results.File(Pdf(f), "application/pdf", FileSafe(f.Tag) + ".pdf");
+            return Results.File(Pdf(f, "", await PdfStyle.LoadAsync(pdfSettings, ct)), "application/pdf", FileSafe(f.Tag) + ".pdf");
         }));
 
         // one asset, every detail, as CSV

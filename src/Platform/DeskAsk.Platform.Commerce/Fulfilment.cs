@@ -111,7 +111,7 @@ public static class Fulfilment
 
                 // the invoice
                 var number = await Invoices.NextNumberAsync(db, null, biz.InvoicePrefix, now, ct);
-                var pdf = Invoices.Pdf(biz, number, now, buyer, quote, paymentRef);
+                var pdf = Invoices.Pdf(biz, number, now, buyer, quote, paymentRef, PdfStyle.Parse(await CommerceDb.GetSettingAsync(o, "pdf_style", ct)));
                 long invoiceId;
                 await using (var ins = new NpgsqlCommand(@"insert into commerce.invoices (number, order_id, account_id, currency, subtotal, tax, total, buyer, lines, pdf)
                     values (@n, @o, @a, @c, @s, @t, @tot, @b, @l, @p) returning id", db))

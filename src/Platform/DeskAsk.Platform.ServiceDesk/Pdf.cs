@@ -9,9 +9,9 @@ internal static class ReportPdf
     static string Pct(double? p) => p == null ? "no data" : Math.Round(p.Value).ToString(CultureInfo.InvariantCulture) + "%";
     static readonly Dictionary<string, string> Status = new() { ["open"] = "Open", ["progress"] = "In progress", ["hold"] = "Awaiting customer", ["resolved"] = "Resolved", ["closed"] = "Closed" };
 
-    public static byte[] Render(string company, DateTime monthStart, ReportsApi.ReportData d)
+    public static byte[] Render(string company, DateTime monthStart, ReportsApi.ReportData d, PdfStyle? style = null)
     {
-        var p = new PdfDoc();
+        var p = new PdfDoc(style);
         p.Heading("Service report", 22);
         p.Paragraph(company + "  -  " + monthStart.ToString("MMMM yyyy", CultureInfo.InvariantCulture), 11);
         p.Gap(6);

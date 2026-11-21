@@ -10,8 +10,15 @@ namespace DeskAsk.Platform;
 public sealed class PdfDoc
 {
     const double W = 595.28, H = 841.89, Margin = 48;
+    /// <summary>The look: standard is the logo's teal (#207178) for headings, rules and table header bands, white header letters, black text and borders. Editable (PdfStyle).</summary>
+    readonly PdfStyle st; readonly (double r, double g, double b) Accent, Band, BandText, Ink, Edge;
     readonly List<StringBuilder> pages = new(); StringBuilder cur = null!; double y;
-    public PdfDoc() => NewPage();
+    public PdfDoc(PdfStyle? style = null)
+    {
+        st = (style ?? PdfStyle.Default).Clean();
+        Accent = PdfStyle.Rgb(st.Accent); Band = PdfStyle.Rgb(st.HeaderColor); BandText = PdfStyle.Rgb(st.HeaderText); Ink = PdfStyle.Rgb(st.Text); Edge = PdfStyle.Rgb(st.Border);
+        NewPage();
+    }
 
     void NewPage() { cur = new StringBuilder(); pages.Add(cur); y = H - Margin; }
     void Room(double need) { if (y - need < Margin) NewPage(); }
@@ -39,7 +46,7 @@ public sealed class PdfDoc
 
     void Put(string text, double x, double size, bool bold, (double r, double g, double b)? color = null)
     {
-        var c = color ?? (0.1, 0.12, 0.16);
+        var c = color ?? Ink;
         cur.Append(CultureInfo.InvariantCulture, $"BT /{(bold ? "F2" : "F1")} {size:0.##} Tf {c.Item1:0.##} {c.Item2:0.##} {c.Item3:0.##} rg {x:0.##} {y:0.##} Td ({Esc(Clean(text))}) Tj ET\n");
     }
 
@@ -62,8 +69,8 @@ public sealed class PdfDoc
 
     public void Heading(string text, double size = 15, bool rule = false)
     {
-        Room(size * 2.4); y -= size * 0.5; y -= size; Put(text, Margin, size, true, (0.04, 0.35, 0.33)); y -= size * 0.35;
-        if (rule) { cur.Append(CultureInfo.InvariantCulture, $"0.8 0.83 0.86 RG 0.6 w {Margin:0.##} {y:0.##} m {W - Margin:0.##} {y:0.##} l S\n"); y -= 6; }
+        Room(size * 2.4); y -= size * 0.5; y -= size; Put(text, Margin, size, true, Accent); y -= size * 0.35;
+        if (rule) { cur.Append(CultureInfo.InvariantCulture, $"{Accent.r:0.###} {Accent.g:0.###} {Accent.b:0.###} RG 1.2 w {Margin:0.##} {y:0.##} m {W - Margin:0.##} {y:0.##} l S\n"); y -= 6; }
     }
     public void Paragraph(string text, double size = 10, bool bold = false)
     {
@@ -81,38 +88,50 @@ public sealed class PdfDoc
             for (var k = 0; k < 2 && i + k < items.Count; k++)
             {
                 var x = Margin + k * colW; var (label, value) = items[i + k];
-                Put(value, x, 17, true, (0.1, 0.12, 0.16)); y -= 12; Put(label, x, 8.5, false, (0.4, 0.45, 0.52)); y += 12;
+                Put(value, x, 17, true, Ink); y -= 12; Put(label, x, 8.5, false, (0.25, 0.25, 0.25)); y += 12;
             }
             y -= 14;
         }
     }
 
-    /// <summary>A table: widths are shares of the page width; long cells wrap onto more lines; the header repeats on a new page.</summary>
-    public void Table(string[] head, double[] shares, IEnumerable<string[]> rows, double size = 8.5)
+    /// <summary>
+    /// A table with a teal header band and white bold header letters, black letters and black borders on every cell. Widths are shares of the page width;
+    /// long cells wrap onto more lines; the header repeats on a new page. boldLast writes the final row in bold (a total).
+    /// </summary>
+    public void Table(string[] head, double[] shares, IEnumerable<string[]> rows, double size = 8.5, bool boldLast = false)
     {
         var total = W - 2 * Margin; var xs = new double[head.Length]; var ws = new double[head.Length]; var acc = Margin;
         for (var i = 0; i < head.Length; i++) { ws[i] = total * shares[i] / shares.Sum(); xs[i] = acc; acc += ws[i]; }
+        void Grid(double top, double h)
+        {
+            cur.Append(CultureInfo.InvariantCulture, $"{Edge.r:0.###} {Edge.g:0.###} {Edge.b:0.###} RG 0.6 w\n");
+            for (var i = 0; i < head.Length; i++) cur.Append(CultureInfo.InvariantCulture, $"{xs[i]:0.##} {top - h:0.##} {ws[i]:0.##} {h:0.##} re S\n");
+        }
         void Header()
         {
-            Room(size * 3); y -= size * 1.4;
-            for (var i = 0; i < head.Length; i++) Put(head[i], xs[i] + 2, size, true, (0.4, 0.45, 0.52));
-            y -= 4; cur.Append(CultureInfo.InvariantCulture, $"0.75 0.78 0.82 RG 0.6 w {Margin:0.##} {y:0.##} m {W - Margin:0.##} {y:0.##} l S\n");
+            var hh = size * 2.1; Room(hh + size * 2); var top = y;
+            cur.Append(CultureInfo.InvariantCulture, $"{Band.r:0.###} {Band.g:0.###} {Band.b:0.###} rg {Margin:0.##} {top - hh:0.##} {total:0.##} {hh:0.##} re f\n");
+            y = top - hh + size * 0.72;
+            for (var i = 0; i < head.Length; i++) Put(head[i], xs[i] + 4, size, true, BandText);
+            Grid(top, hh); y = top - hh;
         }
-        Header(); var any = false;
-        foreach (var row in rows)
+        Header(); var list = rows.ToList();
+        for (var r = 0; r < list.Count; r++)
         {
-            any = true;
-            var cells = row.Select((c, i) => Wrap(c, ws[i] - 6, size, false).ToList()).ToList(); var lines = Math.Max(1, cells.Max(c => c.Count));
-            if (y - (lines * size * 1.3 + 6) < Margin) { NewPage(); Header(); }
-            y -= size * 1.3;
+            var row = list[r]; var bold = boldLast && r == list.Count - 1;
+            var cells = row.Select((c, i) => Wrap(c, ws[i] - 10, size, bold).ToList()).ToList(); var lines = Math.Max(1, cells.Max(c => c.Count));
+            var h = lines * size * 1.3 + 7;
+            if (y - h < Margin) { NewPage(); Header(); }
+            var top = y;
             for (var li = 0; li < lines; li++)
             {
-                for (var i = 0; i < cells.Count; i++) if (li < cells[i].Count) Put(cells[i][li], xs[i] + 2, size, false);
-                if (li < lines - 1) y -= size * 1.3;
+                y = top - 4 - size * 0.95 - li * size * 1.3;
+                for (var i = 0; i < cells.Count; i++) if (li < cells[i].Count) Put(cells[i][li], xs[i] + 4, size, bold);
             }
-            y -= 3; cur.Append(CultureInfo.InvariantCulture, $"0.9 0.92 0.94 RG 0.4 w {Margin:0.##} {y:0.##} m {W - Margin:0.##} {y:0.##} l S\n");
+            Grid(top, h); y = top - h;
         }
-        if (!any) { y -= size * 1.4; Put("None.", Margin + 2, size, false, (0.4, 0.45, 0.52)); y -= 4; }
+        if (list.Count == 0) { var top = y; var h = size * 2.1; y = top - h + size * 0.72; Put("None.", Margin + 4, size, false); Grid(top, h); y = top - h; }
+        y -= 4;
     }
 
     public byte[] ToBytes()
@@ -125,7 +144,8 @@ public sealed class PdfDoc
         objs.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
         for (var i = 0; i < pages.Count; i++)
         {
-            var footer = $"BT /F1 8 Tf 0.5 0.55 0.6 rg {Margin:0.##} 28 Td (Page {i + 1} of {pages.Count}) Tj ET\n";
+            var footer = $"BT /F1 8 Tf 0.25 0.25 0.25 rg {Margin:0.##} 28 Td (Page {i + 1} of {pages.Count}) Tj ET\n";
+            if (st.Footer != "") footer += $"BT /F1 8 Tf 0.25 0.25 0.25 rg {W - Margin - Width(Clean(st.Footer), 8, false):0.##} 28 Td ({Esc(Clean(st.Footer))}) Tj ET\n";
             var content = pages[i] + footer;
             objs.Add($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {W.ToString("0.##", CultureInfo.InvariantCulture)} {H.ToString("0.##", CultureInfo.InvariantCulture)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {6 + i * 2} 0 R >>");
             objs.Add($"<< /Length {Encoding.Latin1.GetByteCount(content)} >>\nstream\n{content}endstream");

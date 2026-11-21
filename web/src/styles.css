@@ -739,3 +739,9 @@ html[data-look='compact'] input:not([type=checkbox]):not([type=radio]):not([type
 tr.gone td { opacity: .55; text-decoration: line-through; } tr.gone td:last-child { text-decoration: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .secret-once { padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; margin-bottom: 10px; } .secret-once p { margin: 0 0 6px; }
+
+.pdf-design { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr); gap: 20px; align-items: start; margin: 10px 0; }
+.pdf-fields { display: grid; gap: 10px; } .pdf-colour { display: grid; gap: 4px; } .pdf-colour > span:first-child { color: var(--muted); font-size: 13px; }
+.pdf-colour-row { display: flex; gap: 8px; align-items: center; } .pdf-colour-row input[type=color] { width: 44px; height: 32px; padding: 2px; }
+.pdf-sample { background: #fff; color: #000; border: 1px solid var(--line); border-radius: var(--r-md); padding: 14px; }
+@media (max-width: 760px) { .pdf-design { grid-template-columns: 1fr; } }

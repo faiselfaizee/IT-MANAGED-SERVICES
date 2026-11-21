@@ -29,7 +29,7 @@ internal static class ReportsApi
             var totals = new { opened = d.Opened, resolved = d.Resolved, backlogStart = d.BacklogStart, backlogEnd = d.BacklogEnd, avgFirstResponseHours = d.AvgFirst, avgResolutionHours = d.AvgSolve, respondMetPercent = d.RespondPct, resolveMetPercent = d.ResolvePct };
             return Results.Ok(new { month = m, from = start, to = end, companyId = co, company = companyName, totals, byPriority = d.ByPriority, byCategory = d.ByCategory, bySource = d.BySource, byRequester = d.ByRequester, byAsset = d.ByAsset, byCompany = d.ByCompany, tickets = d.Tickets, truncated = d.Tickets.Count >= 300, changes = d.Changes });
         }).RequireAuthorization().RequireModule(key);
-        r.MapGet("/api/servicedesk/reports/monthly.pdf", async (string? month, int? companyId, ClaimsPrincipal u, ITenantContext t, ICompanyDirectory companies, CancellationToken ct) =>
+        r.MapGet("/api/servicedesk/reports/monthly.pdf", async (string? month, int? companyId, ClaimsPrincipal u, ITenantContext t, ICompanyDirectory companies, ISettings settings, CancellationToken ct) =>
         {
             await using var db = await ServiceDeskModule.Open(t, ct);
             var w = await ServiceDeskModule.WhoAsync(u, db, ct);
@@ -42,7 +42,7 @@ internal static class ReportsApi
             if (co is int ci) { var c0 = await companies.GetAsync(ci, ct); if (c0 == null) return ServiceDeskModule.Bad("bad_company", "That company does not exist."); companyName = c0.Name; }
 
             var d = await Build(db, start, end, co, w.Staff || w.Role == "viewer", ct);
-            var bytes = ReportPdf.Render(companyName, start, d);
+            var bytes = ReportPdf.Render(companyName, start, d, await PdfStyle.LoadAsync(settings, ct));
             return Results.File(bytes, "application/pdf", "service-report-" + m + ".pdf");
         }).RequireAuthorization().RequireModule(key);
     }

@@ -155,6 +155,22 @@ public static class BrandingApi
             return Results.Ok(await LoadAsync(s, ct));
         });
 
+        // the look of PDFs (reports, exports): colours of table headers and headings, a footer line
+        g.MapGet("/pdf", async (ISettings s, CancellationToken ct) => Results.Ok(await PdfStyle.LoadAsync(s, ct)));
+        g.MapPut("/pdf", async (PdfStyle b, ISettings s, IAuditLog audit, CancellationToken ct) =>
+        {
+            foreach (var c in new[] { b.HeaderColor, b.HeaderText, b.Border, b.Text, b.Accent })
+                if (!PdfStyle.IsHex(c)) return Results.BadRequest(new { error = "bad_colour", detail = "Colours look like #207178." });
+            var next = b.Clean();
+            await s.SetAsync(PdfStyle.Key, next.ToJson(), ct);
+            await audit.WriteAsync("branding.pdf_changed", detail: $"header={next.HeaderColor}; headerText={next.HeaderText}; border={next.Border}; text={next.Text}; accent={next.Accent}", ct: ct);
+            return Results.Ok(next);
+        });
+        g.MapPost("/pdf/reset", async (ISettings s, IAuditLog audit, CancellationToken ct) =>
+        {
+            await s.DeleteAsync(PdfStyle.Key, ct); await audit.WriteAsync("branding.pdf_reset", ct: ct); return Results.Ok(PdfStyle.Default);
+        });
+
         g.MapPost("/reset", async (ISettings s, IAuditLog audit, CancellationToken ct) =>
         {
             await s.DeleteAsync(Key, ct); await s.DeleteAsync(LogoKey, ct); await s.DeleteAsync(IconKey, ct);
