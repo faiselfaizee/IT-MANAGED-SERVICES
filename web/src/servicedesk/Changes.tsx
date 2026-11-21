@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, go, useLoad, type Rec } from '../http';
 import { Act, Badge, Card, Dl, Empty, Err, Field, Loading, Modal, fmtDate, useSubmit } from '../ui';
+import { useSingleCompany } from '../mode';
 import { ChangeExtra } from './Itil';
 
 export const CHANGE_STATUS: Record<string, string> = { draft: 'Draft', review: 'Awaiting approval', approved: 'Approved', rejected: 'Rejected', scheduled: 'Scheduled', implementing: 'In progress', completed: 'Completed', failed: 'Failed', closed: 'Closed', cancelled: 'Cancelled' };
@@ -42,6 +43,7 @@ export function ChangeList({ staff }: { staff: boolean }) {
 }
 
 export function NewChange() {
+  const one = useSingleCompany();
   const companies = useLoad<Rec[]>('/api/assets/companies');
   const [v, setV] = useState<Rec>({ title: '', type: 'normal', risk: 'low', impact: 'low', reason: '', description: '', plan: '', rollback: '', companyId: '', startAt: '', endAt: '', tickets: '' });
   const set = (k: string, x: unknown) => setV({ ...v, [k]: x });
@@ -55,7 +57,7 @@ export function NewChange() {
         <Field label="Risk"><select value={v.risk} onChange={(e) => set('risk', e.target.value)}>{Object.entries(LEVEL).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
         <Field label="Impact"><select value={v.impact} onChange={(e) => set('impact', e.target.value)}>{Object.entries(LEVEL).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
       </div>
-      <Field label="Company"><select value={v.companyId} onChange={(e) => set('companyId', e.target.value)}><option value="">None</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+      {!one && <Field label="Company"><select value={v.companyId} onChange={(e) => set('companyId', e.target.value)}><option value="">None</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>}
       <Field label="Why is this needed?"><textarea rows={3} value={v.reason} onChange={(e) => set('reason', e.target.value)} /></Field>
       <Field label="What will change?"><textarea rows={3} value={v.description} onChange={(e) => set('description', e.target.value)} /></Field>
       <Field label="Implementation plan"><textarea rows={4} value={v.plan} onChange={(e) => set('plan', e.target.value)} /></Field>
