@@ -351,3 +351,20 @@ test('the Assets menu opens on All assets, and the dashboard stays one click awa
   expect(screen.getByRole('heading', { name: 'All assets' })).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Dashboard' }).getAttribute('href')).toBe('#/assets/dashboard');
 });
+
+test('All assets can be filtered by customer, and opens with the kind and status from a Stock link', async () => {
+  const calls: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    calls.push(String(url));
+    const body = String(url).startsWith('/api/assets/companies') ? [{ id: 1, name: 'Acme' }, { id: 2, name: 'Globex' }]
+      : String(url).startsWith('/api/assets/types') ? [{ id: 7, name: 'Keyboard' }]
+      : String(url).startsWith('/api/assets?') ? { total: 0, items: [] } : {};
+    return new Response(JSON.stringify(body), { status: 200 });
+  }));
+  location.hash = '#/assets/list?typeId=7&status=stock'; render(<AssetsApp />);
+  await waitFor(() => expect(screen.getByText('Keyboard ✕')).toBeTruthy());
+  expect(calls.some((u) => u.startsWith('/api/assets?') && u.includes('status=stock') && u.includes('typeId=7'))).toBe(true);
+  const pick = await screen.findByLabelText('Customer');
+  fireEvent.change(pick, { target: { value: '2' } });
+  expect(location.hash).toBe('#/assets/list?typeId=7&status=stock&company=2');
+});

@@ -20,17 +20,21 @@ const AGENT_WORDS: Record<string, string> = { online: 'Agent live', offline: 'Ag
 
 export default function List() {
   const qs = new URLSearchParams(location.hash.split('?')[1] ?? '');
-  const company = qs.get('company') ?? ''; const place = qs.get('place') ?? ''; const vendor = qs.get('vendor') ?? '';
+  const company = qs.get('company') ?? ''; const typeId = qs.get('typeId') ?? ''; const place = qs.get('place') ?? ''; const vendor = qs.get('vendor') ?? '';
   const placeInfo = useLoad<Rec>(place ? '/api/assets/places' : null); const vendorInfo = useLoad<Rec>(vendor ? `/api/assets/vendors/${vendor}` : null);
   const placeName = place ? String(((placeInfo.data?.items ?? []) as Rec[]).find((p) => String(p.id) === place)?.name ?? '…') : '';
   const vendorName = vendor ? String(vendorInfo.data?.vendor?.name ?? '…') : '';
   const drill = Object.keys(DRILL).map((k) => [k, qs.get(k) ?? ''] as const).filter(([k, v]) => v && DRILL[k][v]);
-  const perms = usePerms('assets'); const [search, setSearch] = useState(''); const [status, setStatus] = useState(''); const [agent, setAgent] = useState(qs.get('agent') ?? ''); const [skip, setSkip] = useState(0); const take = 50;
+  const perms = usePerms('assets'); const [search, setSearch] = useState(''); const [status, setStatus] = useState(qs.get('status') ?? ''); const [agent, setAgent] = useState(qs.get('agent') ?? ''); const [skip, setSkip] = useState(0); const take = 50;
+  const companies = useLoad<Rec[]>('/api/assets/companies'); const cos = Array.isArray(companies.data) ? companies.data : [];
+  const types = useLoad<Rec[]>(typeId && typeId !== 'none' ? '/api/assets/types' : null);
+  const typeName = typeId === 'none' ? 'No kind' : typeId ? String((Array.isArray(types.data) ? types.data : []).find((x) => String(x.id) === typeId)?.name ?? '…') : '';
+  const pickCompany = (v: string) => { const n = new URLSearchParams(qs); if (v) n.set('company', v); else n.delete('company'); const t = n.toString(); location.hash = '#/assets/list' + (t ? '?' + t : ''); setSkip(0); };
   const co = useLoad<Rec>(company ? `/api/assets/dashboard?company=${encodeURIComponent(company)}` : null);
   const coName = company ? String(co.data?.customer?.company ?? (company === 'none' ? 'No customer' : '…')) : '';
   const without = (key: string) => { const n = new URLSearchParams(qs); n.delete(key); const t = n.toString(); return '#/assets/list' + (t ? '?' + t : ''); };
   const [sel, setSel] = useState<Set<number>>(new Set()); const [add, setAdd] = useState(false); const [several, setSeveral] = useState(false); const [print, setPrint] = useState(false);
-  const filters = `&agent=${agent}` + (company ? `&company=${encodeURIComponent(company)}` : '') + (place ? `&place=${place}` : '') + (vendor ? `&vendor=${vendor}` : '') + drill.map(([k, v]) => `&${k}=${v}`).join('');
+  const filters = `&agent=${agent}` + (typeId ? `&typeId=${typeId}` : '') + (company ? `&company=${encodeURIComponent(company)}` : '') + (place ? `&place=${place}` : '') + (vendor ? `&vendor=${vendor}` : '') + drill.map(([k, v]) => `&${k}=${v}`).join('');
   const exportQs = `search=${encodeURIComponent(search)}&status=${status}${filters}`;
   const q = `/api/assets?search=${encodeURIComponent(search)}&status=${status}${filters}&skip=${skip}&take=${take}`;
   const { data, error, loading, reload } = useLoad<Rec>(q);
@@ -40,10 +44,11 @@ export default function List() {
     <nav className="crumbs" aria-label="Breadcrumb"><a href="#/assets">Assets</a><span aria-hidden="true">›</span>
       {company ? <><a href={`#/assets/customer/${company}`}>{coName}</a><span aria-hidden="true">›</span></> : null}<span aria-current="page">{drill.length ? drill.map(([k, v]) => DRILL[k][v]).join(', ') : agent ? AGENT_WORDS[agent] : 'All assets'}</span></nav>
     <h1>{company ? coName : 'All assets'}</h1>
-    {(company || place || vendor || drill.length > 0) && <div className="filter-chips">{company && <a href={without('company')} title="Show every customer">{coName} ✕</a>}
+    {(company || place || vendor || typeId || drill.length > 0) && <div className="filter-chips">{typeId && <a href={without('typeId')} title="Every kind">{typeName} ✕</a>}{company && <a href={without('company')} title="Show every customer">{coName} ✕</a>}
       {place && <a href={without('place')} title="Every location">At {placeName} ✕</a>}{vendor && <a href={without('vendor')} title="Every vendor">From {vendorName} ✕</a>}{drill.map(([k, v]) => <a key={k} href={without(k)} title="Remove this filter">{DRILL[k][v]} ✕</a>)}</div>}
     <div className="tools">
       <input placeholder="Search name, tag, serial, person, site, PO…" value={search} onChange={(e) => { setSearch(e.target.value); setSkip(0); }} style={{ minWidth: 260 }} />
+      {cos.length > 0 && <select value={company} onChange={(e) => pickCompany(e.target.value)} aria-label="Customer"><option value="">All customers</option>{cos.map((c) => <option key={c.id} value={String(c.id)}>{c.name}</option>)}<option value="none">No customer</option></select>}
       <select value={status} onChange={(e) => { setStatus(e.target.value); setSkip(0); }} aria-label="Status"><option value="">Any status</option>{STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}</select>
       <select value={agent} onChange={(e) => { setAgent(e.target.value); setSkip(0); }} aria-label="Agent"><option value="">Any agent state</option><option value="online">Agent live, up to date</option><option value="offline">Agent offline</option><option value="update">Agent update due</option><option value="none">No agent</option></select>
       {perms.add && <button className="primary" onClick={() => setAdd(true)}>Add asset</button>}

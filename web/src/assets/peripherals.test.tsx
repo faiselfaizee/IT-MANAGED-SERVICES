@@ -37,3 +37,13 @@ test('Stock counts each kind', async () => {
   await waitFor(() => expect(screen.getByText('Keyboard')).toBeTruthy());
   expect(screen.getByText('15')).toBeTruthy();
 });
+
+test('each Stock count opens All assets with that kind and status', async () => {
+  mockApi({ '/api/assets/companies': [], '/api/assets/stock': { items: [{ type: 'Keyboard', typeId: 7, peripheral: true, stock: 4, inUse: 10, repair: 0, retired: 0, lost: 0, total: 14 }, { type: '(no type)', typeId: null, peripheral: false, stock: 2, inUse: 0, repair: 0, retired: 0, lost: 0, total: 2 }] } });
+  render(<Stock />);
+  await waitFor(() => expect(screen.getByLabelText('4 Keyboard stock')).toBeTruthy());
+  expect(screen.getByLabelText('4 Keyboard stock').getAttribute('href')).toBe('#/assets/list?typeId=7&status=stock');
+  expect(screen.getByLabelText('14 Keyboard').getAttribute('href')).toBe('#/assets/list?typeId=7');
+  expect(screen.getByLabelText('2 (no type) stock').getAttribute('href')).toBe('#/assets/list?typeId=none&status=stock');
+  expect(screen.queryByLabelText(/^0 Keyboard/)).toBeNull();   // nothing to open for a zero
+});

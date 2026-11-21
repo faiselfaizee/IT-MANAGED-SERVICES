@@ -438,3 +438,7 @@ Devices setup › Customers › **Domain controller** (with a single company: De
 - **Inventory › People** lists them next to the people who hold assets (a directory person with nothing handed out shows 0 items).
 - Wherever an asset is given to someone (Allocate, Edit › Assigned to, People › Give), the name box suggests the customer's directory people as you type. A name can still be typed by hand (customers without a domain controller, visitors, contractors).
 - API: `GET/PUT/DELETE /api/directory/companies/{id}`, `POST …/test`, `POST …/sync` (administrators); `GET /api/assets/directory-people?companyId=&search=&limit=` (anyone who may read assets, limited to their customers).
+
+## Customer filter and Stock links (6.15.0)
+- **All assets** has a Customer list next to Status: all customers, one customer, or "No customer". In single-company mode it is hidden.
+- **Stock**: every count opens All assets filtered to that kind, that status, and the chosen customer. Total opens every status. Assets without a kind open with `typeId=none`.

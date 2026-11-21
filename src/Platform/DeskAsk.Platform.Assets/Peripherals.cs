@@ -355,7 +355,7 @@ public static class PeripheralsApi
         {
             var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
             await using var db = await Open(t, ct);
-            await using var c = new NpgsqlCommand(@"select coalesce(t.name, '(no type)'), coalesce(t.peripheral, false),
+            await using var c = new NpgsqlCommand(@"select coalesce(t.name, '(no type)'), coalesce(t.peripheral, false), t.id,
                     count(*) filter (where a.status = 'stock'), count(*) filter (where a.status = 'in_use'), count(*) filter (where a.status = 'repair'),
                     count(*) filter (where a.status = 'retired'), count(*) filter (where a.status = 'lost'), count(*)
                 from assets.assets a left join assets.types t on t.id = a.type_id
@@ -363,7 +363,7 @@ public static class PeripheralsApi
                 group by t.id, t.name, t.peripheral order by 2 desc, 1", db);
             AssetsAccess.Bind(c, scope); P(c, "co", companyId ?? 0); P(c, "si", siteId ?? 0);
             var rows = new List<object>(); await using var rd = await c.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) rows.Add(new { type = rd.GetString(0), peripheral = rd.GetBoolean(1), stock = rd.GetInt64(2), inUse = rd.GetInt64(3), repair = rd.GetInt64(4), retired = rd.GetInt64(5), lost = rd.GetInt64(6), total = rd.GetInt64(7) });
+            while (await rd.ReadAsync(ct)) rows.Add(new { type = rd.GetString(0), peripheral = rd.GetBoolean(1), typeId = rd.IsDBNull(2) ? (int?)null : rd.GetInt32(2), stock = rd.GetInt64(3), inUse = rd.GetInt64(4), repair = rd.GetInt64(5), retired = rd.GetInt64(6), lost = rd.GetInt64(7), total = rd.GetInt64(8) });
             return Results.Ok(new { items = rows });
         }));
     }

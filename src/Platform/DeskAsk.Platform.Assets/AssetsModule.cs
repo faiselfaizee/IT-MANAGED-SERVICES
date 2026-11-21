@@ -723,7 +723,7 @@ public sealed class AssetsModule : IPlatformModule
     internal static (string? Error, string Sql, Action<NpgsqlCommand> Bind) ListFilter(IQueryCollection q, IConfiguration cfg)
     {
         var search = q["search"].ToString().Trim(); var status = q["status"].ToString(); var assigned = q["assignedTo"].ToString().Trim();
-        int.TryParse(q["typeId"], out var typeId);
+        var typeF = q["typeId"].ToString(); int.TryParse(typeF, out var typeId);   // "none": assets without a kind (Stock links to them)
         if (status != "" && !Statuses.Contains(status)) return ("status", "", _ => { });
         var agentF = q["agent"].ToString(); if (agentF is not ("" or "online" or "offline" or "none" or "update")) return ("agent must be online, offline, none or update", "", _ => { });
         var coF = q["company"].ToString(); int coId = 0;
@@ -738,6 +738,7 @@ public sealed class AssetsModule : IPlatformModule
             "(@st = '' or a.status = @st) and (@ty = 0 or a.type_id = @ty) and (@as = '' or lower(a.assigned_to) = lower(@as))",
         };
         if (agentF != "") w.Add("a.status not in ('retired','lost') and " + AssetDash.Where("agent", agentF));
+        if (typeF == "none") w.Add("a.type_id is null");
         if (coF == "none") w.Add("a.company_id is null"); else if (coF != "") w.Add("a.company_id = @coF");
         // a country or state takes in every site below it
         if (placeF != "") w.Add("a.site_id in (with recursive pl as (select id from assets.places where id = @plF union select p.id from assets.places p join pl on p.parent_id = pl.id) select id from pl)");
