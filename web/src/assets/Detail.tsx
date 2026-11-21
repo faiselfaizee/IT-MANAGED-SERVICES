@@ -1,4 +1,5 @@
 import PersonInput from './PersonInput';
+import { InstallFromRepository } from './Packages';
 import { PurchaseFields, purchaseBody } from './Purchase';
 import { useState } from 'react';
 import { usePerms } from '../perms';
@@ -89,7 +90,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
     {tab === 'hardware' && <Hardware d={d} />}
     {tab === 'config' && <Configs id={id} />}
     {tab === 'checks' && <Checks id={id} />}
-    {tab === 'apps' && <Apps id={id} canUninstall={hasAgent && !!perms.modify} />}
+    {tab === 'apps' && <Apps id={id} canUninstall={hasAgent && !!perms.modify} os={d.system?.osFamily === 'linux' ? 'linux' : 'windows'} />}
     {tab === 'services' && <ServicesPanel assetId={id} />}
     {tab === 'tickets' && <Tickets id={id} d={d} />}
     {tab === 'logs' && <Logs id={id} />}
@@ -153,12 +154,13 @@ function Network({ d }: { d: Rec }) {
   </tbody></table>{(d.connectedIps ?? []).length > 0 && <p className="muted">Connected addresses: <span className="mono">{d.connectedIps.join(', ')}</span></p>}</>;
 }
 
-function Apps({ id, canUninstall }: { id: string; canUninstall: boolean }) {
-  const [q, setQ] = useState(''); const [rm, setRm] = useState<Rec | null>(null); const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+function Apps({ id, canUninstall, os }: { id: string; canUninstall: boolean; os: string }) {
+  const [q, setQ] = useState(''); const [rm, setRm] = useState<Rec | null>(null); const [add, setAdd] = useState(false); const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [gone, setGone] = useState<string[]>([]);
   const { data, error, loading } = useLoad<Rec>(`/api/assets/${id}/applications?q=${encodeURIComponent(q)}`);
   const key = (a: Rec) => `${a.name}|${a.version ?? ''}`;
-  return <><div className="tools"><input placeholder="Search installed applications" value={q} onChange={(e) => setQ(e.target.value)} /><span className="muted">{data ? `${data.count} applications` : ''}</span></div>
+  return <><div className="tools"><input placeholder="Search installed applications" value={q} onChange={(e) => setQ(e.target.value)} />{canUninstall && <button onClick={() => setAdd(true)}>Install from the repository</button>}<span className="muted">{data ? `${data.count} applications` : ''}</span></div>
+    {add && <InstallFromRepository assetId={Number(id)} os={os} onClose={() => setAdd(false)} />}
     {msg && <p role="status" className={msg.ok ? 'ok-note' : 'err'}>{msg.text}{msg.ok ? ' The list updates when the agent next sends its inventory.' : ''}</p>}
     <Loading loading={loading && !data} error={error} />
     {data && <table><thead><tr><th>Name</th><th>Version</th><th>Publisher</th><th>Installed</th>{canUninstall && <th><span className="sr-only">Actions</span></th>}</tr></thead><tbody>
