@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, useLoad, type Rec } from '../http';
-import { Card, Empty, Err, Loading, useSubmit } from '../ui';
+import { Card, Err, Loading, useSubmit } from '../ui';
 import { PRIORITY } from './List';
 import { FieldsAdmin } from './Fields';
 
@@ -38,25 +38,3 @@ export function Settings() {
   </>;
 }
 
-/** Which company each customer user belongs to, and what they may do. */
-export function People() {
-  const { data, error, loading, reload } = useLoad<Rec[]>('/api/servicedesk/people');
-  const companies = useLoad<Rec[]>('/api/assets/companies');
-  const [msg, setMsg] = useState('');
-  const list = Array.isArray(data) ? data : []; const cos = Array.isArray(companies.data) ? companies.data : [];
-  const save = async (p: Rec, change: Rec) => {
-    setMsg('');
-    try { await api(`/api/servicedesk/people/${p.id}`, { method: 'PUT', body: { companyId: p.companyId, mayRaise: p.mayRaise, mayModify: p.mayModify, ...change } }); reload(); } catch (e) { setMsg((e as Error).message); }
-  };
-  return <>
-    <h1>Customer users</h1>
-    <p className="muted">Add customer users on the Users page (role Customer or Customer administrator), then link each to their company here.</p>
-    <Loading loading={loading && !data} error={error} /><Err text={msg} />
-    {data && (list.length === 0 ? <Empty>No customer users yet.</Empty> : <table><thead><tr><th>Name</th><th>Company</th><th>May open tickets</th><th>May reply and close</th></tr></thead><tbody>
-      {list.map((p) => <tr key={p.id}><td>{p.name}<div className="muted">{p.email}{p.active ? '' : ' · disabled'}</div></td>
-        <td><select value={p.companyId ?? ''} aria-label={`Company of ${p.name}`} onChange={(e) => save(p, { companyId: e.target.value ? Number(e.target.value) : null })}><option value="">Not linked</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></td>
-        <td><input type="checkbox" checked={p.mayRaise} aria-label={`${p.name} may open tickets`} onChange={(e) => save(p, { mayRaise: e.target.checked })} /></td>
-        <td><input type="checkbox" checked={p.mayModify} aria-label={`${p.name} may reply`} onChange={(e) => save(p, { mayModify: e.target.checked })} /></td></tr>)}
-    </tbody></table>)}
-  </>;
-}

@@ -17,7 +17,7 @@ export default function DirectorySetup({ company, onClose }: { company: { id: nu
   };
   const ctrls = (data?.controllers ?? []) as Rec[];
   return <Modal title={`Domain controller · ${company.name}`} onClose={onClose}><div className="form">
-    <p className="muted">DeskAsk reads the people (name, email, department) of this customer's domain controller, only to read, so they can be listed under Inventory › People and chosen when assets are handed out. The controller you pick must be installed in the customer's network.</p>
+    <p className="muted">DeskAsk reads the people (name, email, department) of this customer's domain controller, only to read, so they can be chosen when assets are handed out and added as the company's users. The controller you pick must be installed in the customer's network.</p>
     <Loading loading={loading && !data} error={error} />
     {data && <>
       {d && <p>{d.lastError ? <Badge>{'Last test failed'}</Badge> : d.lastOk ? <Badge tone="ok">Connected</Badge> : <Badge>Not tested yet</Badge>}{' '}

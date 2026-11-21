@@ -131,6 +131,19 @@ public class AssetsTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [PgFact]
+    public async Task APersonsThingsAreFoundUnderTheirNameOrTheirEmail()
+    {
+        var api = await Admin();
+        await Post(api, new { name = "Laptop A", assignedTo = "Ana Lee", status = "in_use" });
+        await Post(api, new { name = "Phone A", assignedTo = "ana@acme.test", status = "in_use" });
+        await Post(api, new { name = "Someone else's", assignedTo = "Bo", status = "in_use" });
+        var one = await J(await api.GetAsync("/api/assets/holder?name=Ana%20Lee"));
+        Assert.Equal(1, one.GetProperty("items").GetArrayLength());
+        var both = await J(await api.GetAsync("/api/assets/holder?name=Ana%20Lee&also=ANA@acme.test"));
+        Assert.Equal(2, both.GetProperty("items").GetArrayLength());
+    }
+
+    [PgFact]
     public async Task BadInputIsRefused()
     {
         var api = await Admin();

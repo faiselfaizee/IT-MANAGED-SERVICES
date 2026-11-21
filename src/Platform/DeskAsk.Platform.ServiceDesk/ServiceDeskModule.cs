@@ -66,7 +66,10 @@ public sealed class ServiceDeskModule : IPlatformModule
         int? company = null; bool raise = true, modify = true;
         if (id != Guid.Empty)
         {
-            await using var c = new NpgsqlCommand("select company_id, may_raise, may_modify from servicedesk.people where user_id = @u", db); P(c, "u", id);
+            // the company a customer user belongs to is kept by Access (Devices setup › Customers › Users, or set by itself in single-company mode);
+            // servicedesk.people keeps whether they may open tickets and reply, and its old company column is the fallback for links made before 6.16
+            await using var c = new NpgsqlCommand(@"select coalesce((select uc.company_id from access.user_companies uc where uc.user_id = @u), p.company_id), coalesce(p.may_raise, true), coalesce(p.may_modify, true)
+                from (select 1) x left join servicedesk.people p on p.user_id = @u", db); P(c, "u", id);
             await using var rd = await c.ExecuteReaderAsync(ct);
             if (await rd.ReadAsync(ct)) { company = rd.IsDBNull(0) ? null : rd.GetInt32(0); raise = rd.GetBoolean(1); modify = rd.GetBoolean(2); }
         }

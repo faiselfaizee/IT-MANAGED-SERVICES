@@ -442,3 +442,20 @@ Devices setup › Customers › **Domain controller** (with a single company: De
 ## Customer filter and Stock links (6.15.0)
 - **All assets** has a Customer list next to Status: all customers, one customer, or "No customer". In single-company mode it is hidden.
 - **Stock**: every count opens All assets filtered to that kind, that status, and the chosen customer. Total opens every status. Assets without a kind open with `typeId=none`.
+
+## A company's users (6.16.0)
+Administration › Devices setup › Customers › choose a customer. With one company, it is Devices setup › **Our organisation**. Tabs:
+- **Users**: the company's customer administrators and employees.
+  - **Add user** (name, email, role, password, and the Service Desk switches *May open tickets* and *May reply and close*).
+  - **Add an existing user** ties customer users who belong to no company yet.
+  - **Assets** shows how many things each person holds, found under their name or their email. Choose the number to see them, take several back, give more from stock, or print the hand-over sheet.
+  - Edit, Set password, Disable, Remove from company.
+- **Domain controller**: the read-only connection used to suggest names when assets are handed out.
+- **Details**: name, contact, address, remote access, link to its assets and locations.
+
+What moved:
+- Assets › People is gone; each person's things are on their company's Users tab.
+- Service Desk › Settings › People (Customer users) is gone; its switches are on the Users tab.
+- Administration › Users lists only your own team (administrators, engineers, viewers). The roles offered for new people from Microsoft, Google or AD sign-in are staff roles.
+
+A customer user's company is kept in one place (Access, `access.user_companies`). The Service Desk reads it there, so a person tied to the company by single-company mode can open tickets straight away. Links made before 6.16 in `servicedesk.people` still count.

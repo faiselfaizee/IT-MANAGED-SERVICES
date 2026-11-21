@@ -266,6 +266,8 @@ public interface IAccess
     Task<IReadOnlyList<int>?> ScopeAsync(System.Security.Claims.ClaimsPrincipal user, string module, string action, CancellationToken ct = default);
     /// <summary>Ties a customer user to the one company whose data they may see (null removes the tie).</summary>
     Task SetCompanyAsync(Guid userId, int? companyId, CancellationToken ct = default);
+    /// <summary>Every customer user tied to a company: user id → company id.</summary>
+    Task<IReadOnlyDictionary<Guid, int>> UserCompaniesAsync(CancellationToken ct = default);
     /// <summary>Every security group: id and name.</summary>
     Task<IReadOnlyList<(Guid Id, string Name)>> GroupsAsync(CancellationToken ct = default);
     /// <summary>The groups a person is in, directly or through a group inside a group.</summary>

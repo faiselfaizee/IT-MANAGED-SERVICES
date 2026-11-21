@@ -8,6 +8,7 @@ vi.mock('./assets/Credentials', () => ({ default: () => <p>credentials page</p> 
 vi.mock('./assets/Fleet', () => ({ default: () => <p>fleet page</p> }));
 vi.mock('./assets/Discover', () => ({ default: () => <p>discover page</p> }));
 vi.mock('./assets/Duplicates', () => ({ default: () => <p>duplicates page</p> }));
+vi.mock('./assets/CompanyPage', () => ({ default: () => <p>organisation page</p> }));
 
 beforeEach(() => resetMode());
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); location.hash = ''; });
@@ -20,11 +21,12 @@ test('with several companies, Devices setup starts on Customers', async () => {
   expect(screen.getByRole('link', { name: 'Customers' })).toBeTruthy();
 });
 
-test('in single-company mode nobody adds customers: Devices setup has no Customers page and starts on Credentials', async () => {
+test('in single-company mode nobody adds customers: Devices setup has no Customers page and starts on Our organisation', async () => {
   mode(true); location.hash = '#/setup/companies';
   render(<Setup />);
   await waitFor(() => expect(screen.queryByRole('link', { name: 'Customers' })).toBeNull());
-  expect(screen.getByText('credentials page')).toBeTruthy();
+  expect(screen.getByText('organisation page')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Credentials' })).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Agents & collectors' })).toBeTruthy();
 });
 

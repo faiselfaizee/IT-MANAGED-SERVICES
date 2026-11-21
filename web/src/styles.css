@@ -748,3 +748,7 @@ tr.gone td { opacity: .55; text-decoration: line-through; } tr.gone td:last-chil
 
 /* single-company mode (licence): nobody picks between customers */
 .single-company select[aria-label="Customer"], .single-company .for-customers { display: none; }
+/* tabs that are links (a company's pages) look like the tab buttons */
+.tabs a { border-bottom: 2px solid transparent; padding: 8px 12px; color: var(--muted); white-space: nowrap; text-decoration: none; }
+.tabs a.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 12px; } dl.facts dt { color: var(--muted); } dl.facts dd { margin: 0; }

@@ -1,6 +1,6 @@
-import { cleanup, render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
-import { AttachedCard, People, Stock } from './Peripherals';
+import { AttachedCard, Stock } from './Peripherals';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -22,13 +22,6 @@ test('an accessory names the main device it is attached to by serial number', ()
   const data = { parent: { id: 1, tag: 'AST-1', name: 'PC', serial: 'DESK-111', assignedTo: 'ann@x.test' }, peripheral: true, items: [] };
   render(<AttachedCard id="5" d={{}} data={data} reload={() => undefined} canEdit={false} />);
   expect(screen.getByText('DESK-111')).toBeTruthy();
-});
-
-test('People lists who holds what', async () => {
-  mockApi({ '/api/platform/access/mine': {}, '/api/platform/me': { role: 'admin' }, '/api/assets/holders': { items: [{ name: 'bob@x.test', companyId: null, company: '', assets: 3, accessories: 2 }] } });
-  render(<People />);
-  await waitFor(() => expect(screen.getByText('bob@x.test')).toBeTruthy());
-  fireEvent.change(screen.getByLabelText('Search people'), { target: { value: 'bo' } });
 });
 
 test('Stock counts each kind', async () => {
