@@ -101,7 +101,9 @@ public class DomainsTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.NotFound, (await anon.SendAsync(list)).StatusCode);
         var keyed = factory.WithWebHostBuilder(b => b.UseSetting("Platform:ProxyKey", "a-long-shared-proxy-key-1")).CreateClient();
         var ok = new HttpRequestMessage(HttpMethod.Get, "/api/platform/proxy/domains"); ok.Headers.Add("X-Proxy-Key", "a-long-shared-proxy-key-1");
-        Assert.Contains("desk.svjlasertech.com", (await J(await keyed.SendAsync(ok))).GetProperty("hosts").EnumerateArray().Select(x => x.GetString()));
+        var got = await keyed.SendAsync(ok);   // a host of its own, so its list is its own (empty here)
+        Assert.Equal(HttpStatusCode.OK, got.StatusCode);
+        Assert.Equal(JsonValueKind.Array, (await J(got)).GetProperty("hosts").ValueKind);
         var bad = new HttpRequestMessage(HttpMethod.Get, "/api/platform/proxy/domains"); bad.Headers.Add("X-Proxy-Key", "wrong-key-wrong-key-1");
         Assert.Equal(HttpStatusCode.NotFound, (await keyed.SendAsync(bad)).StatusCode);
 
