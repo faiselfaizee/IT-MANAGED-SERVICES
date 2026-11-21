@@ -11,6 +11,9 @@ One platform for Service Desk, Assets, Monitoring, AD Manager, Vault and Backup.
 | `updater` | Release tool and updater service (Go) | `cd updater && go vet ./... && go test ./...` |
 | `deploy` | Local PostgreSQL and MinIO, catalog schema | `docker compose -f deploy/docker-compose.yml up -d` |
 
+## Documentation
+Start at [docs/README.md](docs/README.md): on-prem installation ([docs/install-onprem.md](docs/install-onprem.md)), the vendor platform ([docs/install-saas.md](docs/install-saas.md)), every setting ([docs/configuration.md](docs/configuration.md)) and troubleshooting ([docs/troubleshooting.md](docs/troubleshooting.md)).
+
 ## Run locally
 1. `docker compose -f deploy/docker-compose.yml up -d`
 2. `dotnet run --project src/Platform/DeskAsk.Platform.Host --urls http://localhost:5000` (with `Platform__CatalogConnection="Host=localhost;Database=deskask_platform;Username=postgres;Password=dev"`; without it an in-memory "dev" customer is used)
