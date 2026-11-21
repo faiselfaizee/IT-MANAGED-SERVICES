@@ -6,7 +6,8 @@ namespace DeskAsk.Platform.Assets;
 public sealed class AssetsDirectory : ICompanyDirectory, IAssetDirectory
 {
     readonly ITenantContext tenant;
-    public AssetsDirectory(ITenantContext t) => tenant = t;
+    readonly IEntitlements entitlements;
+    public AssetsDirectory(ITenantContext t, IEntitlements ent) { tenant = t; entitlements = ent; }
 
     async Task<NpgsqlConnection> Open(CancellationToken ct) { var db = new NpgsqlConnection(tenant.Require().ConnectionString); await db.OpenAsync(ct); return db; }
 
@@ -21,6 +22,13 @@ public sealed class AssetsDirectory : ICompanyDirectory, IAssetDirectory
     public async Task<IReadOnlyList<CompanyRef>> ListAsync(CancellationToken ct = default)
     {
         await using var db = await Open(ct);
+        // single-company mode: the customer's own name is the one company, made the first time anything asks for it
+        if ((await entitlements.CurrentAsync(ct)).SingleCompany)
+        {
+            await using var one = new NpgsqlCommand("insert into assets.companies (name) select @n where not exists (select 1 from assets.companies) on conflict do nothing", db);
+            one.Parameters.AddWithValue("n", tenant.Require().Name.Length > 120 ? tenant.Require().Name[..120] : tenant.Require().Name);
+            await one.ExecuteNonQueryAsync(ct);
+        }
         await using var c = new NpgsqlCommand("select id, name, code, status = 'active' from assets.companies order by lower(name)", db);
         var l = new List<CompanyRef>();
         await using var r = await c.ExecuteReaderAsync(ct);

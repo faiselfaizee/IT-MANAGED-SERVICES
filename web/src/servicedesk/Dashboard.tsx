@@ -53,7 +53,7 @@ export default function Dashboard() {
         { key: 'u', label: 'Not assigned', value: n(all.unassigned), tone: 'warn' }]} />
     </div>
     {tiles.length === 0 ? <Empty>No tickets yet.</Empty> : <>
-      {tiles.length > 6 && <div className="tools"><input placeholder="Find a customer" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find a customer" /></div>}
-      <div className="co-tiles">{list.map((t, i) => <Tile key={String(t.companyId ?? 'none')} m={t} index={i + 1} />)}</div></>}
+      {tiles.length > 6 && <div className="tools for-customers"><input placeholder="Find a customer" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find a customer" /></div>}
+      <div className="co-tiles for-customers">{list.map((t, i) => <Tile key={String(t.companyId ?? 'none')} m={t} index={i + 1} />)}</div></>}
   </>;
 }

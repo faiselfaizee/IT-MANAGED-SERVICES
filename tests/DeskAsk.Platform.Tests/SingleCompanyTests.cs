@@ -66,4 +66,24 @@ public class SingleCompanyTests : IClassFixture<WebApplicationFactory<Program>>
         var id = list[0].GetProperty("id").GetInt32();                                    // a company can still be renamed
         Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/assets/companies/" + id, Json(new { name = list[0].GetProperty("name").GetString() }))).StatusCode);
     }
+
+    [PgFact]
+    public async Task ANewCustomerLoginIsTiedToTheOneCompanyAtOnce()
+    {
+        var admin = await TestSupport.AdminClient(single);
+        await admin.GetAsync("/api/assets/companies");
+        var pw = "Long-Enough-1"; var email = "cust" + Guid.NewGuid().ToString("N")[..6] + "@sc.test";
+        var made = await admin.PostAsync("/api/platform/users", Json(new { email, name = "Cust", role = "customer", password = pw }));
+        Assert.Equal(HttpStatusCode.Created, made.StatusCode);
+        var id = (await J(made)).GetProperty("id").GetGuid();
+        await using var db = new Npgsql.NpgsqlConnection(Environment.GetEnvironmentVariable("TEST_PG_CONNECTION") ?? ""); await db.OpenAsync();
+        await using var q = new Npgsql.NpgsqlCommand("select count(*) from access.user_companies where user_id = @u", db); q.Parameters.AddWithValue("u", id);
+        Assert.Equal(1L, (long)(await q.ExecuteScalarAsync())!);   // nobody chose a company for them: the one company is theirs
+        // an ordinary licence leaves it to the administrator
+        var other = await TestSupport.AdminClient(plain);
+        var made2 = await other.PostAsync("/api/platform/users", Json(new { email = "b" + email, name = "Cust2", role = "customer", password = pw }));
+        var id2 = (await J(made2)).GetProperty("id").GetGuid();
+        await using var q2 = new Npgsql.NpgsqlCommand("select count(*) from access.user_companies where user_id = @u", db); q2.Parameters.AddWithValue("u", id2);
+        Assert.Equal(0L, (long)(await q2.ExecuteScalarAsync())!);
+    }
 }

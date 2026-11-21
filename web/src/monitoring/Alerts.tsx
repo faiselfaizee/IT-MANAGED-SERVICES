@@ -18,7 +18,7 @@ export function AlertRows({ items, device, onChange, canAct }: { items: Rec[]; d
       <thead><tr><th>Severity</th>{!device && <th>Device</th>}<th>What is wrong</th><th>Since</th><th>Status</th><th>Ticket</th></tr></thead>
       <tbody>{items.map((a) => <tr key={a.id} className={a.closedAt ? 'closed' : ''}>
         <td><span className={`badge ${a.closedAt ? '' : a.severity === 'critical' ? 'bad' : 'warn'}`}>{a.severity === 'critical' ? 'Critical' : 'Warning'}</span></td>
-        {!device && <td><a href={`#/monitoring/device/${a.assetId}`}>{a.asset}</a><div className="muted small">{a.company}</div></td>}
+        {!device && <td><a href={`#/monitoring/device/${a.assetId}`}>{a.asset}</a><div className="muted small for-customers">{a.company}</div></td>}
         <td>{a.text}<div className="muted small">{a.rule} · {METRIC_WORDS[a.metric] ?? a.metric}{a.escalatedAt ? ' · escalated' : ''}</div>{a.actionNote && <div className="muted small">{a.actionNote}</div>}</td>
         <td title={fmtDate(a.openedAt)}>{ago(a.openedAt)}<div className="muted small">{a.closedAt ? 'lasted ' + dur(a.openedAt, a.closedAt) : 'for ' + dur(a.openedAt)}</div></td>
         <td>{a.closedAt ? <span className="muted">{a.closeReason} {ago(a.closedAt)}</span>

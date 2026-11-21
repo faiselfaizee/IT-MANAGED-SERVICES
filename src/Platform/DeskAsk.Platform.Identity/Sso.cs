@@ -131,6 +131,7 @@ public static class SsoEndpoints
             var oid = Str(claims, "oid"); var email = (Str(claims, "email") is { Length: > 0 } em ? em : Str(claims, "preferred_username")).Trim().ToLowerInvariant();
             if (oid == "" || !email.Contains('@')) return Error("Microsoft did not give an email address for this account. Ask your administrator to fill in the email of your Microsoft account.");
 
+            UserAccount? fresh = null;
             var user = await db.Users.FirstOrDefaultAsync(x => x.ExternalId == oid, ct) ?? await db.Users.FirstOrDefaultAsync(x => x.Email == email, ct);
             if (user == null)
             {
@@ -146,12 +147,13 @@ public static class SsoEndpoints
                 var name = Str(claims, "name") is { Length: > 0 } nm ? nm : email;
                 user = new UserAccount { Email = email, Name = name.Length > 200 ? name[..200] : name, Role = role };
                 user.PasswordHash = hasher.HashPassword(user, B64(RandomNumberGenerator.GetBytes(32)));
-                db.Users.Add(user);
+                db.Users.Add(user); fresh = user;
                 await audit.WriteAsync("user.created", email, "role=" + role + " (first Microsoft sign-in)", actor: email);
             }
             if (!user.Active) return Error("This account is disabled.", 403);
             if (user.ExternalId != oid) user.ExternalId = oid;
             await db.SaveChangesAsync(ct);
+            if (fresh != null) await SingleCompanyLink.TryAsync(http.RequestServices, new[] { fresh }, ct);
             await audit.WriteAsync("auth.login", target: email, actor: email, detail: "microsoft");
             await http.SignInAsync(IdentityModule.CookieName, new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", user.Id.ToString()), new Claim("mfa", "1") }, IdentityModule.CookieName)));
             return Results.Redirect(IdentityModule.LocalOrRoot(Str(saved, "ret")));
@@ -219,13 +221,13 @@ public static class SsoEndpoints
             return Results.Ok(new { items, more = next != null });
         });
 
-        g.MapPost("/entra/import", async (JsonElement b, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
+        g.MapPost("/entra/import", async (JsonElement b, IServiceProvider sp, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
         {
             var role = (b.TryGetProperty("role", out var rv) && rv.ValueKind == JsonValueKind.String ? rv.GetString()! : "").Trim().ToLowerInvariant();
             if (!UsersEndpoints.Roles.Contains(role)) return Results.BadRequest(new { error = "Choose a role." });
             if (!b.TryGetProperty("users", out var us) || us.ValueKind != JsonValueKind.Array || us.GetArrayLength() is 0 or > 500) return Results.BadRequest(new { error = "Choose 1 to 500 people." });
             if (await StaffLimit.RefuseImportAsync(ent, db, role, us.EnumerateArray().Select(x => Str(x, "email")), ct) is { } over) return over;
-            int created = 0, linked = 0, skipped = 0;
+            int created = 0, linked = 0, skipped = 0; var madeUsers = new List<UserAccount>();
             foreach (var u in us.EnumerateArray())
             {
                 var email = Str(u, "email").Trim().ToLowerInvariant(); var oid = Str(u, "id"); var name = Str(u, "name").Trim();
@@ -234,9 +236,10 @@ public static class SsoEndpoints
                 if (ex != null) { if (ex.ExternalId != oid && oid != "") { ex.ExternalId = oid; linked++; } else skipped++; continue; }
                 var acc = new UserAccount { Email = email, Name = name == "" ? email : (name.Length > 200 ? name[..200] : name), Role = role, ExternalId = oid == "" ? null : oid };
                 acc.PasswordHash = hasher.HashPassword(acc, B64(RandomNumberGenerator.GetBytes(32)));
-                db.Users.Add(acc); created++;
+                db.Users.Add(acc); created++; madeUsers.Add(acc);
             }
             await db.SaveChangesAsync(ct);
+            await SingleCompanyLink.TryAsync(sp, madeUsers, ct);
             await audit.WriteAsync("user.imported", "entra", $"created {created}, linked {linked}, skipped {skipped}, role {role}", ct: ct);
             return Results.Ok(new { created, linked, skipped });
         });

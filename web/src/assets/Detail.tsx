@@ -60,7 +60,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
       <div className="hero-main">
         <h1>{d.name} <span className="muted mono">{d.tag}</span> {hasAgent && <Badge tone={online ? 'ok' : 'bad'}>{online ? 'Online' : 'Offline'}</Badge>} {d.ownership.underAmc && <Badge tone="ok">AMC</Badge>} {d.ownership.rented && <Badge>Rented</Badge>}</h1>
         <div className="hero-meta">
-          {d.company && <span><b>Customer</b>{d.company}</span>}
+          {d.company && <span className="for-customers"><b>Customer</b>{d.company}</span>}
           {d.identity?.serial && <span><b>Serial</b>{d.identity.serial}</span>}
           {d.system?.ip && <span><b>IP</b>{d.system.ip}</span>}
           {(d.system?.os || d.identity?.model) && <span><b>{d.system?.os ? 'OS' : 'Model'}</b>{d.system?.os || [d.identity?.make, d.identity?.model].filter(Boolean).join(' ')}</span>}

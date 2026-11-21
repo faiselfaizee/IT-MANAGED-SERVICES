@@ -58,7 +58,7 @@ export default function List({ me, kind = '', major = false }: { me: Rec | null;
     {data && (items.length === 0 ? <Empty>No tickets match.</Empty> : <table><thead><tr><th>Ticket</th><th>Subject</th>{!kind && <th>Type</th>}<th>Priority</th><th>Status</th>{staff && <th>Assigned to</th>}<th>Service level</th><th>Updated</th></tr></thead><tbody>
       {items.map((t) => <tr key={t.id} onClick={() => go('servicedesk/' + t.id)} style={{ cursor: 'pointer' }}>
         <td><a href={'#/servicedesk/' + t.id}>{t.number}</a></td>
-        <td>{t.subject}<div className="muted">{[t.company, t.requester].filter(Boolean).join(' · ')}</div></td>
+        <td>{t.subject}<div className="muted"><span className="for-customers">{t.company ? t.company + ' · ' : ''}</span>{t.requester}</div></td>
         {!kind && <td><KindBadge k={t.kind} major={t.major} /></td>}
         <td>{kind && t.major && <Badge tone="bad">Major</Badge>} <PriorityBadge p={t.priority} /></td><td><StatusBadge s={t.status} /></td>
         {staff && <td>{t.assignee || <span className="muted">Unassigned</span>}</td>}
