@@ -441,6 +441,12 @@ public sealed class AssetsSchema : ITenantSchema
             alter table assets.assets add column if not exists m_printer_error text not null default '';
             create table if not exists assets.printer_pages (
               asset_id bigint not null references assets.assets(id) on delete cascade, day date not null, pages bigint not null, primary key (asset_id, day))"),
+        new(31, "people pulled from a customer's domain controller", @"
+            create table if not exists assets.directory_people (
+              company_id int not null, account text not null, name text not null, email text not null default '', upn text not null default '',
+              department text not null default '', title text not null default '', enabled boolean not null default true,
+              synced_at timestamptz not null default now(), primary key (company_id, account));
+            create index if not exists directory_people_name on assets.directory_people (company_id, lower(name))"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -496,6 +502,7 @@ public sealed class AssetsModule : IPlatformModule
         s.AddScoped<AssetsDirectory>();
         s.AddScoped<ICompanyDirectory>(sp => sp.GetRequiredService<AssetsDirectory>());
         s.AddScoped<IAssetDirectory>(sp => sp.GetRequiredService<AssetsDirectory>());
+        s.AddScoped<IDirectoryPeople, DirectoryPeople>();
         s.AddScoped<IDeviceHealth, DeviceHealth>();
         s.AddScoped<IDeviceActions, DeviceActions>();
         s.AddScoped<ILicenseUsage, AssetsLicenseUsage>();

@@ -31,6 +31,8 @@ public sealed class AdModule : IPlatformModule
         s.AddSingleton<ITenantSchema, AdSchema>();
         s.AddScoped<ILicenseUsage, AdLicenseUsage>();
         s.AddSingleton<IJobHandler, AutomationJob>();
+        s.AddSingleton<IJobHandler, PeopleSyncJob>();
+        s.AddSingleton(new RecurringJob("adsuite.people", PeopleSyncJob.JobType, TimeSpan.FromHours(6)));
         s.AddSingleton(new RecurringJob("adsuite.automation", AutomationJob.JobType, TimeSpan.FromHours(24)));
     }
 
@@ -115,6 +117,9 @@ public sealed class AdSchema : ITenantSchema
               name text not null, kind text not null check (kind in ('disable-inactive-users','disable-stale-computers','move-disabled-users')),
               days int not null default 90, ou text not null default '', move_to text not null default '', enabled boolean not null default false,
               last_run timestamptz, last_result text not null default '', created_by text not null default '', created_at timestamptz not null default now());"),
+        new(4, "when the people of a domain were last read for Assets", @"
+            alter table adsuite.domains add column if not exists people_synced_at timestamptz,
+              add column if not exists people_count int not null default 0, add column if not exists people_error text not null default '';"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
         await SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);

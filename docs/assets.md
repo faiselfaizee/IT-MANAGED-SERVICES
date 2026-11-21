@@ -428,3 +428,13 @@ Not in 6.5: colour vs black-and-white page split, print-server queue monitoring,
 
 - Opening Assets (the menu, "Open Assets", the breadcrumb, or coming back from an asset) now lands on **All assets**. The dashboard is Assets › **Dashboard** (`#/assets/dashboard`).
 - The list shows, for every asset: **Status** (usage: in use, in stock, repair, retired, lost), **OS**, **IP address** and the **agent** state (online, offline, update due, no agent), next to tag, name (with make and model), type, person, site and warranty. OS and IP come from the agent or controller and are blank for devices that report none.
+
+## People from the customer's domain controller
+
+Devices setup › Customers › **Domain controller** (with a single company: Devices setup › Domain controller) connects a customer's Active Directory so its people can be used in Assets. It works with an Assets or Monitoring licence; AD Manager is not needed.
+
+- It reuses the AD Manager connection (table `adsuite.domains`) and the controller installed in the customer's network, so nothing is opened to the internet. The account only needs to read. If the customer later buys AD Manager, the same domain appears there.
+- DeskAsk reads the people (name, email, department, title, enabled) every 6 hours (job `adsuite.people`) and on **Sync now**, and keeps them in `assets.directory_people`. A list is replaced only when every domain of the customer answered, so a controller that is down never empties it. Someone who leaves the directory leaves the list at the next read.
+- **Inventory › People** lists them next to the people who hold assets (a directory person with nothing handed out shows 0 items).
+- Wherever an asset is given to someone (Allocate, Edit › Assigned to, People › Give), the name box suggests the customer's directory people as you type. A name can still be typed by hand (customers without a domain controller, visitors, contractors).
+- API: `GET/PUT/DELETE /api/directory/companies/{id}`, `POST …/test`, `POST …/sync` (administrators); `GET /api/assets/directory-people?companyId=&search=&limit=` (anyone who may read assets, limited to their customers).

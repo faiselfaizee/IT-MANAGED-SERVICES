@@ -1,3 +1,4 @@
+import PersonInput from './PersonInput';
 import { PurchaseFields, purchaseBody } from './Purchase';
 import { useState } from 'react';
 import { usePerms } from '../perms';
@@ -195,7 +196,7 @@ function Handover({ id, d, onClose }: { id: string; d: Rec; onClose: (changed: b
   const f = useSubmit(() => onClose(true));
   const body = { condition: cond, to, accessories: acc.split(',').map((x) => x.trim()).filter(Boolean), notes };
   return <Modal title={holder ? `Hand over from ${holder}` : 'Allocate to someone'} onClose={() => onClose(false)}><div className="form">
-    {!holder && <Field label="Receiving person"><input value={to} onChange={(e) => setTo(e.target.value)} autoFocus /></Field>}
+    {!holder && <Field label="Receiving person"><PersonInput value={to} onChange={setTo} companyId={d.companyId} autoFocus /></Field>}
     <Field label="Condition"><select value={cond} onChange={(e) => setCond(e.target.value)}>{['good', 'fair', 'damaged', 'lost'].map((c) => <option key={c}>{c}</option>)}</select></Field>
     <Field label="Accessories (comma separated)"><input value={acc} onChange={(e) => setAcc(e.target.value)} placeholder="charger, bag, mouse" /></Field>
     <Field label="Notes"><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
@@ -240,7 +241,7 @@ function EditForm({ id, d, a, cov, onClose }: { id: string; d: Rec; a: Rec; cov:
   return <Modal title={`Edit ${d.tag}`} onClose={() => onClose(false)}><div className="form">
     <Field label="Name"><input value={v.name} onChange={(e) => set('name', e.target.value)} autoFocus /></Field>
     <div className="row"><Field label="Status"><select value={v.status} onChange={(e) => set('status', e.target.value)}>{STATUS_CHOICES.map((x) => <option key={x} value={x}>{x.replace('_', ' ')}</option>)}</select></Field>
-      <Field label="Assigned to (name or email)"><input value={v.assignedTo} onChange={(e) => set('assignedTo', e.target.value)} /></Field></div>
+      <Field label="Assigned to (name or email)"><PersonInput value={v.assignedTo ?? ''} onChange={(x) => set('assignedTo', x)} companyId={a.companyId} /></Field></div>
     {remote && <>
     <Field label="IP address (the address DeskAsk uses to reach it)"><input value={v.ipAddress} onChange={(e) => set('ipAddress', e.target.value)} placeholder="10.0.0.25" spellCheck={false} /></Field>
     <div className="row"><Field label="Host name"><input value={v.hostname} onChange={(e) => set('hostname', e.target.value)} spellCheck={false} /></Field>

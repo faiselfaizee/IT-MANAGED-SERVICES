@@ -256,6 +256,23 @@ public static class PeripheralsApi
             return Results.Ok(new { created, skipped });
         }).RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Add);
 
+        // ---- the people read from a customer's domain controller: the People page and the drop-down when handing something out
+        readers(r.MapGet("/api/assets/directory-people", async (string? search, int? companyId, bool? all, int? limit, HttpContext http, ITenantContext t, CancellationToken ct) =>
+        {
+            var scope = await AssetsAccess.ScopeAsync(http, Acts.Read);
+            await using var db = await Open(t, ct);
+            await using var c = new NpgsqlCommand(@"select p.company_id, coalesce(co.name, ''), p.account, p.name, p.email, p.department, p.title, p.enabled
+                from assets.directory_people p left join assets.companies co on co.id = p.company_id
+                where (not @sc or p.company_id = any(@scope)) and (@co = 0 or p.company_id = @co) and (@all or p.enabled)
+                  and (@q = '' or p.name ilike @l or p.email ilike @l or p.account ilike @l)
+                order by lower(p.name), p.company_id limit @lim", db);
+            AssetsAccess.Bind(c, scope); var q = (search ?? "").Trim(); P(c, "q", q); P(c, "l", "%" + q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%");
+            P(c, "co", companyId ?? 0); P(c, "all", all == true); P(c, "lim", Math.Clamp(limit ?? 200, 1, 1000));
+            var rows = new List<object>(); await using var rd = await c.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct)) rows.Add(new { companyId = rd.GetInt32(0), company = rd.GetString(1), account = rd.GetString(2), name = rd.GetString(3), email = rd.GetString(4), department = rd.GetString(5), title = rd.GetString(6), enabled = rd.GetBoolean(7) });
+            return Results.Ok(new { items = rows });
+        }));
+
         // ---- people and what they hold
         readers(r.MapGet("/api/assets/holders", async (string? search, int? companyId, HttpContext http, ITenantContext t, CancellationToken ct) =>
         {
