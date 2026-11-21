@@ -67,3 +67,27 @@ test('a policy page is drawn from its markdown without passing HTML through', as
   expect(screen.getByText('servicedesk@deskask.in', { selector: '.md a' }).getAttribute('href')).toBe('mailto:servicedesk@deskask.in');
   expect(container.querySelector('script')).toBeNull();
 });
+
+test('Monitoring cannot be chosen without Asset management: the smallest size is added and cannot be dropped', async () => {
+  const { needs } = await import('./StorePage');
+  const p = (id: number, module: string, sizeLabel: string) => ({ id, module, moduleName: module, sizeLabel, limits: {}, inr: { year: 1, month: 1, onprem: 1 }, usd: { year: 1, month: 1, onprem: 1 } });
+  const list = [p(1, 'assets', '100 assets'), p(2, 'assets', '500 assets'), p(3, 'monitoring', '50 devices')];
+  const added = needs(list, { monitoring: 3 });
+  expect(added.sel).toEqual({ monitoring: 3, assets: 1 });
+  expect(added.note).toMatch(/Asset management is chosen too \(100 assets\)/);
+  expect(needs(list, { monitoring: 3, assets: 2 })).toEqual({ sel: { monitoring: 3, assets: 2 }, note: '' });   // a bigger size stays
+  expect(needs(list, { assets: 2 }).note).toBe('');                                                             // Assets alone is fine
+});
+
+test('choosing Monitoring in the store also chooses Asset management and says so', async () => {
+  const p = (id: number, module: string, name: string, sizeLabel: string) => ({ id, module, moduleName: name, sizeLabel, limits: {}, inr: { year: 1000, month: 100, onprem: 800 }, usd: { year: 10, month: 1, onprem: 8 } });
+  const list = [p(1, 'assets', 'Asset management', '100 assets'), p(3, 'monitoring', 'Monitoring', '50 devices')];
+  vi.stubGlobal('fetch', vi.fn(async (u: string) => new Response(JSON.stringify(String(u).includes('/info') ? info : String(u).includes('/plans') ? list : quote), { status: 200 })));
+  render(<StorePage path={['pricing']} />);
+  await waitFor(() => expect(screen.getByLabelText('Monitoring size')).toBeTruthy());
+  fireEvent.change(screen.getByLabelText('Monitoring size'), { target: { value: '3' } });
+  await waitFor(() => expect((screen.getByLabelText('Asset management size') as HTMLSelectElement).value).toBe('1'));
+  expect(screen.getByText(/Asset management is chosen too/)).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Asset management size'), { target: { value: '' } });
+  await waitFor(() => expect((screen.getByLabelText('Asset management size') as HTMLSelectElement).value).toBe('1'));
+});
