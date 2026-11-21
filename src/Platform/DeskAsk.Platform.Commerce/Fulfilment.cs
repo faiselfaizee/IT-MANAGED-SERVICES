@@ -189,7 +189,6 @@ public static class Fulfilment
     public static Dictionary<string, Dictionary<string, int>> TrialLines(List<Store.Plan> plans, IEnumerable<string> modules)
     {
         var want = modules.Where(m => Modules.All.Contains(m)).ToHashSet();
-        if (want.Contains(Modules.Monitoring)) want.Add(Modules.Assets);
         var lines = new Dictionary<string, Dictionary<string, int>>();
         foreach (var m in want)
         {

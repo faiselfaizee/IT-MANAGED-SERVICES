@@ -243,10 +243,10 @@ public static class AssetsDevice
 
     public static void Map(IEndpointRouteBuilder r, string key)
     {
-        var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
-        var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Read, allCompanies: true);
-        var scoped = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Read);
-        var amcEdit = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin", "cadmin")).RequireModule(key);
+        var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireFoundation();
+        var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireFoundation().RequireAccess(key, Acts.Read, allCompanies: true);
+        var scoped = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireFoundation().RequireAccess(key, Acts.Read);
+        var amcEdit = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin", "cadmin")).RequireFoundation();
 
         // ---------------------------------------------------------------- companies
         scoped(r.MapGet("/api/assets/companies", async (HttpContext http, ITenantContext t, CancellationToken ct) =>

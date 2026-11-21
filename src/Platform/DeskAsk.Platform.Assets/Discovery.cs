@@ -229,7 +229,7 @@ public static class DiscoveryApi
 
     public static void Map(IEndpointRouteBuilder r, string key)
     {
-        RouteHandlerBuilder Admin(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
+        RouteHandlerBuilder Admin(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireFoundation();
 
         Admin(r.MapPost("/api/assets/discover/probe", async (JsonElement body, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
         {

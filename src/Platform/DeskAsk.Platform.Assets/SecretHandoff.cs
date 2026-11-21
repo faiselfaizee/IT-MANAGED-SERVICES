@@ -33,7 +33,7 @@ public static class SecretHandoff
             var res = new { account = rd.GetString(0), target = rd.GetString(1), password = SecretBox.Open(cfg, t.Require().Id, rd.GetString(2)) };
             http.Response.Headers.CacheControl = "no-store";
             return Results.Ok(res);
-        }).RequireModule(key);
+        }).RequireFoundation();
 
         r.MapPost("/agent/v1/secret/{id}/result", async (string id, JsonElement b, HttpContext http, ITenantContext t, IAuditLog audit, CancellationToken ct) =>
         {
@@ -48,6 +48,6 @@ public static class SecretHandoff
             await using (var rd = await c.ExecuteReaderAsync(ct)) { if (!await rd.ReadAsync(ct)) return Results.NotFound(); asset = rd.GetInt64(0); account = rd.GetString(1); }
             await audit.WriteAsync(ok ? "assets.password_changed" : "assets.password_change_failed", asset.ToString(), ok ? $"account {account}" : $"account {account}: {err}", ct: ct);
             return Results.Ok(new { ok = true });
-        }).RequireModule(key);
+        }).RequireFoundation();
     }
 }

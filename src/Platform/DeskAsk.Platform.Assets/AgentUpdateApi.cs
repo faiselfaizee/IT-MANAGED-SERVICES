@@ -36,7 +36,7 @@ public static class AgentUpdateApi
 
     public static void Map(IEndpointRouteBuilder r, string key)
     {
-        RouteHandlerBuilder Admin(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
+        RouteHandlerBuilder Admin(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireFoundation();
 
         async Task<(string Id, string Version, string Platform, DateTime? Seen, string State, DateTime? At, string To)?> Agent(NpgsqlConnection db, long assetId, CancellationToken ct)
         {
@@ -144,6 +144,6 @@ public static class AgentUpdateApi
                 AgentsApi.P(c, "i", ag.Value.Id); await c.ExecuteNonQueryAsync(ct);
             }
             return Results.Ok(new { ok = true });
-        }).RequireModule(key);
+        }).RequireFoundation();
     }
 }

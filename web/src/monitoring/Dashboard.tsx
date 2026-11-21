@@ -53,11 +53,11 @@ export default function Dashboard() {
       {me.data?.role === 'admin' && <button onClick={() => void checkNow()}>Check now</button>}
       {checking && <span className="muted" role="status">{checking}</span>}
     </div>
-    {customers.length === 0 ? <div className="note" role="status"><p><b>No devices yet.</b> Monitoring watches the devices in Assets, so you set up your customers and their devices there first:</p>
+    {customers.length === 0 ? <div className="note" role="status"><p><b>No devices yet.</b> Monitoring watches the devices you add under Administration › Devices setup. Start there:</p>
       <ol>
-        <li><a href="#/assets/companies">Add the customer</a> (Assets › Companies).</li>
-        <li><a href="#/assets/credentials">Save the logins</a> for that customer: Windows, Linux SSH, SNMP, VMware vCenter or ESXi, server management (Assets › Credentials).</li>
-        <li>Install the agent on computers and servers, or a site controller on the customer's network for printers, switches, firewalls and hypervisors (Assets › Agents &amp; collectors).</li>
+        <li><a href="#/setup/companies">Add the customer</a> (Administration › Devices setup › Customers).</li>
+        <li><a href="#/setup/credentials">Save the logins</a> for that customer: Windows, Linux SSH, SNMP, VMware vCenter or ESXi, server management (Devices setup › Credentials).</li>
+        <li>Install the agent on computers and servers, or a site controller on the customer's network for printers, switches, firewalls and hypervisors (<a href="#/setup/fleet">Devices setup › Agents &amp; collectors</a>).</li>
         <li><a href="#/monitoring/settings">Choose who gets the alert mails</a> (Monitoring › Settings); mail must be set up under Mail.</li>
       </ol></div> :
       <div className="co-tiles">

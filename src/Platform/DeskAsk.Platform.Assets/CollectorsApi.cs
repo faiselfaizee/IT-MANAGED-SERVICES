@@ -191,8 +191,8 @@ chmod 755 /opt/deskask-collector/deskask-collector
 
     public static void Map(IEndpointRouteBuilder r, string key)
     {
-        RouteHandlerBuilder Admin(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
-        RouteHandlerBuilder Open(RouteHandlerBuilder b) => b.RequireModule(key);
+        RouteHandlerBuilder Admin(RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireFoundation();
+        RouteHandlerBuilder Open(RouteHandlerBuilder b) => b.RequireFoundation();
 
         // ================================================================ collector-facing
         RelayApi.Map(r, key, async (h, db, ct) => (await Auth(h, db, ct))?.Id);

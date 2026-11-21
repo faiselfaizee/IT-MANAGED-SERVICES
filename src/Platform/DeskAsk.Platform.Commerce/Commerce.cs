@@ -256,7 +256,6 @@ public static class Licences
                 if (v < 0 || v > 10_000_000) return "The limit " + m + ":" + name + " must be between 0 and 10,000,000.";
             }
         }
-        if (lines.ContainsKey(Modules.Monitoring) && !lines.ContainsKey(Modules.Assets)) return "Monitoring needs Asset management in the same licence.";
         return null;
     }
 

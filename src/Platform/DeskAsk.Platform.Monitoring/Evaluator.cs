@@ -17,7 +17,7 @@ public sealed class EvaluateJob : IJobHandler
     public async Task RunAsync(JobContext job, CancellationToken ct)
     {
         var lic = await job.Services.GetRequiredService<IEntitlements>().CurrentAsync(ct);
-        if (!lic.Has(Modules.Monitoring) || !lic.Has(Modules.Assets)) return;
+        if (!lic.Has(Modules.Monitoring)) return;
         await Evaluator.RunAsync(job.Services, ct);
     }
 }

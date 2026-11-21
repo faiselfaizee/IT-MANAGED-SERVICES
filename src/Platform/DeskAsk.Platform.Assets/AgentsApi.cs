@@ -266,8 +266,8 @@ chmod 755 /opt/deskask-agent/deskask-agent
 
     public static void Map(IEndpointRouteBuilder r, string key)
     {
-        var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
-        var open = (RouteHandlerBuilder b) => b.RequireModule(key);
+        var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireFoundation();
+        var open = (RouteHandlerBuilder b) => b.RequireFoundation();
 
         // ================================================================ agent-facing
         open(r.MapPost("/agent/v1/enroll", async (JsonElement body, HttpContext http, ITenantContext t, IConfiguration cfg, IEntitlements ent, AgentHub hub, IAuditLog audit, CancellationToken ct) =>
@@ -306,6 +306,23 @@ chmod 755 /opt/deskask-agent/deskask-agent
                     P(q, "s", serial); P(q, "c", company); P(q, "m", macs.ToArray());
                     await using var rd = await q.ExecuteReaderAsync(ct);
                     if (await rd.ReadAsync(ct)) { assetId = rd.GetInt64(0); oldAgent = rd.GetString(1); }
+                }
+            }
+            if (assetId == null)
+            {
+                // A device that a site controller or a scan already added (Monitoring and Assets share one device list) has no serial number or agent yet:
+                // the agent takes it over when exactly one such device in the same customer has one of the same network adapters, so it is never added twice.
+                var macs12 = (JsonSerializer.Deserialize<List<string>>(norm.Macs) ?? new()).Select(m => System.Text.RegularExpressions.Regex.Replace(m.ToLowerInvariant(), "[^0-9a-f]", ""))
+                    .Where(m => m.Length == 12 && m.Trim('0') != "" && m.Trim('f') != "").Distinct().ToArray();
+                if (macs12.Length > 0)
+                {
+                    await using var q = new NpgsqlCommand(@"select a.id from assets.assets a where a.agent_id = '' and a.status not in ('retired', 'lost') and a.company_id is not distinct from @c
+                        and exists (select 1 from jsonb_array_elements_text(case when jsonb_typeof(a.mac_addresses) = 'array' then a.mac_addresses else '[]'::jsonb end) m
+                                    where regexp_replace(lower(m), '[^0-9a-f]', '', 'g') = any(@m)) order by a.id limit 2", db, tx);
+                    P(q, "c", company); P(q, "m", macs12);
+                    await using var rd = await q.ExecuteReaderAsync(ct);
+                    var hits = new List<long>(); while (await rd.ReadAsync(ct)) hits.Add(rd.GetInt64(0));
+                    if (hits.Count == 1) assetId = hits[0];   // two or more: left to the Duplicates page rather than guessing
                 }
             }
             var agentId = "g" + Rand(10); var agentKey = "dkag_" + Rand(30);

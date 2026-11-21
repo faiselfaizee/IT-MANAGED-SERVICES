@@ -17,27 +17,30 @@ import Reports from './Reports';
 import Software from './Software';
 import Licenses, { LicenseDetail } from './Licenses';
 import { RemoteLog, Repository, Settings } from './Admin';
+import { LIFECYCLE_PAGES, useAssetsLite } from './lite';
 import { People, Stock, Types } from './Peripherals';
 
 type Nav = { key: string; label: string };
 const MENU: { group: string; items: Nav[] }[] = [
   { group: 'Overview', items: [{ key: '', label: 'Dashboard' }] },
-  { group: 'Inventory', items: [{ key: 'list', label: 'All assets' }, { key: 'people', label: 'People' }, { key: 'stock', label: 'Stock' }, { key: 'discover', label: 'Discover' }, { key: 'duplicates', label: 'Duplicates' }, { key: 'delete-requests', label: 'Delete requests' }] },
+  { group: 'Inventory', items: [{ key: 'list', label: 'All assets' }, { key: 'people', label: 'People' }, { key: 'stock', label: 'Stock' }, { key: 'delete-requests', label: 'Delete requests' }] },
   { group: 'Software', items: [{ key: 'software', label: 'Installed software' }, { key: 'licenses', label: 'Licences & subscriptions' }] },
   { group: 'Contracts', items: [{ key: 'amc', label: 'AMC' }, { key: 'rentals', label: 'Rentals' }, { key: 'renewals', label: 'Renewals' }, { key: 'vendors', label: 'Vendors' }] },
-  { group: 'Agents', items: [{ key: 'fleet', label: 'Agents & collectors' }, { key: 'commands', label: 'Command repository' }, { key: 'remote-log', label: 'Remote activity' }] },
+  { group: 'Agents', items: [{ key: 'commands', label: 'Command repository' }, { key: 'remote-log', label: 'Remote activity' }] },
   { group: 'Reports', items: [{ key: 'reports', label: 'Asset reports' }] },
-  { group: 'Settings', items: [{ key: 'companies', label: 'Companies' }, { key: 'locations', label: 'Locations' }, { key: 'credentials', label: 'Credentials' }, { key: 'types', label: 'Kinds of asset' }, { key: 'settings', label: 'Settings' }] },
+  { group: 'Settings', items: [{ key: 'locations', label: 'Locations' }, { key: 'types', label: 'Kinds of asset' }, { key: 'settings', label: 'Settings' }] },
 ];
 
 /** The Assets module: routes inside the #/assets address. */
 export default function AssetsApp() {
+  const lite = useAssetsLite();   // Monitoring without Asset management: only the shared device list
   const perms = usePerms('assets'); const amcOk = useAmcAccess(); const parts = useHash(); const [, a, b] = parts;
   // administrators see every page; other people see the pages they may read (a customer administrator sees only assets and companies)
   const approval = useLoad<Rec>('/api/assets/delete-approval');
   const may = (k: string) => (k !== 'delete-requests' || !!approval.data?.required) && (perms.admin || ['', 'list', 'people', 'stock', 'reports', 'companies', 'locations', 'vendors', 'renewals', 'duplicates', 'licenses'].includes(k) || (k === 'delete-requests' && (perms.modify || perms.delete)) || (perms.readAll && ['software', 'amc', 'rentals'].includes(k)) || (k === 'amc' && amcOk)); const section = /^\d+$/.test(a ?? '') ? 'list' : a === 'customer' ? '' : a ?? '';
   let page;
   if (/^\d+$/.test(a ?? '')) page = <Detail id={a} tab={b ?? 'overview'} />;
+  else if (lite && (a === undefined || LIFECYCLE_PAGES.includes(a ?? ''))) page = a === undefined ? <List key={location.hash} /> : <p className="muted">This part of Asset management is not in your licence. Customers, logins, agents and the device list are under Administration › Devices setup and Assets › All assets.</p>;
   else switch (a) {
     case 'customer': page = <CustomerDash key={b} id={b ?? 'all'} />; break;
     case 'list': page = <List key={location.hash} />; break;
@@ -65,10 +68,11 @@ export default function AssetsApp() {
   }
   return <div className="modshell">
     <aside className="modnav" aria-label="Assets">
-      <div className="modnav-head"><strong>Assets</strong></div>
-      {MENU.map((g) => { const items = g.items.filter((i) => may(i.key)); return items.length === 0 ? null : <div key={g.group} className="modnav-group">
+      <div className="modnav-head"><strong>{lite ? 'Devices' : 'Assets'}</strong></div>
+      {MENU.map((g) => { const items = g.items.filter((i) => may(i.key) && !(lite && (LIFECYCLE_PAGES.includes(i.key) || i.key === ''))); return items.length === 0 ? null : <div key={g.group} className="modnav-group">
         {g.group && <h4>{g.group}</h4>}
         {items.map((i) => <a key={i.key} href={'#/assets' + (i.key ? '/' + i.key : '')} className={section === i.key ? 'on' : ''}>{i.label}</a>)}</div>; })}
+      {perms.admin && <div className="modnav-group"><h4>Setup</h4><a href="#/setup/companies">Customers, logins and agents</a></div>}
     </aside>
     <main className="modmain">{page}</main>
   </div>;

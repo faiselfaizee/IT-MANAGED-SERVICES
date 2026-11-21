@@ -171,3 +171,7 @@ Four built-in rules are added: toner at 10% or less (mail), toner nearly empty a
 On a new customer the Monitoring dashboard shows a short checklist with links: add the customer (Assets › Companies), save its logins (Assets › Credentials), install the agent or a site controller, then choose who gets the alert mails (Monitoring › Settings; Mail must be set up).
 
 The menu follows the licence: Service Desk, Assets, Monitoring, AD Manager, Vault and Backup appear (menu entry, Home tile and page) only when the licence includes them, or keeps them read-only after it ended. A module that is not in the licence is not shown at all. A trial or purchase of Monitoring always includes Asset management, because Monitoring watches the devices kept there.
+
+## Setup is under Administration (6.6.0)
+
+Customers, credentials, agents and discovery are at Administration › Devices setup, shared with Asset management, so Monitoring can be used without the Assets licence.

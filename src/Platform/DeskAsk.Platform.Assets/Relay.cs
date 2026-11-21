@@ -110,7 +110,7 @@ public static class RelayApi
                 if (!ct.IsCancellationRequested) got = await Take();
             }
             return Results.Ok(new { jobs = got });
-        }).RequireModule(key);
+        }).RequireFoundation();
 
         r.MapPost("/collector/v1/relay/result", async (JsonElement body, HttpContext http, ITenantContext t, CancellationToken ct) =>
         {
@@ -128,6 +128,6 @@ public static class RelayApi
             await using var c = new NpgsqlCommand("update assets.relay_jobs set status = @s, result = @r, error = @e, payload = '', finished_at = now() where id = @i and collector_id = @c and status = 'running'", db);
             AgentsApi.P(c, "s", ok ? "done" : "failed"); AgentsApi.P(c, "r", result); AgentsApi.P(c, "e", error); AgentsApi.P(c, "i", id); AgentsApi.P(c, "c", col);
             return Results.Ok(new { ok = await c.ExecuteNonQueryAsync(ct) == 1 });
-        }).RequireModule(key);
+        }).RequireFoundation();
     }
 }

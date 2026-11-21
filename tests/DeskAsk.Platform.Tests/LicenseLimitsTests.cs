@@ -91,4 +91,22 @@ public class LicenseLimitsTests : IClassFixture<WebApplicationFactory<Program>>
         }
         finally { try { System.IO.File.Delete(File); } catch { } }
     }
+
+    sealed class Fixed : IEntitlements
+    {
+        readonly License l; public Fixed(Dictionary<string, ModuleGrant> modules) => l = new License(LicenseState.Valid, new LicensePayload(1, "t", "p", 0, 0, long.MaxValue / 2, 0, modules), "");
+        public Task<License> CurrentAsync(CancellationToken ct = default) => Task.FromResult(l);
+    }
+
+    [Fact]
+    public async Task WithoutAssetManagementTheDevicesAreLimitedByMonitoringsDeviceLimit()
+    {
+        var monitoringOnly = new Fixed(new() { ["monitoring"] = new ModuleGrant(new() { ["max_devices"] = 3 }) });
+        Assert.True(await monitoringOnly.WithinLimitAsync("assets", "max_assets", 2));
+        Assert.False(await monitoringOnly.WithinLimitAsync("assets", "max_assets", 3));
+        var both = new Fixed(new() { ["monitoring"] = new ModuleGrant(new() { ["max_devices"] = 3 }), ["assets"] = new ModuleGrant(new() { ["max_assets"] = 100 }) });
+        Assert.True(await both.WithinLimitAsync("assets", "max_assets", 50));   // Asset management's own limit applies when it is licensed
+        var neither = new Fixed(new() { ["servicedesk"] = new ModuleGrant() });
+        Assert.True(await neither.WithinLimitAsync("assets", "max_assets", 5000));
+    }
 }

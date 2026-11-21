@@ -26,6 +26,7 @@ const Subscription = lazy(() => import('./Subscription'));
 const Mail = lazy(() => import('./Mail'));
 const Updates = lazy(() => import('./Updates'));
 const VendorApp = lazy(() => import('./vendor/VendorApp'));
+const SetupApp = lazy(() => import('./Setup'));
 const ServiceDeskApp = lazy(() => import('./servicedesk/ServiceDeskApp'));
 const MonitoringApp = lazy(() => import('./monitoring/MonitoringApp'));
 const VaultApp = lazy(() => import('./vault/VaultApp'));
@@ -46,7 +47,7 @@ function UsersArea({ meId, tab }: { meId?: string; tab: string }) {
   </>;
 }
 
-const SECTION: Record<string, string> = { '': 'Home', servicedesk: 'Service Desk', assets: 'Assets', monitoring: 'Monitoring', admanager: 'AD Manager', vault: 'Vault', backup: 'Backup',
+const SECTION: Record<string, string> = { '': 'Home', servicedesk: 'Service Desk', assets: 'Assets', monitoring: 'Monitoring', setup: 'Devices setup', admanager: 'AD Manager', vault: 'Vault', backup: 'Backup',
   users: 'Administration › Users', access: 'Administration › Users', mail: 'Administration › Mail', updates: 'Administration › Updates', licence: 'Administration › Licence', subscription: 'Administration › Subscription', branding: 'Administration › Branding', vendor: 'Administration › Vendor console' };
 const ROLE: Record<string, string> = { admin: 'Administrator', engineer: 'Engineer', viewer: 'Viewer', cadmin: 'Customer administrator', customer: 'Customer' };
 
@@ -193,8 +194,11 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const mine = useLoad<Rec>(fetcher ? null : '/api/platform/access/mine');
   const mods = useLoad<Rec[]>(fetcher ? null : '/api/platform/modules');
   const lic = (k: string) => !!fetcher || (Array.isArray(mods.data) && mods.data.some((m) => m.key === k && (m.licensed || m.readOnly)));   // in the licence (or kept read-only after it ended)
-  const canAssets = lic('assets') && (!!fetcher || (!!mine.data?.assets?.read && mine.data.assets.read !== 'none'));
-  const inAssets = parts[0] === 'assets' && canAssets;
+  const readsAssets = !!fetcher || (!!mine.data?.assets?.read && mine.data.assets.read !== 'none');
+  const canAssets = lic('assets') && readsAssets;                                   // the Assets menu entry
+  const inAssets = parts[0] === 'assets' && (canAssets || (lic('monitoring') && readsAssets));   // Monitoring alone still opens the shared device list
+  const canSetup = isAdmin && (lic('assets') || lic('monitoring'));                 // customers, logins, agents: shared by Assets and Monitoring
+  const inSetup = parts[0] === 'setup' && canSetup;
   const canDesk = lic('servicedesk');
   const inDesk = parts[0] === 'servicedesk' && canDesk;
   const canMon = lic('monitoring') && (!!fetcher || (!!mine.data?.monitoring?.read && mine.data.monitoring.read !== 'none'));
@@ -223,7 +227,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
       <nav aria-label="Modules" className="side">
         <a className="brand" href="#/" aria-label={brand.name + ' home'}>{brand.hasLogo ? <span className="logo-chip"><img src={logoUrl(brand)} alt="" /></span> : <Logo size={38} />}<span className="brand-text"><strong>{brand.name}</strong><small>{brand.headerText || 'IT managed services'}</small></span></a>
         <div className="side-group">
-          <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inSub && !inBranding && !inMail && !inUpdates && !inVendor ? 'on' : ''}><Icon name="home" />Home</a>
+          <a href="#/" className={!inAssets && !inSetup && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inSub && !inBranding && !inMail && !inUpdates && !inVendor ? 'on' : ''}><Icon name="home" />Home</a>
           {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
             ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
             : m === 'Service Desk' && canDesk
@@ -240,6 +244,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
         </div>
         {isAdmin ? <div className="side-group"><h4>Administration</h4>
           <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a>
+          {canSetup ? <a href="#/setup" className={inSetup ? 'on' : ''}><Icon name="Assets" />Devices setup</a> : null}
           <a href="#/mail" className={inMail ? 'on' : ''}><Icon name="mail" />Mail</a>
           {canUpdate ? <a href="#/updates" className={inUpdates ? 'on' : ''}><Icon name="updates" />Updates</a> : null}
           <a href="#/licence" className={inLicence ? 'on' : ''}><Icon name="licence" />Licence</a>
@@ -256,7 +261,8 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
         {err ? <p role="alert" className="err">{err}</p> : null}
         {readOnly ? <p role="alert" className="err">The licence has ended, so DeskAsk is read-only: everything stays visible, but nothing can be changed.{isAdmin ? <> <a href="#/licence">Renew or install a licence</a>.</> : ' Ask your administrator to renew the licence.'}</p> : null}
         {isAdmin && Math.abs(skewMin) >= 3 ? <p role="alert" className="err">The server's clock is about {Math.floor(Math.abs(skewMin) / 60)} h {Math.abs(skewMin) % 60} min {skewMin > 0 ? 'ahead of' : 'behind'} this computer, so times shown here and written to logs are wrong. On the server, set the correct time zone first (Windows: <code>Set-TimeZone -Id "India Standard Time"</code> for India), then correct the time (<code>w32tm /resync</code>).</p> : null}
-        {inAssets
+        {inSetup ? <Suspense fallback={<p className="muted">Loading…</p>}><SetupApp /></Suspense>
+          : inAssets
           ? <Suspense fallback={<p className="muted">Loading…</p>}><AssetsApp /></Suspense>
           : inDesk ? <Suspense fallback={<p className="muted">Loading…</p>}><ServiceDeskApp /></Suspense>
           : inMon ? <Suspense fallback={<p className="muted">Loading…</p>}><MonitoringApp /></Suspense>

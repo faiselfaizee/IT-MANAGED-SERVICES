@@ -89,7 +89,7 @@ export const MODULES: Module[] = [
 ];
 
 export const FAQ: [string, string][] = [
-  ['Can I buy only one module?', 'Yes. Each module is sold on its own, in the size you need. Monitoring needs Asset management, because it watches the devices Assets finds. Four or more modules get 25% off.'],
+  ['Can I buy only one module?', 'Yes. Each module is sold on its own, in the size you need. Monitoring works on its own: you add your customers, logins and agents under Administration, and Monitoring watches those devices. Add Asset management later for warranty, contracts, software and reports; the same agents feed it. Four or more modules get 25% off.'],
   ['Cloud or my own server?', 'Both run the same software. In our cloud (SaaS) you get your own address such as yourcompany.deskask.in and we run everything. On-prem runs on your Windows server with a licence key and keeps all data with you.'],
   ['Where is my data kept?', 'SaaS data is stored on servers in India. On-prem keeps everything on your own servers.'],
   ['What happens when the trial ends?', 'The trial modules become read-only until you buy a plan, and nothing you set up is lost. A trial that is not converted is deleted 45 days after it ends; we email you first.'],

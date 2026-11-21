@@ -138,7 +138,7 @@ public sealed class DeviceHealth : IDeviceHealth
                 while (await rd.ReadAsync(ct)) if (!names.Contains(rd.GetString(0), StringComparer.OrdinalIgnoreCase)) names.Add(rd.GetString(0));
             }
             return Results.Ok(new { every = Every(cfg), watch = new { services = names.Take(50).ToArray(), processes = w?.Processes ?? Array.Empty<string>() }, events = w?.Events ?? false });
-        }).RequireModule(key);
+        }).RequireFoundation();
     }
 
     static IEnumerable<JsonElement> Items(JsonElement b, string name, int max) =>

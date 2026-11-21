@@ -55,7 +55,7 @@ The store says "opens soon" until the business details and the Razorpay keys are
 
 ## Buying
 
-- Prices come from the price list and are worked out on the server. India: rupees plus GST (CGST + SGST 9% each in Tamil Nadu, else IGST 18%; the state comes from the buyer's GSTIN, else the state chosen). Outside India: US dollars, no GST, "export under LUT" on the invoice. On-prem is 20% below SaaS, yearly only; monthly SaaS is the yearly price / 12 + 20%. 4 or more modules: 25% off. Monitoring needs Asset management.
+- Prices come from the price list and are worked out on the server. India: rupees plus GST (CGST + SGST 9% each in Tamil Nadu, else IGST 18%; the state comes from the buyer's GSTIN, else the state chosen). Outside India: US dollars, no GST, "export under LUT" on the invoice. On-prem is 20% below SaaS, yearly only; monthly SaaS is the yearly price / 12 + 20%. 4 or more modules: 25% off. Monitoring can be bought alone.
 - Checkout makes the order and a Razorpay order, then opens Razorpay Checkout. The payment is accepted when the signed answer from Checkout (HMAC of order and payment id with the key secret) or the signed webhook arrives; whichever comes first completes the order, the other does nothing.
 - **SaaS**: the customer is created (database, catalog row, every module), licensed for the period (+7 grace days), and the buyer becomes the first administrator with a set-password link (works once, 72 hours). A buyer who is on a trial with the same email and address keeps their trial customer: it becomes the paid plan.
 - **On-prem**: a licence key, shown on the order page for 7 days and emailed.
@@ -98,6 +98,10 @@ Vendor console › Business details has an **Invoice design** card with the same
 - **More sizes:** Vendor console › Price list › **Add a size** adds another edition (name, what it allows such as `agents=25`, prices) to any product. The same name twice is refused. Use the On sale tick of a size to hide it without deleting it.
 - **Delete a product:** the **Delete** button on a product removes it and its sizes. Only a product that is not part of the program and that no order or subscription uses can be deleted; otherwise switch it off. The website receives `product.changed` with `deleted: true` and `onSale: false`. Audited as `commerce.product_deleted` and `commerce.size_added`.
 
-## Monitoring needs Asset management (6.5.6)
+## Monitoring can be bought alone (6.6.0)
 
-Monitoring watches the devices kept in Asset management, so it is not sold alone. In the platform's store, choosing a Monitoring size also chooses the smallest Asset management size and says so; the customer can pick a bigger one, and cannot set Asset management to "Not needed" while Monitoring is chosen. The server still refuses a quote or order with Monitoring and no Asset management ("Monitoring needs Asset management"), whoever sends it. The website's pricing page should do the same as the platform's store: when a visitor picks Monitoring, select the smallest Asset management size and tell them.
+6.5.6 forced Asset management with Monitoring; 6.6.0 reverses it. Companies, logins (credentials), agents and site controllers, discovery and the duplicate check moved to **Administration › Devices setup** and work with either licence. Asset management keeps only the lifecycle features (warranty, contracts, software, reports, remote tools). The store, quotes, orders and trials accept Monitoring alone; the website's pricing page must stop adding Asset management too.
+
+- **Later upgrade:** when the customer adds Asset management, the same agents already report; nothing is reinstalled.
+- **No duplicates:** an agent enrolling takes over a device a site controller already added when exactly one unclaimed device has the same network adapter (MAC); with several candidates it adds the device and leaves them to the Duplicates page.
+- **Monitoring-only screens:** Assets shows as "Devices" with the device list, locations, kinds and settings; Asset management tabs (services, commands, shell, remote) are hidden.

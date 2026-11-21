@@ -13,6 +13,7 @@ import { DuplicateNotice, matchesOf } from './Duplicates';
 import { AttachedCard, CustomFields } from './Peripherals';
 import { ServicesPanel, UninstallForm } from './Services';
 import { PrinterPanel } from './Printer';
+import { LIFECYCLE_TABS, useAssetsLite } from './lite';
 
 const TABS = [
   ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['services', 'Services'], ['tickets', 'Tickets'],
@@ -43,6 +44,7 @@ function heroKind(d: Rec): 'server' | 'linux' | 'network' | 'printer' | 'phone' 
 const HERO_ICON = { server: 'server', linux: 'server', network: 'network', printer: 'printer', phone: 'phone', pc: 'Assets' } as const;
 
 export default function Detail({ id, tab }: { id: string; tab: string }) {
+  const lite = useAssetsLite();
   const { data: d, error, loading, reload } = useLoad<Rec>(`/api/assets/${id}/device`);
   const perms = usePerms('assets'); const approval = useLoad<Rec>('/api/assets/delete-approval');
   const vault = useLoad<Rec>(`/api/vault/assets/${id}/items`, [id]);
@@ -78,7 +80,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
         : perms.modify && <button className={approval.data?.required ? '' : 'danger'} onClick={() => setModal('ask')}>{approval.data?.required ? 'Request deletion' : 'Delete'}</button>}
       {perms.admin && hasAgent && <Act label="Refresh inventory" run={async () => { await api(`/api/assets/${id}/refresh`, { method: 'POST', body: {} }); reload(); }} />}
     </div>
-    <nav className="sub" aria-label="Asset tabs">{tabsFor(d).filter(([k]) => (k !== 'services' || hasAgent) && (!quiet || !['checks', 'commands', 'shell', 'ise', 'remote', 'apps', 'logs', 'network', 'storage'].includes(k))).map(([k, label]) => <a key={k} href={`#/assets/${id}/${k}`} className={tab === k ? 'on' : ''}>{label}</a>)}</nav>
+    <nav className="sub" aria-label="Asset tabs">{tabsFor(d).filter(([k]) => !(lite && LIFECYCLE_TABS.includes(k)) && (k !== 'services' || hasAgent) && (!quiet || !['checks', 'commands', 'shell', 'ise', 'remote', 'apps', 'logs', 'network', 'storage'].includes(k))).map(([k, label]) => <a key={k} href={`#/assets/${id}/${k}`} className={tab === k ? 'on' : ''}>{label}</a>)}</nav>
     {tab === 'overview' && <><Overview id={id} d={d} reload={reload} admin={!!perms.admin} quiet={quiet} /><AttachedCard id={id} d={d} data={att.data} reload={att.reload} canEdit={!!perms.modify} /><Details id={id} /></>}
     {tab === 'printer' && <PrinterPanel id={id} canAct={!!perms.modify} />}
     {tab === 'storage' && <Storage d={d} />}

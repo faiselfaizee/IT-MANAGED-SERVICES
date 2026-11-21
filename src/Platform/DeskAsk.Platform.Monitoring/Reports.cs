@@ -166,7 +166,7 @@ public sealed class ReportJob : IJobHandler
     {
         var sp = job.Services;
         var lic = await sp.GetRequiredService<IEntitlements>().CurrentAsync(ct);
-        if (!lic.Has(Modules.Monitoring) || !lic.Has(Modules.Assets)) return;
+        if (!lic.Has(Modules.Monitoring)) return;
         var settings = await MonitorSettings.LoadAsync(sp.GetRequiredService<ISettings>(), ct);
         var mail = sp.GetService<IMailQueue>(); if (mail == null) return;
         string? forced = null; var force = false;

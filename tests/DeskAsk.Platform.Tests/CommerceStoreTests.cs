@@ -80,7 +80,7 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(54400m, Store.Make(new("onprem", "year", new() { ["servicedesk"] = 1 }, "IN", "33", ""), plans, biz).Quote!.Subtotal);   // on-prem: 20% less
         var suite = Store.Make(new("saas", "year", new() { ["servicedesk"] = 1, ["assets"] = 2, ["monitoring"] = 3, ["vault"] = 4 }, "IN", "33", ""), plans, biz).Quote!;
         Assert.Equal(68000m, suite.Discount);   // 25% of 4 x 68,000
-        Assert.Contains("Asset management", Store.Make(new("saas", "year", new() { ["monitoring"] = 3 }, "IN", "33", ""), plans, biz).Error);
+        Assert.Null(Store.Make(new("saas", "year", new() { ["monitoring"] = 3 }, "IN", "33", ""), plans, biz).Error);   // Monitoring can be bought alone (6.6.0)
         Assert.NotNull(Store.Make(new("onprem", "month", new() { ["servicedesk"] = 1 }, "IN", "33", ""), plans, biz).Error);
         Assert.Equal("Rupees One Lakh Fifty Three Thousand Five Hundred Only", Invoices.Words(153500m, "INR"));
         Assert.Equal("US Dollars Two Thousand Four Hundred Eighty Five and Fifty Cents Only", Invoices.Words(2485.50m, "USD"));
@@ -229,7 +229,8 @@ public class CommerceStoreTests : IClassFixture<WebApplicationFactory<Program>>
             var subs = await J(await admin.GetAsync("/api/commerce/subscriptions?q=" + trial));
             var ts = subs.EnumerateArray().Single().GetProperty("sub");
             Assert.Equal("trial", ts.GetProperty("state").GetString());
-            Assert.True(ts.GetProperty("lines").TryGetProperty("assets", out _));   // monitoring brings asset management
+            Assert.True(ts.GetProperty("lines").TryGetProperty("monitoring", out _));
+            Assert.False(ts.GetProperty("lines").TryGetProperty("assets", out _));   // Monitoring works on its own: no Asset management is added
             var tsId = ts.GetProperty("id").GetString();
             var ends = ts.GetProperty("endsAt").GetDateTime();
             var ext = await J(await admin.PostAsync("/api/commerce/subscriptions/" + tsId + "/extend", Json(new { days = 7 })));
