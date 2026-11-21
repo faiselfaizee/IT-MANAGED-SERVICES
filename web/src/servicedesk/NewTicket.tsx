@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, go, useLoad, type Rec } from '../http';
 import { Err, Field, Card, useSubmit } from '../ui';
 import { KIND, LEVEL, PRIORITY } from './List';
+import { useSingleCompany } from '../mode';
 import { Suggestions } from './Knowledge';
 import { FieldInput, missingRequired, sendable, useFields } from './Fields';
 
@@ -9,7 +10,7 @@ import { FieldInput, missingRequired, sendable, useFields } from './Fields';
 const PRIORITY_OF: Record<string, Record<string, string>> = { high: { high: 'critical', medium: 'high', low: 'medium' }, medium: { high: 'high', medium: 'medium', low: 'low' }, low: { high: 'medium', medium: 'low', low: 'low' } };
 
 export default function NewTicket({ me }: { me: Rec | null }) {
-  const staff = !!me?.staff;
+  const staff = !!me?.staff; const one = useSingleCompany();
   const settings = useLoad<Rec>('/api/servicedesk/settings');
   const companies = useLoad<Rec[]>(staff ? '/api/assets/companies' : null);
   const mine = useLoad<Rec[]>(staff ? null : '/api/servicedesk/my-devices'); const devices = Array.isArray(mine.data) ? mine.data : []; const [device, setDevice] = useState('');
@@ -39,7 +40,7 @@ export default function NewTicket({ me }: { me: Rec | null }) {
       {!staff && devices.length > 0 && <Field label="Which device is it about?"><select value={device} onChange={(e) => setDevice(e.target.value)}><option value="">Not about a device</option>{devices.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.tag})</option>)}</select></Field>}
       {defs.map((d) => <FieldInput key={d.key} def={d} value={cv[d.key]} onChange={(x) => setCv({ ...cv, [d.key]: x })} />)}
       {staff && <>
-        <Field label="Company"><select value={v.companyId} onChange={(e) => set('companyId', e.target.value)}><option value="">None</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+        {!one && <Field label="Company"><select value={v.companyId} onChange={(e) => set('companyId', e.target.value)}><option value="">None</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>}
         <div className="row"><Field label="Raised by (name)"><input value={v.requesterName} onChange={(e) => set('requesterName', e.target.value)} /></Field><Field label="Raised by (email)"><input type="email" value={v.requesterEmail} onChange={(e) => set('requesterEmail', e.target.value)} /></Field></div>
       </>}
       <Err text={f.err} />

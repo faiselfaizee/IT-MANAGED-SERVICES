@@ -745,3 +745,6 @@ tr.gone td { opacity: .55; text-decoration: line-through; } tr.gone td:last-chil
 .pdf-colour-row { display: flex; gap: 8px; align-items: center; } .pdf-colour-row input[type=color] { width: 44px; height: 32px; padding: 2px; }
 .pdf-sample { background: #fff; color: #000; border: 1px solid var(--line); border-radius: var(--r-md); padding: 14px; }
 @media (max-width: 760px) { .pdf-design { grid-template-columns: 1fr; } }
+
+/* single-company mode (licence): nobody picks between customers */
+.single-company select[aria-label="Customer"], .single-company .for-customers { display: none; }

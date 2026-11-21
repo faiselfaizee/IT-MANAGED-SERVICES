@@ -5,6 +5,7 @@ import { LOOKS, currentLook, setLook } from './look';
 import { Icon, Logo } from './chrome';
 import { logoUrl, useBrand } from './brand';
 import { Ring } from './Rings';
+import { useSingleCompany } from './mode';
 import { useHash, useLoad, type Rec } from './http';
 
 export const MODULES = ['Service Desk', 'Assets', 'Monitoring', 'AD Manager', 'Vault', 'Backup'];
@@ -186,6 +187,8 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const [look, setLookState] = useState(currentLook());
   const parts = useHash();
   useEffect(() => { whoAmI(fetcher).then(setWho, (e: Error) => setErr(e.message)); }, [fetcher]);
+  const singleCompany = useSingleCompany();   // one company: the pickers and filters for customers are hidden everywhere (styles.css)
+  useEffect(() => { document.documentElement.classList.toggle('single-company', singleCompany && !fetcher); }, [singleCompany, fetcher]);
   const me = useLoad<Rec>(fetcher ? null : '/api/platform/me');
   const isAdmin = me.data?.role === 'admin';
   const isCustomer = me.data?.role === 'customer';
