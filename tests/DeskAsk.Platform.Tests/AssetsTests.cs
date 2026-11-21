@@ -112,6 +112,25 @@ public class AssetsTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [PgFact]
+    public async Task StockCountsCarryTheKindSoTheListCanOpenThem()
+    {
+        var api = await Admin();
+        var t = await NewType(api, "Keyboard");
+        await Post(api, new { name = "K1", typeId = t, status = "stock" }); await Post(api, new { name = "K2", typeId = t, status = "in_use" });
+        await Post(api, new { name = "Loose cable", status = "stock" });
+        var stock = await J(await api.GetAsync("/api/assets/stock"));
+        var kb = stock.GetProperty("items").EnumerateArray().First(x => x.GetProperty("type").GetString() == "Keyboard");
+        Assert.Equal(t, kb.GetProperty("typeId").GetInt32());
+        var none = stock.GetProperty("items").EnumerateArray().First(x => x.GetProperty("type").GetString() == "(no type)");
+        Assert.Equal(JsonValueKind.Null, none.GetProperty("typeId").ValueKind);
+        var listed = await J(await api.GetAsync($"/api/assets?typeId={t}&status=stock"));
+        Assert.Equal(1, listed.GetProperty("total").GetInt32());
+        var loose = await J(await api.GetAsync("/api/assets?typeId=none&status=stock"));
+        Assert.Equal("Loose cable", loose.GetProperty("items")[0].GetProperty("name").GetString());
+        Assert.Equal(1, loose.GetProperty("total").GetInt32());
+    }
+
+    [PgFact]
     public async Task BadInputIsRefused()
     {
         var api = await Admin();

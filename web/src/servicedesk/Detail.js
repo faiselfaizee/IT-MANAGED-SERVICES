@@ -1,0 +1,69 @@
+import { jsx as _jsx, Fragment as _Fragment, jsxs as _jsxs } from "react/jsx-runtime";
+import { useRef, useState } from 'react';
+import { api, go, saveFile, upload, useLoad } from '../http';
+import { Act, Badge, Card, Dl, Err, Field, Loading, fmtDate, fmtBytes, useSubmit } from '../ui';
+import { CustomCard, useFields } from './Fields';
+import { KIND, KindBadge, LEVEL, PRIORITY, PriorityBadge, STATUS, SlaBadge, StatusBadge } from './List';
+import { KnownErrorHints } from './Itil';
+export default function Detail({ id }) {
+    const { data, error, loading, reload } = useLoad('/api/servicedesk/tickets/' + id);
+    const t = data?.ticket;
+    const can = (data?.can ?? {});
+    const staffList = useLoad(can.edit ? '/api/servicedesk/staff' : null);
+    const fieldDefs = useFields();
+    const settings = useLoad(can.edit ? '/api/servicedesk/settings' : null);
+    const [body, setBody] = useState('');
+    const [internal, setInternal] = useState(false);
+    const file = useRef(null);
+    const reply = useSubmit(() => { setBody(''); setInternal(false); reload(); });
+    const patch = (b) => api(`/api/servicedesk/tickets/${id}`, { method: 'PATCH', body: b }).then(reload);
+    const setStatus = (status) => api(`/api/servicedesk/tickets/${id}/status`, { body: { status } }).then(reload);
+    if (!t)
+        return _jsxs(_Fragment, { children: [_jsx("p", { children: _jsx("a", { href: "#/servicedesk", children: "\u2190 All tickets" }) }), _jsx(Loading, { loading: loading, error: error })] });
+    const comments = (data?.comments ?? []);
+    const files = (data?.attachments ?? []);
+    const staff = (Array.isArray(staffList.data) ? staffList.data : []);
+    const cats = (settings.data?.categories ?? []);
+    const closed = t.status === 'closed';
+    return _jsxs(_Fragment, { children: [_jsx("p", { children: _jsx("a", { href: "#/servicedesk", children: "\u2190 All tickets" }) }), _jsxs("h1", { children: [t.number, " ", t.subject] }), _jsxs("div", { className: "tools", children: [_jsx(KindBadge, { k: t.kind, major: t.major }), _jsx(StatusBadge, { s: t.status }), _jsx(PriorityBadge, { p: t.priority }), _jsx(SlaBadge, { s: t.sla }), t.category && _jsx(Badge, { children: t.category })] }), _jsxs("div", { className: "grid", style: { gridTemplateColumns: 'minmax(0, 2fr) minmax(260px, 1fr)', alignItems: 'start' }, children: [_jsxs("div", { children: [t.description && _jsx(Card, { title: "Description", children: _jsx("p", { style: { whiteSpace: 'pre-wrap', margin: 0 }, children: t.description }) }), _jsxs(Card, { title: "Conversation", children: [comments.length === 0 ? _jsx("p", { className: "muted", children: "Nothing yet." }) : _jsx("ol", { className: "timeline", children: comments.map((c) => _jsxs("li", { className: c.kind, children: [_jsxs("div", { className: "who", children: [_jsx("b", { children: c.author }), c.kind === 'internal' && _jsx(Badge, { tone: "warn", children: "Internal note" }), _jsx("span", { className: "muted", children: fmtDate(c.at) })] }), _jsx("div", { className: "said", children: c.body })] }, c.id)) }), can.comment && !(closed && !can.edit) && _jsxs("div", { className: "form", style: { marginTop: 14 }, children: [_jsx("textarea", { rows: 4, placeholder: "Write a reply\u2026", value: body, onChange: (e) => setBody(e.target.value), "aria-label": "Reply" }), _jsx(Err, { text: reply.err }), _jsxs("div", { className: "actions", children: [can.internalNote && _jsxs("label", { children: [_jsx("input", { type: "checkbox", checked: internal, onChange: (e) => setInternal(e.target.checked) }), " Internal note (the customer cannot see it)"] }), _jsx("button", { className: "primary", disabled: reply.busy || !body.trim(), onClick: () => reply.submit(() => api(`/api/servicedesk/tickets/${id}/comments`, { body: { body, internal } })), children: internal ? 'Add note' : 'Send reply' })] })] }), can.comment && closed && !can.edit && _jsx("p", { className: "muted", children: "This ticket is closed. Reopen it to reply." })] })] }), _jsxs("div", { children: [_jsx(Card, { title: "Status", children: _jsx("div", { className: "actions", style: { justifyContent: 'flex-start', flexWrap: 'wrap' }, children: can.edit ? Object.entries(STATUS).map(([k, n]) => _jsx(Act, { label: n, primary: k === t.status, disabled: k === t.status, run: () => setStatus(k) }, k))
+                                        : can.status ? _jsxs(_Fragment, { children: [!closed && _jsx(Act, { label: "Close ticket", confirm: "Close this ticket?", run: () => setStatus('closed') }), (t.status === 'resolved' || closed) && _jsx(Act, { label: "Reopen", primary: true, run: () => setStatus('open') })] }) : null }) }), (can.rate || data?.rating) && _jsx(Rating, { id: id, done: t.status === 'resolved' || closed, rating: data?.rating, canRate: !!can.rate, reload: reload }), _jsx(CustomCard, { defs: fieldDefs, values: (data?.custom ?? {}), edit: !!can.edit, save: patch }), _jsx(Related, { id: id }), can.edit && _jsx(KnownErrorHints, { id: id }), can.edit && _jsx(Assist, { id: id, t: t, patch: patch, fill: setBody }), _jsxs(Card, { title: "Details", children: [can.edit ? _jsxs("div", { className: "form", children: [_jsxs("label", { children: [_jsx("span", { children: "Type" }), _jsx("select", { value: t.kind, onChange: (e) => patch({ kind: e.target.value }), children: Object.entries(KIND).map(([k, n]) => _jsx("option", { value: k, children: n }, k)) })] }), t.kind === 'incident' && _jsxs("div", { className: "row", children: [_jsxs("label", { children: [_jsx("span", { children: "Impact" }), _jsxs("select", { value: t.impact, onChange: (e) => patch({ impact: e.target.value }), children: [_jsx("option", { value: "", children: "Not set" }), Object.entries(LEVEL).map(([k, n]) => _jsx("option", { value: k, children: n }, k))] })] }), _jsxs("label", { children: [_jsx("span", { children: "Urgency" }), _jsxs("select", { value: t.urgency, onChange: (e) => patch({ urgency: e.target.value }), children: [_jsx("option", { value: "", children: "Not set" }), Object.entries(LEVEL).map(([k, n]) => _jsx("option", { value: k, children: n }, k))] })] })] }), t.kind === 'incident' && _jsxs("label", { className: "check", children: [_jsx("input", { type: "checkbox", checked: !!t.major, onChange: (e) => patch({ major: e.target.checked }) }), " Major incident (many people affected, handled first)"] }), _jsxs("label", { children: [_jsx("span", { children: "Priority" }), _jsx("select", { value: t.priority, onChange: (e) => patch({ priority: e.target.value }), children: Object.entries(PRIORITY).map(([k, n]) => _jsx("option", { value: k, children: n }, k)) })] }), _jsxs("label", { children: [_jsx("span", { children: "Assigned to" }), _jsxs("select", { value: t.assigneeId ?? '', onChange: (e) => patch({ assigneeId: e.target.value || null }), children: [_jsx("option", { value: "", children: "Unassigned" }), staff.map((s) => _jsx("option", { value: s.id, children: s.name }, s.id))] })] }), _jsxs("label", { children: [_jsx("span", { children: "Category" }), _jsxs("select", { value: t.category, onChange: (e) => patch({ category: e.target.value }), children: [_jsx("option", { value: "", children: "None" }), cats.map((c) => _jsx("option", { children: c }, c))] })] })] }) : null, _jsx(Dl, { rows: [['Type', KIND[t.kind] ?? t.kind], ...(!can.edit && t.kind === 'incident' ? [['Impact', LEVEL[t.impact] ?? ''], ['Urgency', LEVEL[t.urgency] ?? '']] : []), ['Company', t.company], ['Raised by', [t.requester, t.requesterEmail].filter(Boolean).join(' · ')], ['Asset', t.asset], ['Opened', fmtDate(t.createdAt)],
+                                            ...(can.edit ? [['Assigned to', '']] : [['Assigned to', t.assignee]]),
+                                            ['First reply', t.firstResponseAt ? fmtDate(t.firstResponseAt) : t.paused ? 'Paused' : 'Not yet'], ['Reply due', fmtDate(t.respondDue)], ['Resolution due', t.paused ? 'Paused while waiting for the customer' : fmtDate(t.resolveDue)],
+                                            ['Resolved', t.resolvedAt ? fmtDate(t.resolvedAt) : '']] })] }), _jsxs(Card, { title: "Files", children: [files.length === 0 ? _jsx("p", { className: "muted", children: "No files." }) : _jsx("ul", { className: "files", children: files.map((f) => _jsxs("li", { children: [_jsx("a", { href: "#", onClick: (e) => { e.preventDefault(); void saveFile(`/api/servicedesk/tickets/${id}/attachments/${f.id}`, f.name); }, children: f.name }), " ", _jsxs("span", { className: "muted", children: [fmtBytes(f.size), " \u00B7 ", f.by] }), f.internal && _jsx(Badge, { tone: "warn", children: "Internal" })] }, f.id)) }), can.comment && _jsxs(_Fragment, { children: [_jsx("input", { ref: file, type: "file", "aria-label": "Add a file", style: { display: 'none' }, onChange: async (e) => {
+                                                    const picked = e.target.files?.[0];
+                                                    if (!picked)
+                                                        return;
+                                                    try {
+                                                        await upload(`/api/servicedesk/tickets/${id}/attachments?name=${encodeURIComponent(picked.name)}`, picked);
+                                                        reload();
+                                                    }
+                                                    catch (x) {
+                                                        reply.submit(async () => { throw x; });
+                                                    }
+                                                    e.target.value = '';
+                                                } }), _jsx("button", { onClick: () => file.current?.click(), children: "Add a file" })] })] })] })] }), error && _jsx(Err, { text: error }), _jsx("p", { children: _jsx("button", { onClick: () => go('servicedesk'), children: "Back to tickets" }) })] });
+}
+/** Suggestions for the support team: similar earlier tickets, a category and priority, and a reply to start from. */
+function Assist({ id, t, patch, fill }) {
+    const [on, setOn] = useState(false);
+    const a = useLoad(on ? `/api/servicedesk/tickets/${id}/assist` : null);
+    return _jsx(Card, { title: "Suggestions", children: !on ? _jsx("button", { onClick: () => setOn(true), children: "Find similar tickets" }) : _jsxs(_Fragment, { children: [_jsx(Loading, { loading: a.loading && !a.data, error: a.error }), a.data && _jsxs(_Fragment, { children: [a.data.suggestedCategory && _jsxs("p", { children: ["Category looks like ", _jsx("b", { children: a.data.suggestedCategory }), " ", _jsx(Act, { label: "Use it", run: () => patch({ category: a.data.suggestedCategory }) })] }), a.data.suggestedPriority && _jsxs("p", { children: ["Priority looks like ", _jsx("b", { children: PRIORITY[a.data.suggestedPriority] ?? a.data.suggestedPriority }), " (now ", PRIORITY[t.priority] ?? t.priority, ") ", _jsx(Act, { label: "Use it", run: () => patch({ priority: a.data.suggestedPriority }) })] }), a.data.similar.length === 0 ? _jsx("p", { className: "muted", children: "No similar tickets yet." }) : _jsx("ul", { children: a.data.similar.map((s) => _jsxs("li", { children: [_jsx("a", { href: `#/servicedesk/${s.id}`, children: s.number }), " ", s.subject, " ", _jsxs("span", { className: "muted", children: ["\u00B7 ", s.status] }), s.answer && _jsxs("div", { className: "muted", children: ["Answered: ", s.answer] })] }, s.id)) }), _jsx("button", { onClick: () => fill(a.data.replyDraft), children: "Start a reply from this" })] })] }) });
+}
+/** Problems and changes this ticket is tied to (the team sees them; customers get nothing back). */
+function Related({ id }) {
+    const r = useLoad(`/api/servicedesk/tickets/${id}/related`);
+    const problems = (r.data?.problems ?? []);
+    const changes = (r.data?.changes ?? []);
+    if (problems.length + changes.length === 0)
+        return null;
+    return _jsxs(Card, { title: "Related", children: [problems.length > 0 && _jsxs(_Fragment, { children: [_jsx("b", { children: "Problems" }), _jsx("ul", { children: problems.map((p) => _jsxs("li", { children: [_jsx("a", { href: `#/servicedesk/problems/${p.id}`, children: p.number }), " ", p.title, " ", _jsxs("span", { className: "muted", children: ["\u00B7 ", String(p.status).replace('_', ' ')] })] }, p.id)) })] }), changes.length > 0 && _jsxs(_Fragment, { children: [_jsx("b", { children: "Changes" }), _jsx("ul", { children: changes.map((c) => _jsxs("li", { children: [_jsx("a", { href: `#/servicedesk/changes/${c.id}`, children: c.number }), " ", c.title, " ", _jsxs("span", { className: "muted", children: ["\u00B7 ", c.status] })] }, c.id)) })] })] });
+}
+/** "Did we solve it?": a thumbs up or down with an optional comment, once the ticket is resolved. */
+function Rating({ id, done, rating, canRate, reload }) {
+    const [comment, setComment] = useState('');
+    const f = useSubmit(reload);
+    const send = (up) => f.submit(() => api(`/api/servicedesk/tickets/${id}/rating`, { body: { up, comment } }));
+    if (!rating && !(canRate && done))
+        return null;
+    return _jsxs(Card, { title: "Did we solve it?", children: [rating && _jsxs("p", { children: [rating.up ? '👍 Solved' : '👎 Not solved', rating.comment ? ': ' + rating.comment : ''] }), canRate && done && _jsxs("div", { className: "form", children: [_jsx(Field, { label: "Comment (optional)", children: _jsx("input", { value: comment, maxLength: 2000, onChange: (e) => setComment(e.target.value) }) }), _jsx(Err, { text: f.err }), _jsxs("div", { className: "actions", style: { justifyContent: 'flex-start' }, children: [_jsx("button", { className: "primary", disabled: f.busy, onClick: () => send(true), children: "\uD83D\uDC4D Solved" }), _jsx("button", { disabled: f.busy, onClick: () => send(false), children: "\uD83D\uDC4E Not solved" })] })] })] });
+}

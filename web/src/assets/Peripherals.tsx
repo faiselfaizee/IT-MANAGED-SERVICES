@@ -171,11 +171,15 @@ export function Stock() {
   const rows = (data?.items ?? []) as Rec[];
   return <>
     <h1>Stock</h1>
-    <p className="muted">How many of each kind are in stock, handed out or in repair.</p>
+    <p className="muted">How many of each kind are in stock, handed out or in repair. Choose a number to see those assets.</p>
     {cos.length > 1 && <div className="tools"><select value={co} onChange={(e) => setCo(e.target.value)} aria-label="Customer"><option value="">All customers</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>}
     <Loading loading={loading && !data} error={error} />
     {data && (rows.length === 0 ? <Empty>No assets yet.</Empty> : <table><thead><tr><th>Kind</th><th className="num">In stock</th><th className="num">In use</th><th className="num">In repair</th><th className="num">Retired</th><th className="num">Lost</th><th className="num">Total</th></tr></thead><tbody>
-      {rows.map((r) => <tr key={r.type}><td>{r.type} {r.peripheral && <Badge>accessory</Badge>}</td><td className="num">{r.stock}</td><td className="num">{r.inUse}</td><td className="num">{r.repair}</td><td className="num">{r.retired}</td><td className="num">{r.lost}</td><td className="num"><b>{r.total}</b></td></tr>)}</tbody></table>)}
+      {rows.map((r) => {
+        // each count opens All assets with that kind, status and customer
+        const to = (status: string, n: number, bold = false) => { const t = <>{bold ? <b>{n}</b> : n}</>; if (!n) return t;
+          return <a href={`#/assets/list?typeId=${r.typeId ?? 'none'}${status ? `&status=${status}` : ''}${co ? `&company=${co}` : ''}`} aria-label={`${n} ${r.type}${status ? ' ' + status.replace('_', ' ') : ''}`}>{t}</a>; };
+        return <tr key={r.type}><td>{r.type} {r.peripheral && <Badge>accessory</Badge>}</td><td className="num">{to('stock', r.stock)}</td><td className="num">{to('in_use', r.inUse)}</td><td className="num">{to('repair', r.repair)}</td><td className="num">{to('retired', r.retired)}</td><td className="num">{to('lost', r.lost)}</td><td className="num">{to('', r.total, true)}</td></tr>; })}</tbody></table>)}
   </>;
 }
 
