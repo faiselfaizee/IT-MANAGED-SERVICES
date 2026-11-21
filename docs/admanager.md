@@ -41,3 +41,6 @@ Test names the reason when LDAPS fails: no certificate on the domain controller,
 
 ## Directory step "verify" (agent 6.17.0)
 The site controller checks a person's own password with a second connection bound as that person. It is used only for company employees signing in to DeskAsk with their Windows password. The answer is `valid` and `reason` (`wrong`, `disabled`, `locked`, `expired`, `must_change`, `not_allowed`). The service account's connection is not used for it.
+
+## Permissions under each company (6.20.0)
+Devices setup › Customers › a company › **AD permissions** shows the "Who may" grants of that company's AD Manager domains, people or groups per OU. You can add and remove grants there too. It is the same as AD Manager › Domains › Who may, filtered to the company. Add the domain itself in AD Manager › Domains. Without the AD Manager licence, the tab says so.

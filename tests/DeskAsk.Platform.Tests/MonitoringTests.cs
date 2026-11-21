@@ -136,6 +136,8 @@ public class MonitoringTests : IClassFixture<WebApplicationFactory<Program>>
             var r = await agent.PostAsync("/agent/v1/metrics", Json(new { cpu = 42.5, mem_used = (long)(mem * 160_000_000), mem_total = 16_000_000_000L, uptime = 7200, disks = new[] { new { mount = "C:", total = 100_000_000_000L, free = (long)(cFree * 1_000_000_000) }, new { mount = "D:", total = 500_000_000_000L, free = 400_000_000_000L } } }));
             Assert.Equal(HttpStatusCode.OK, r.StatusCode); Assert.Equal(60, (await J(r)).GetProperty("every").GetInt32());
         }
+        // asset ids restart with each test's truncate, so tickets other tests opened for an asset with the same id may still be there: count only the ones opened from here on
+        var ticketsBefore = await Scalar("select coalesce(max(id), 0) from servicedesk.tickets");
         await Sample(95, 3);
         var anon = factory.CreateClient();
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.PostAsync("/agent/v1/metrics", Json(new { cpu = 1 }))).StatusCode);
@@ -147,7 +149,7 @@ public class MonitoringTests : IClassFixture<WebApplicationFactory<Program>>
         var disk = open.Single(x => x.GetProperty("metric").GetString() == "disk");
         Assert.Equal("critical", disk.GetProperty("severity").GetString()); Assert.Equal("C:", disk.GetProperty("subject").GetString());
         Assert.StartsWith("INC-", disk.GetProperty("ticket").GetString());
-        Assert.Equal(1, await Scalar("select count(*) from servicedesk.tickets where source = 'monitoring' and asset_id = " + asset + " and priority = 'high'"));
+        Assert.Equal(1, await Scalar("select count(*) from servicedesk.tickets where source = 'monitoring' and asset_id = " + asset + " and priority = 'high' and id > " + ticketsBefore));
         Assert.Equal("", open.Single(x => x.GetProperty("metric").GetString() == "memory").GetProperty("ticket").GetString());
         Assert.Equal(2, await Scalar("select count(*) from mail.outbox where reference like 'mon-alert:%' and to_addr = 'ops@mon.test'"));
         Assert.Equal(1, await Scalar("select count(*) from mail.outbox where subject = '[Critical] Acme Ltd: SRV-DB1 - Disk very low'"));

@@ -87,3 +87,19 @@ test("a company's own Microsoft sign-in is set up on its Sign-in tab, with compa
   await waitFor(() => expect(calls.some(([m, u, b]) => m === 'PUT' && u === '/api/companies/4/sso/microsoft' && b.includes('"domains":"acme.com"'))).toBe(true));
   location.hash = '';
 });
+
+test("the AD permissions tab shows who may do what in the company's own domains only", async () => {
+  const calls: [string, string, string][] = [];
+  api({ '/api/platform/mode': { singleCompany: false }, '/api/assets/companies': [{ id: 4, name: 'Acme' }],
+    '/api/adsuite/domains/11/delegations': [{ id: 1, name: 'Helpdesk team', kind: 'group', ou: 'OU=Staff,DC=acme,DC=test', rights: ['read', 'unlock'] }],
+    '/api/adsuite/domains': [{ id: 11, companyId: 4, name: 'acme.test', baseDn: 'DC=acme,DC=test' }, { id: 12, companyId: 9, name: 'globex.test', baseDn: 'DC=globex,DC=test' }],
+    '/api/adsuite/principals': { users: [], groups: [] } }, calls);
+  location.hash = '#/setup/companies/4/ad';
+  const { default: CompanyPage } = await import('./CompanyPage');
+  render(<CompanyPage />);
+  await waitFor(() => expect(screen.getByText('Who may do what in acme.test')).toBeTruthy());
+  expect(screen.queryByText('Who may do what in globex.test')).toBeNull();
+  await waitFor(() => expect(screen.getByText('Helpdesk team')).toBeTruthy());
+  expect(screen.getByText('Look, Unlock')).toBeTruthy();
+  location.hash = '';
+});
