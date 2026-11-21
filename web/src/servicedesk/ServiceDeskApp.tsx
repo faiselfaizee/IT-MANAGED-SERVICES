@@ -8,6 +8,7 @@ import Integrations from './Integrations';
 import Reports from './Reports';
 import { ChangeDetail, ChangeList, NewChange } from './Changes';
 import { NewProblem, ProblemDetail, ProblemList } from './Problems';
+import { KbArticle, KbList } from './Knowledge';
 import { Approvals, Catalog, CatalogAdmin, ChangeBoard, ChangeCalendar, KnownErrors, StandardChanges } from './Itil';
 
 /** The Service Desk module: routes inside the #/servicedesk address. */
@@ -24,6 +25,7 @@ export default function ServiceDeskApp() {
   else if (a === 'major') page = <List key="major" me={m} kind="incident" major />;
   else if (a === 'requests') page = <List key="requests" me={m} kind="request" />;
   else if (a === 'new') page = <NewTicket me={m} />;
+  else if (a === 'kb') page = b ? <KbArticle key={b} id={b} staff={staff} /> : <KbList staff={staff} />;
   else if (a === 'catalog') page = <Catalog staff={staff} />;
   else if (a === 'approvals' && staff) page = <Approvals />;
   else if (a === 'known-errors' && sees) page = <KnownErrors />;
@@ -39,6 +41,7 @@ export default function ServiceDeskApp() {
   else page = <Dashboard />;
   const menu: { group: string; items: [string, string, boolean][] }[] = [
     { group: 'Overview', items: [['', 'Dashboard', sees], ['all', 'All tickets', true], ['new', 'New ticket', !!m?.canRaise]] },
+    { group: 'Help', items: [['kb', 'Knowledge base', true]] },
     { group: 'Incidents', items: [['incidents', 'Incidents', true], ['major', 'Major incidents', sees]] },
     { group: 'Service requests', items: [['catalog', 'Service catalogue', !!m?.canRaise || staff], ['requests', 'Requests', true], ['approvals', 'Approvals', staff]] },
     { group: 'Problems', items: [['problems', 'Problems', sees], ['known-errors', 'Known errors', sees]] },

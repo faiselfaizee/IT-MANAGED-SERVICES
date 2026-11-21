@@ -207,7 +207,14 @@ public static class TicketsApi
                 if (w.Customer) { var hidden = (await CustomFields.LoadAsync(db, false, ct)).Where(f => f.StaffOnly).Select(f => f.Key).ToHashSet(); foreach (var k in hidden) customValues.Remove(k); }
             }
             var canModify = w.Staff || (w.Customer && w.MayModify);
-            return Results.Ok(new { ticket, custom = customValues, comments, attachments = files, can = new { edit = w.Staff, comment = canModify, internalNote = w.Staff, status = w.Staff || canModify } });
+            object? rating = null;
+            await using (var rc = new NpgsqlCommand("select rating, rating_comment, rated_at from servicedesk.tickets where id = @i and rating is not null", db))
+            {
+                P(rc, "i", id);
+                await using var rr = await rc.ExecuteReaderAsync(ct);
+                if (await rr.ReadAsync(ct)) rating = new { up = rr.GetString(0) == "up", comment = rr.GetString(1), at = rr.GetDateTime(2) };
+            }
+            return Results.Ok(new { ticket, custom = customValues, comments, attachments = files, rating, can = new { edit = w.Staff, comment = canModify, internalNote = w.Staff, status = w.Staff || canModify, rate = w.Customer && canModify } });
         }));
 
         // ---------------------------------------------------------------- open a ticket
@@ -423,6 +430,28 @@ public static class TicketsApi
             if (w.Staff && to == "resolved") await Tell(mailq, users, db, id, "resolved", note, w, ct);
             else if (w.Staff && note != "" && !internalNote) await Tell(mailq, users, db, id, "reply", note, w, ct);
             return Results.Ok(new { ok = true, changed = true });
+        }));
+
+        // ---------------------------------------------------------------- satisfaction: thumbs up or down once a ticket is resolved
+        anyone(r.MapPost("/api/servicedesk/tickets/{id:long}/rating", async (long id, JsonElement b, ClaimsPrincipal u, ITenantContext t, ISettings s, IAuditLog audit, CancellationToken ct) =>
+        {
+            await using var db = await Open(t, ct);
+            var (found, number, status, w) = await Load(id, u, db, s, false, ct);
+            if (found == null) return Results.NotFound();
+            if (!(w.Customer && w.MayModify)) return Forbidden("Only the customer who raised the ticket rates it.");
+            if (status is not ("resolved" or "closed")) return Bad("bad_request", "You can rate a ticket once it is resolved.");
+            string comment;
+            try
+            {
+                if (b.ValueKind != JsonValueKind.Object || !b.TryGetProperty("up", out var uv) || uv.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) throw new FormatException("up must be true or false");
+                comment = Text(b, "comment", 2000, out _) ?? "";
+                await using var c = new NpgsqlCommand("update servicedesk.tickets set rating = @r, rating_comment = @c, rated_at = now(), updated_at = now() where id = @i", db);
+                P(c, "r", uv.GetBoolean() ? "up" : "down"); P(c, "c", comment); P(c, "i", id); await c.ExecuteNonQueryAsync(ct);
+                await Event(db, id, "ticket.rated", new { up = uv.GetBoolean() }, ct);
+                await audit.WriteAsync("servicedesk.ticket_rated", number, uv.GetBoolean() ? "thumbs up" : "thumbs down", ct: ct);
+            }
+            catch (FormatException e) { return Bad("bad_request", e.Message); }
+            return Results.Ok(new { ok = true });
         }));
 
         // ---------------------------------------------------------------- comments

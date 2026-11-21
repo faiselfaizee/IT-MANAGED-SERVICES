@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, go, useLoad, type Rec } from '../http';
 import { Err, Field, Card, useSubmit } from '../ui';
 import { KIND, LEVEL, PRIORITY } from './List';
+import { Suggestions } from './Knowledge';
 import { FieldInput, missingRequired, sendable, useFields } from './Fields';
 
 /** The same table the server uses (ITIL): how many people it hurts and how soon it must be fixed. */
@@ -24,6 +25,7 @@ export default function NewTicket({ me }: { me: Rec | null }) {
     <Card><div className="form">
       <Field label="Type"><select value={v.kind} onChange={(e) => set('kind', e.target.value)}>{Object.entries(KIND).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
       <Field label="Subject"><input value={v.subject} onChange={(e) => set('subject', e.target.value)} maxLength={200} autoFocus /></Field>
+      {!staff && <Suggestions subject={v.subject} />}
       <Field label="What is happening?"><textarea rows={6} value={v.description} onChange={(e) => set('description', e.target.value)} /></Field>
       {v.kind === 'incident' && <div className="row">
         <Field label="Impact (how many people or services are hit)"><select value={v.impact} onChange={(e) => levels('impact', e.target.value)}><option value="">Not sure</option>{Object.entries(LEVEL).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>

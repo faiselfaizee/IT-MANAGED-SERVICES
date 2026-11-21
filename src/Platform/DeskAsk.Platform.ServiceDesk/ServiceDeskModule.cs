@@ -51,6 +51,7 @@ public sealed class ServiceDeskModule : IPlatformModule
         CustomFields.Map(r, Key);
         CatalogApi.Map(r, Key);
         ItilApi.Map(r, Key);
+        KnowledgeApi.Map(r, Key);
     }
 
     // ---------------------------------------------------------------- shared helpers

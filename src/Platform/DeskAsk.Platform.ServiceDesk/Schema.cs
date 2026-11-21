@@ -193,6 +193,22 @@ public sealed class ServiceDeskSchema : ITenantSchema
               id serial primary key, name text not null unique, category text not null default '', description text not null default '',
               plan text not null default '', rollback text not null default '', test_plan text not null default '', risk text not null default 'low',
               active boolean not null default true, created_by text not null default '', created_at timestamptz not null default now())"),
+        new(9, "knowledge base and satisfaction rating", @"
+            create table if not exists servicedesk.articles (
+              id serial primary key, title text not null, body text not null default '', tags text not null default '',
+              visibility text not null default 'everyone' check (visibility in ('everyone','company','staff')),
+              company_id int, published boolean not null default false,
+              helpful int not null default 0, not_helpful int not null default 0, views int not null default 0,
+              created_by text not null default '', created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+            create index if not exists articles_published on servicedesk.articles (published, visibility);
+            create table if not exists servicedesk.article_votes (
+              article_id int not null references servicedesk.articles(id) on delete cascade, user_id uuid not null, helpful boolean not null,
+              at timestamptz not null default now(), primary key (article_id, user_id));
+            alter table servicedesk.tickets add column if not exists rating text;
+            alter table servicedesk.tickets drop constraint if exists tickets_rating_check;
+            alter table servicedesk.tickets add constraint tickets_rating_check check (rating is null or rating in ('up','down'));
+            alter table servicedesk.tickets add column if not exists rating_comment text not null default '';
+            alter table servicedesk.tickets add column if not exists rated_at timestamptz"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
         SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);
