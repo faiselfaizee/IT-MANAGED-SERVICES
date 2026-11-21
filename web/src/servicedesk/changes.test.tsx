@@ -34,7 +34,7 @@ test('the owner of a change cannot approve it', async () => {
 test('customers do not get the Changes or Problems pages', async () => {
   mockApi({ '/api/servicedesk/me': custMe, '/api/servicedesk/summary': {}, '/api/servicedesk/tickets?': { total: 0, items: [] } });
   location.hash = '#/servicedesk/changes'; render(<ServiceDeskApp />);
-  await waitFor(() => expect(screen.getByText('Tickets', { selector: 'h1' })).toBeTruthy());
+  await waitFor(() => expect(screen.getByText('My tickets', { selector: 'h1' })).toBeTruthy());
   expect(screen.queryByText('Changes', { selector: 'a' })).toBeNull();
 });
 
