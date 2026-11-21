@@ -165,3 +165,9 @@ Monthly uptime report (the PDF mailed on the 1st), alert history, busiest device
 Four built-in rules are added: toner at 10% or less (mail), toner nearly empty at 3% or less (critical, opens a ticket), printer fault, and printer not answering for 15 minutes.
 
 **Resolve the ticket when the alert clears.** A rule that opens tickets can also resolve them. When the alert has cleared (two clean runs), the ticket is resolved only if nobody has worked on it: it is still *open*, has no assignee, no first response and no comment from a person. Otherwise Monitoring only adds a note and leaves the ticket to its owner. If the same alert returns within 24 hours, the same ticket is reopened instead of a new one being opened; a ticket a person resolved or closed is never reopened, a new ticket is opened. A muted device never resolves a ticket. The five built-in rules that open tickets have this on; custom rules have it off until ticked.
+
+## Starting from nothing, and what the licence decides (6.5.5)
+
+On a new customer the Monitoring dashboard shows a short checklist with links: add the customer (Assets › Companies), save its logins (Assets › Credentials), install the agent or a site controller, then choose who gets the alert mails (Monitoring › Settings; Mail must be set up).
+
+The menu follows the licence: Service Desk, Assets, Monitoring, AD Manager, Vault and Backup appear (menu entry, Home tile and page) only when the licence includes them, or keeps them read-only after it ended. A module that is not in the licence is not shown at all. A trial or purchase of Monitoring always includes Asset management, because Monitoring watches the devices kept there.

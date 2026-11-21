@@ -15,10 +15,13 @@ test('unknown address shows a message', async () => {
 });
 test('lists all six modules', () => { expect(MODULES.length).toBe(6); });
 
-test('customers see no placeholder tiles for products they cannot open', async () => {
+test('a module the licence does not include has no tile, for customers and for staff', async () => {
   const { Home } = await import('./App');
-  const { container } = render(<Home who={{ tenant: 'acme', name: 'Acme' }} live={false} assets={true} customer={true} />);
-  expect(container.querySelectorAll('.tile-soon').length).toBe(0);
-  const staff = render(<Home who={{ tenant: 'acme', name: 'Acme' }} live={false} assets={true} />);
-  expect(staff.container.querySelectorAll('.tile-soon').length).toBeGreaterThan(0);
+  const cust = render(<Home who={{ tenant: 'acme', name: 'Acme' }} live={false} assets={true} customer={true} />);
+  expect(cust.container.querySelectorAll('.tile-soon').length).toBe(0);
+  cust.unmount();
+  const staff = render(<Home who={{ tenant: 'acme', name: 'Acme' }} live={false} assets={true} deskOn={false} />);
+  expect(staff.container.querySelectorAll('.tile-soon').length).toBe(0);
+  expect(staff.container.querySelector('#t-desk')).toBeNull();
+  expect(staff.container.querySelector('#t-assets')).not.toBeNull();
 });

@@ -8,6 +8,8 @@ import { Ring } from './Rings';
 import { useHash, useLoad, type Rec } from './http';
 
 export const MODULES = ['Service Desk', 'Assets', 'Monitoring', 'AD Manager', 'Vault', 'Backup'];
+/** Modules that are announced but not built. A built module that the licence does not include is simply not shown. */
+const PLANNED: string[] = [];
 const ABOUT: Record<string, string> = {
   'Service Desk': 'Tickets, requests and SLAs',
   Monitoring: 'Uptime and service checks',
@@ -63,14 +65,14 @@ function UserMenu({ name, role, look, onLook, live }: { name: string; role: stri
   </div>;
 }
 
-export function Home({ who, live, assets, monitoring = false, vault = false, adm = false, backup = false, customer = false }: { who: WhoAmI | null; live: boolean; assets: boolean; monitoring?: boolean; vault?: boolean; adm?: boolean; backup?: boolean; customer?: boolean }) {
+export function Home({ who, live, assets, monitoring = false, vault = false, adm = false, backup = false, customer = false, deskOn = true }: { who: WhoAmI | null; live: boolean; assets: boolean; monitoring?: boolean; vault?: boolean; adm?: boolean; backup?: boolean; deskOn?: boolean; customer?: boolean }) {
   const bk = useLoad<Rec>(live && backup ? '/api/backup/dashboard' : null);
   const b = (bk.data?.all ?? null) as Rec | null;
   const mon = useLoad<Rec>(live && monitoring ? '/api/monitoring/dashboard' : null);
   const mo = (mon.data?.all ?? null) as Rec | null;
   const sum = useLoad<Rec>(live && assets ? '/api/assets/summary' : null);
   const s = sum.data;
-  const desk = useLoad<Rec>(live ? '/api/servicedesk/summary' : null);
+  const desk = useLoad<Rec>(live && deskOn ? '/api/servicedesk/summary' : null);
   const d = desk.data;
   const ag = (s?.agents ?? {}) as Rec, co = (s?.compliance ?? {}) as Rec, wa = (s?.warranty ?? {}) as Rec;
   const n = (v: unknown) => Number(v ?? 0);
@@ -81,7 +83,7 @@ export function Home({ who, live, assets, monitoring = false, vault = false, adm
       <p>Your IT operations in one place.</p>
     </header>
     <div className="tiles">
-      <section className="tile tile-wide" aria-labelledby="t-desk">
+      {deskOn && <section className="tile tile-wide" aria-labelledby="t-desk">
         <div className="tile-head"><span className="chip"><Icon name="Service Desk" size={22} /></span>
           <div><h2 id="t-desk"><a href="#/servicedesk">Service Desk</a></h2><p className="muted">{d ? `${openAll} open tickets, ${n(d.unassigned)} unassigned` : 'Tickets with service levels and customer sign-in'}</p></div>
           <a className="open" href="#/servicedesk">Open Service Desk</a></div>
@@ -97,7 +99,7 @@ export function Home({ who, live, assets, monitoring = false, vault = false, adm
             { key: 'r', label: 'Resolved', value: n(d.resolved), tone: 'ok' },
             { key: 'c', label: 'Closed', value: n(d.closed), tone: 'none' }]} />
         </div>}
-      </section>
+      </section>}
       {assets && <section className="tile tile-wide" aria-labelledby="t-assets">
         <div className="tile-head"><span className="chip"><Icon name="Assets" size={22} /></span>
           <div><h2 id="t-assets"><a href="#/assets">Assets</a></h2><p className="muted">{s ? `${n(s.total)} assets, ${n(s.total) - n(s.byStatus?.retired) - n(s.byStatus?.lost)} in service` : 'Every device, licence and contract'}</p></div>
@@ -167,7 +169,7 @@ export function Home({ who, live, assets, monitoring = false, vault = false, adm
           <div><h2 id="t-ad"><a href="#/admanager">AD Manager</a></h2><p className="muted">Look up and manage your customers' Active Directory accounts and groups</p></div>
           <a className="open" href="#/admanager">Open AD Manager</a></div>
       </section>}
-      {!customer && MODULES.filter((m) => m !== 'Assets' && m !== 'Service Desk' && (m !== 'Monitoring' || !monitoring) && (m !== 'Vault' || !vault) && (m !== 'AD Manager' || !adm) && (m !== 'Backup' || !backup)).map((m) => <div key={m} className="tile tile-soon" aria-disabled="true">
+      {!customer && PLANNED.filter((m) => m !== 'Assets' && m !== 'Service Desk' && (m !== 'Monitoring' || !monitoring) && (m !== 'Vault' || !vault) && (m !== 'AD Manager' || !adm) && (m !== 'Backup' || !backup)).map((m) => <div key={m} className="tile tile-soon" aria-disabled="true">
         <span className="chip"><Icon name={m} size={22} /></span>
         <h2>{m}</h2>
         <p className="muted">{ABOUT[m]}</p>
@@ -189,12 +191,14 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   // every time DeskAsk shows comes from the server's clock; tell an administrator when it disagrees with this computer's
   const skewMin = useMemo(() => (me.data?.serverTime ? Math.round((new Date(me.data.serverTime as string).getTime() - Date.now()) / 60000) : 0), [me.data]);
   const mine = useLoad<Rec>(fetcher ? null : '/api/platform/access/mine');
-  const canAssets = !!fetcher || (!!mine.data?.assets?.read && mine.data.assets.read !== 'none');
-  const inAssets = parts[0] === 'assets' && canAssets;
-  const inDesk = parts[0] === 'servicedesk';
-  const canMon = !!fetcher || (!!mine.data?.monitoring?.read && mine.data.monitoring.read !== 'none');
-  const inMon = parts[0] === 'monitoring' && canMon;
   const mods = useLoad<Rec[]>(fetcher ? null : '/api/platform/modules');
+  const lic = (k: string) => !!fetcher || (Array.isArray(mods.data) && mods.data.some((m) => m.key === k && (m.licensed || m.readOnly)));   // in the licence (or kept read-only after it ended)
+  const canAssets = lic('assets') && (!!fetcher || (!!mine.data?.assets?.read && mine.data.assets.read !== 'none'));
+  const inAssets = parts[0] === 'assets' && canAssets;
+  const canDesk = lic('servicedesk');
+  const inDesk = parts[0] === 'servicedesk' && canDesk;
+  const canMon = lic('monitoring') && (!!fetcher || (!!mine.data?.monitoring?.read && mine.data.monitoring.read !== 'none'));
+  const inMon = parts[0] === 'monitoring' && canMon;
   const canVault = !fetcher && !!me.data && me.data.role !== 'customer' && !!(Array.isArray(mods.data) && (mods.data.find((m) => m.key === 'vault')?.licensed || mods.data.find((m) => m.key === 'vault')?.readOnly));
   const inVault = parts[0] === 'vault' && canVault;
   const canAd = !fetcher && !!me.data && me.data.role !== 'customer' && !!(Array.isArray(mods.data) && (mods.data.find((m) => m.key === 'adsuite')?.licensed || mods.data.find((m) => m.key === 'adsuite')?.readOnly));
@@ -222,7 +226,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           <a href="#/" className={!inAssets && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inSub && !inBranding && !inMail && !inUpdates && !inVendor ? 'on' : ''}><Icon name="home" />Home</a>
           {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
             ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
-            : m === 'Service Desk'
+            : m === 'Service Desk' && canDesk
               ? <a key={m} href="#/servicedesk" className={inDesk ? 'on' : ''}><Icon name={m} />{m}</a>
             : m === 'Monitoring' && canMon
               ? <a key={m} href="#/monitoring" className={inMon ? 'on' : ''}><Icon name={m} />{m}</a>
@@ -232,8 +236,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
               ? <a key={m} href="#/backup" className={inBackup ? 'on' : ''}><Icon name={m} />{m}</a>
             : m === 'Vault' && canVault
               ? <a key={m} href="#/vault" className={inVault ? 'on' : ''}><Icon name={m} />{m}</a>
-              : isCustomer ? null   // customers only see what they can open
-              : <span key={m} title="Not built yet"><Icon name={m} />{m}<em>Soon</em></span>)}
+              : null)}   {/* a module the licence does not include is not shown: no menu entry, no tile */}
         </div>
         {isAdmin ? <div className="side-group"><h4>Administration</h4>
           <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a>
@@ -267,7 +270,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           : inLicence ? <Suspense fallback={<p className="muted">Loading…</p>}><Licence /></Suspense>
           : inVendor ? <Suspense fallback={<p className="muted">Loading…</p>}><VendorApp path={parts.slice(1)} /></Suspense>
           : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><UsersArea meId={me.data?.sub} tab={parts[0] === 'access' ? 'groups' : (parts[1] ?? '')} /></Suspense>
-          : !err ? <Home who={who} live={!fetcher} assets={canAssets} monitoring={canMon && !fetcher} vault={canVault} adm={canAd} backup={canBackup} customer={isCustomer} /> : null}
+          : !err ? <Home who={who} live={!fetcher} assets={canAssets} monitoring={canMon && !fetcher} vault={canVault} adm={canAd} backup={canBackup} deskOn={canDesk} customer={isCustomer} /> : null}
         {brand.footerText ? <footer className="site-foot">{brand.footerText}</footer> : null}
       </main>
     </div>
