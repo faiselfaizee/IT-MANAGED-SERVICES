@@ -13,7 +13,7 @@ internal static class ReportsApi
 {
     public static void Map(IEndpointRouteBuilder r, string key)
     {
-        r.MapGet("/api/servicedesk/reports/monthly", async (string? month, int? companyId, ClaimsPrincipal u, ITenantContext t, ICompanyDirectory companies, ISettings settings, CancellationToken ct) =>
+        r.MapGet("/api/servicedesk/reports/monthly", async (string? month, int? companyId, ClaimsPrincipal u, ITenantContext t, ICompanyDirectory companies, CancellationToken ct) =>
         {
             await using var db = await ServiceDeskModule.Open(t, ct);
             var w = await ServiceDeskModule.WhoAsync(u, db, ct);
@@ -29,7 +29,7 @@ internal static class ReportsApi
             var totals = new { opened = d.Opened, resolved = d.Resolved, backlogStart = d.BacklogStart, backlogEnd = d.BacklogEnd, avgFirstResponseHours = d.AvgFirst, avgResolutionHours = d.AvgSolve, respondMetPercent = d.RespondPct, resolveMetPercent = d.ResolvePct };
             return Results.Ok(new { month = m, from = start, to = end, companyId = co, company = companyName, totals, byPriority = d.ByPriority, byCategory = d.ByCategory, bySource = d.BySource, byRequester = d.ByRequester, byAsset = d.ByAsset, byCompany = d.ByCompany, tickets = d.Tickets, truncated = d.Tickets.Count >= 300, changes = d.Changes });
         }).RequireAuthorization().RequireModule(key);
-        r.MapGet("/api/servicedesk/reports/monthly.pdf", async (string? month, int? companyId, ClaimsPrincipal u, ITenantContext t, ICompanyDirectory companies, CancellationToken ct) =>
+        r.MapGet("/api/servicedesk/reports/monthly.pdf", async (string? month, int? companyId, ClaimsPrincipal u, ITenantContext t, ICompanyDirectory companies, ISettings settings, CancellationToken ct) =>
         {
             await using var db = await ServiceDeskModule.Open(t, ct);
             var w = await ServiceDeskModule.WhoAsync(u, db, ct);
