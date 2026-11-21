@@ -330,8 +330,9 @@ public class ServiceDeskTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.BadRequest, (await Patch(x.Admin, "/api/servicedesk/tickets/" + id, new { assetId = 99999999 })).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await Patch(x.Admin, "/api/servicedesk/tickets/" + id, new { assetId = (long?)null })).StatusCode);
         Assert.Equal("", (await Get(x.Admin, id)).GetProperty("ticket").GetProperty("asset").GetString());
-        // customers do not choose assets
-        var cid = await Open(x.CustA, new { subject = "Mine", assetId = aid });
+        // customers may name only their own devices (6.8.0); any other is refused
+        Assert.Equal(HttpStatusCode.BadRequest, (await x.CustA.PostAsync("/api/servicedesk/tickets", Json(new { subject = "Mine", assetId = aid }))).StatusCode);
+        var cid = await Open(x.CustA, new { subject = "Mine" });
         Assert.Equal("", (await Get(x.Admin, cid)).GetProperty("ticket").GetProperty("asset").GetString());
 
         Assert.Equal(HttpStatusCode.BadRequest, (await x.Admin.PutAsync("/api/servicedesk/people/" + x.CustAId, Json(new { companyId = 987654 }))).StatusCode);
