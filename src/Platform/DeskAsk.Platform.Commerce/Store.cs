@@ -294,7 +294,7 @@ public static class Invoices
         rows.Add(new[] { "", "Taxable value", "", Store.Money(q.Subtotal, q.Currency) });
         foreach (var t in q.Taxes) rows.Add(new[] { "", t.Name + " " + t.Rate.ToString("0.##", CultureInfo.InvariantCulture) + "%", "", Store.Money(t.Amount, q.Currency) });
         rows.Add(new[] { "", "Total", "", Store.Money(q.Total, q.Currency) });
-        pdf.Table(new[] { "#", "Description", "SAC", "Amount" }, new[] { 0.06, 0.6, 0.12, 0.22 }, rows, 9);
+        pdf.Table(new[] { "#", "Description", "SAC", "Amount" }, new[] { 0.06, 0.6, 0.12, 0.22 }, rows, 9, boldLast: true);
         pdf.Gap(6);
         pdf.Paragraph("Amount in words: " + Words(q.Total, q.Currency), 9);
         if (q.TaxNote != "") pdf.Paragraph(q.TaxNote, 9);
