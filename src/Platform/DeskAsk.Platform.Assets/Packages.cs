@@ -23,7 +23,7 @@ public static class PackagesApi
     const int MaxPart = 8 << 20;                      // uploads come in pieces of up to 8 MB (proxies in front refuse large bodies)
     static readonly Regex SourceId = new(@"^[A-Za-z0-9][A-Za-z0-9.+_:~-]{0,127}$");
     static readonly Regex FileName = new(@"^[A-Za-z0-9][A-Za-z0-9 ._()+-]{0,150}\.(msi|exe|deb|rpm|sh)$", RegexOptions.IgnoreCase);
-    static readonly Regex UploadId = new(@"^up[A-Za-z0-9]{20}$");
+    static readonly Regex UploadId = new(@"^up[A-Za-z0-9_-]{20,40}$");   // "up" + AgentsApi.Rand(20): 27 characters of base64url
     static readonly string[] Kinds = { "file", "winget", "choco", "apt" };
 
     /// <summary>Where installers are kept: Assets:PackageDir, or the install folder's data\packages, one folder per customer.</summary>
