@@ -301,6 +301,7 @@ function Products({ prods, onChanged }: { prods: { data: Rec[] | null; error: st
     </tbody></table>}
     <div className="tools"><button onClick={() => setAdding(true)}>Add a product</button></div>
     {adding && <Modal title="Add a product" onClose={() => setAdding(false)}>
+    <div className="form">
       <Field label="Code (letters and digits, for example helpdesk2)"><input value={f.key} onChange={(e) => setF({ ...f, key: e.target.value })} maxLength={20} /></Field>
       <Field label="Name"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={60} /></Field>
       <Field label="Description"><input value={f.tagline} onChange={(e) => setF({ ...f, tagline: e.target.value })} maxLength={200} /></Field>
@@ -309,7 +310,8 @@ function Products({ prods, onChanged }: { prods: { data: Rec[] | null; error: st
       <Field label="India yearly price (₹, before GST)"><input type="number" min={0} value={f.inr} onChange={(e) => setF({ ...f, inr: e.target.value })} /></Field>
       <p className="muted">A product that is not part of the program yet is listed and can be sold, but customers receive it only when a release that contains it is installed.</p>
       <Err text={err} />
-      <div className="tools"><button className="primary" onClick={add}>Add product</button><button onClick={() => setAdding(false)}>Cancel</button></div>
+      </div>
+      <div className="tools" style={{ marginTop: 14 }}><button className="primary" onClick={add}>Add product</button><button onClick={() => setAdding(false)}>Cancel</button></div>
     </Modal>}
   </Card>;
 }

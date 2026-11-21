@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { go, useLoad, type Rec } from '../http';
 import { Badge, Empty, Loading, ago } from '../ui';
+import { Ring } from '../Rings';
 
 export const STATUS: Record<string, string> = { open: 'Open', progress: 'In progress', hold: 'Awaiting customer', resolved: 'Resolved', closed: 'Closed' };
 export const KIND: Record<string, string> = { incident: 'Incident', request: 'Service request' };
@@ -21,11 +22,23 @@ export default function List({ me, kind = '', major = false }: { me: Rec | null;
   const [text, setText] = useState(''); const [overdue, setOverdue] = useState(false); const [skip, setSkip] = useState(0); const take = 25;
   const qs = `status=${status === 'all' ? '' : status}&priority=${priority}&assignee=${assignee}&q=${encodeURIComponent(text)}${overdue ? '&overdue=1' : ''}${kind ? '&kind=' + kind : ''}${major ? '&major=1' : ''}&skip=${skip}&take=${take}`;
   const { data, error, loading } = useLoad<Rec>('/api/servicedesk/tickets?' + qs);
-  const sum = useLoad<Rec>('/api/servicedesk/summary');
+  const sum = useLoad<Rec>('/api/servicedesk/summary' + (major ? '?major=1' : kind ? '?kind=' + kind : ''));
   const items = (data?.items ?? []) as Rec[]; const total = (data?.total ?? 0) as number; const s = sum.data;
   const reset = (f: () => void) => { f(); setSkip(0); };
   return <>
     <h1>{major ? 'Major incidents' : kind === 'incident' ? 'Incidents' : kind === 'request' ? 'Service requests' : 'Tickets'}</h1>
+    {s && <div className="rings dash-rings">
+      <Ring title="Open" unit="open" empty="Nothing open." parts={[
+        { key: 'o', label: 'New', value: Number(s.open ?? 0), tone: 'info' },
+        { key: 'p', label: 'In progress', value: Number(s.progress ?? 0), tone: 'ok' },
+        { key: 'h', label: 'Awaiting customer', value: Number(s.hold ?? 0), tone: 'none' }]} />
+      <Ring title="Service level" unit="open" empty="Nothing open." parts={[
+        { key: 'in', label: 'On time', value: Math.max(Number(s.open ?? 0) + Number(s.progress ?? 0) + Number(s.hold ?? 0) - Number(s.overdue ?? 0), 0), tone: 'ok' },
+        { key: 'late', label: 'Overdue', value: Number(s.overdue ?? 0), tone: 'bad' }]} />
+      <Ring title="Finished" unit="tickets" empty="None finished yet." parts={[
+        { key: 'r', label: 'Resolved', value: Number(s.resolved ?? 0), tone: 'ok' },
+        { key: 'c', label: 'Closed', value: Number(s.closed ?? 0), tone: 'none' }]} />
+    </div>}
     {s && <dl className="stats" style={{ marginBottom: 14 }}>
       <div><dt>Open</dt><dd>{(s.open ?? 0) + (s.progress ?? 0)}</dd></div>
       <div><dt>Awaiting customer</dt><dd>{s.hold ?? 0}</dd></div>

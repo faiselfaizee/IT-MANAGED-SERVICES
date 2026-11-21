@@ -35,3 +35,15 @@ Vendor console › Prices › **Products on sale**: tick it on. The website asks
 
 ## Reports page, dashboards
 Nothing to configure. If a customer's tile is missing from a dashboard, the customer has no data for that module yet.
+
+## Website link: "The website could not be reached: No connection could be made because the target machine actively refused it (dev.deskask.in:443)"
+**Meaning:** the platform server tried to open `https://dev.deskask.in/store/hooks` and the address answered "refused" on port 443. Events (`product.changed`, `order.fulfilled`) wait and are retried for 3 days, so nothing is lost; they arrive once the address works.
+**Usual cause when the website and the platform are both behind the same firewall:** from inside the network, the website's public name resolves to the firewall's public IP, and the firewall does not send inside traffic for its own public address back in ("NAT reflection" or "hairpin" is off), or HAProxy listens only on the outside interface.
+**Check, on the platform server:**
+```powershell
+Resolve-DnsName dev.deskask.in
+Test-NetConnection dev.deskask.in -Port 443
+Test-NetConnection 10.10.10.150 -Port 443
+Test-NetConnection 10.10.10.150 -Port 80
+```
+If the public name fails but the website's own address works, give the platform server the inside answer: an Unbound host override on OPNsense (Services › Unbound DNS › Overrides) for `dev.deskask.in` (and later `www.deskask.in`) pointing at the HAProxy inside address, or turn on NAT reflection. If HAProxy ends the https and the website listens only on http, the name must point at HAProxy, not at the website server. Finally the website must answer `POST /store/hooks`: Website Admin › Store must hold the same secret, and "Send a test event" must show 200.
