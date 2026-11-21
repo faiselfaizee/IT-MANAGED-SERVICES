@@ -6,8 +6,9 @@ import { CompanyForm } from './Companies';
 import DirectorySetup from './DirectorySetup';
 import { Give, Holder } from './Peripherals';
 import { GoogleSettings, ImportEntra, SsoSettings } from '../Users';
+import { Delegation } from '../admanager/Domains';
 
-const TABS: [string, string][] = [['users', 'Users'], ['signin', 'Sign-in'], ['directory', 'Domain controller'], ['details', 'Details']];
+const TABS: [string, string][] = [['users', 'Users'], ['signin', 'Sign-in'], ['ad', 'AD permissions'], ['directory', 'Domain controller'], ['details', 'Details']];
 const ROLE: Record<string, string> = { cadmin: 'Customer administrator', customer: 'Employee' };
 
 /**
@@ -31,6 +32,7 @@ export default function CompanyPage({ id }: { id?: number }) {
       <div className="tabs" role="tablist">{TABS.map(([k, l]) => <a key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} href={`${base}/${k}`}>{l}</a>)}</div>
       {tab === 'users' && <CompanyUsers company={{ id: co.id, name: co.name }} />}
       {tab === 'signin' && <SignInTab company={{ id: co.id, name: co.name }} />}
+      {tab === 'ad' && <AdTab company={{ id: co.id, name: co.name }} />}
       {tab === 'directory' && <DirectoryTab company={{ id: co.id, name: co.name }} />}
       {tab === 'details' && <Card title="Details">
         <dl className="facts"><dt>Name</dt><dd>{co.name}</dd><dt>Code</dt><dd>{co.code || '–'}</dd><dt>Contact</dt><dd>{co.contactName || '–'} <span className="muted">{co.contactEmail} {co.phone}</span></dd>
@@ -62,6 +64,18 @@ function SignInTab({ company }: { company: { id: number; name: string } }) {
     {open === 'g' && <GoogleSettings base={`/api/companies/${company.id}/sso/google`} company={company.name} onClose={done} />}
     {open === 'msimport' && <ImportEntra base={`/api/companies/${company.id}/sso/microsoft/entra`} title={`Import ${company.name}'s people from Microsoft`} company onClose={done} />}
     {open === 'gimport' && <ImportEntra base={`/api/companies/${company.id}/sso/google`} title={`Import ${company.name}'s people from Google`} company onClose={done} />}
+  </>;
+}
+
+/** AD Manager: who of your team may do what in this company's domains (people and groups, per OU). Without the AD Manager licence it says so. */
+function AdTab({ company }: { company: { id: number; name: string } }) {
+  const { data, error, loading } = useLoad<Rec[]>('/api/adsuite/domains');
+  const mine = (Array.isArray(data) ? data : []).filter((d) => Number(d.companyId) === company.id);
+  if (error) return <Card title="AD permissions"><p className="muted">AD Manager is not part of your licence, or you may not manage it. With AD Manager, this tab sets who of your team may unlock, reset passwords, create or move objects in {company.name}'s Active Directory.</p></Card>;
+  return <>
+    <Loading loading={loading && !data} error="" />
+    {data && mine.length === 0 && <Card title="AD permissions"><Empty>{company.name} has no domain in AD Manager yet.</Empty><p><a href="#/admanager/domains">Add the domain in AD Manager</a>; its permissions then show here.</p></Card>}
+    {mine.map((d) => <Delegation key={d.id} d={d} />)}
   </>;
 }
 

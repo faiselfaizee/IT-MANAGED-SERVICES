@@ -451,6 +451,7 @@ Administration › Devices setup › Customers › choose a customer. With one c
   - **Assets** shows how many things each person holds, found under their name or their email. Choose the number to see them, take several back, give more from stock, or print the hand-over sheet.
   - Edit, Set password, Disable, Remove from company.
 - **Domain controller**: the read-only connection used to suggest names when assets are handed out.
+- **Sign-in** (6.18.0) and **AD permissions** (6.20.0): see sign-in.md and admanager.md.
 - **Details**: name, contact, address, remote access, link to its assets and locations.
 
 What moved:

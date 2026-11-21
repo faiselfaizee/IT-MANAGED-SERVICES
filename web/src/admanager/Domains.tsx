@@ -33,7 +33,8 @@ function Form({ d, onClose, onSaved }: { d: Rec | null; onClose: () => void; onS
   </Modal>;
 }
 
-function Delegation({ d }: { d: Rec }) {
+/** Who may do what in one domain (also shown on the company's AD permissions tab). */
+export function Delegation({ d }: { d: Rec }) {
   const rows = useLoad<Rec[]>(`/api/adsuite/domains/${d.id}/delegations`);
   const who = useLoad<Rec>('/api/adsuite/principals');
   const [kind, setKind] = useState('user'); const [pid, setPid] = useState(''); const [ou, setOu] = useState(d.baseDn as string); const [rights, setRights] = useState<string[]>(['read']);
