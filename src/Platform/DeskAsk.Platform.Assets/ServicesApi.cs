@@ -106,7 +106,7 @@ elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive remove -- 
 else echo ""No supported package manager (apt, dnf, yum, zypper) was found.""; exit 1; fi
 rc=$?; [ $rc -eq 0 ] && echo ""$PKG is uninstalled.""; exit $rc";
 
-    static async Task<string> Queue(NpgsqlConnection db, AgentHub hub, ITenantContext t, AgentsApi.Target tg, string shell, string title, string body, int timeout, string by, CancellationToken ct)
+    internal static async Task<string> Queue(NpgsqlConnection db, AgentHub hub, ITenantContext t, AgentsApi.Target tg, string shell, string title, string body, int timeout, string by, CancellationToken ct)
     {
         var jid = "j" + AgentsApi.Rand(12);
         await using (var ins = new NpgsqlCommand("insert into assets.jobs (id, asset_id, agent_id, shell, title, body, status, by_name, timeout_s) values (@i,@a,@g,@s,@t,@b,'queued',@u,@to)", db))
@@ -119,7 +119,7 @@ rc=$?; [ $rc -eq 0 ] && echo ""$PKG is uninstalled.""; exit $rc";
     }
 
     /// <summary>The asset if it is in the caller's scope, with the checks remote commands use (agent installed, remote tools allowed, online).</summary>
-    static async Task<(IResult? Error, AgentsApi.Target? T)> Target(HttpContext http, NpgsqlConnection db, long id, IConfiguration cfg, CancellationToken ct)
+    internal static async Task<(IResult? Error, AgentsApi.Target? T)> Target(HttpContext http, NpgsqlConnection db, long id, IConfiguration cfg, CancellationToken ct)
     {
         if (!await AssetsAccess.InScope(db, id, await AssetsAccess.ScopeAsync(http, Acts.Modify), ct)) return (Results.NotFound(), null);
         return await AgentsApi.Resolve(db, id, true, AgentsApi.Offline(cfg), ct);

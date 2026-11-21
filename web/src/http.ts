@@ -82,6 +82,20 @@ export async function upload(path: string, file: File): Promise<Rec> {
   if (!r.ok) throw new ApiError(r.status, j?.detail ? String(j.detail) : j?.error ? String(j.error).replace(/_/g, ' ') : `The server answered ${r.status}.`, j);
   return j ?? {};
 }
+/** Sends a large file in pieces (proxies in front refuse big bodies): PUT path?offset=n for each piece, resuming where the server says. */
+export async function uploadInPieces(path: string, file: Blob, piece: number, onProgress?: (sent: number) => void): Promise<void> {
+  let offset = 0;
+  while (offset < file.size) {
+    const headers: Record<string, string> = { 'content-type': 'application/octet-stream' };
+    const t = accessToken(); if (t) headers.authorization = 'Bearer ' + t;
+    const r = await fetch(`${path}?offset=${offset}`, { method: 'PUT', headers, body: file.slice(offset, Math.min(offset + piece, file.size)) });
+    if (r.status === 401) { void signIn(); throw new ApiError(401, 'Signing in again…'); }
+    const text = await r.text(); let j: Rec | undefined; try { j = text ? JSON.parse(text) : undefined; } catch { j = undefined; }
+    if (r.status === 409 && typeof j?.length === 'number') { offset = j.length; continue; }   // the server has more or less than we thought: carry on from there
+    if (!r.ok) throw new ApiError(r.status, j?.detail ? String(j.detail) : `The server answered ${r.status}.`, j);
+    offset = Number(j?.length ?? offset); onProgress?.(offset);
+  }
+}
 /** Saves a file the server returned; the request needs the token, so it is fetched here. */
 export async function saveFile(path: string, name: string) {
   const t = accessToken();

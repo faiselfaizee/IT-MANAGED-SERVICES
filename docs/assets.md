@@ -460,3 +460,25 @@ What moved:
 
 A customer user's company is kept in one place (Access, `access.user_companies`). The Service Desk reads it there, so a person tied to the company by single-company mode can open tickets straight away. Links made before 6.16 in `servicedesk.people` still count.
 - **Pick from the domain controller** (6.17.0): turns people of the company's directory into users who sign in with their Windows password. See [sign-in.md](sign-in.md#a-companys-employees-with-their-windows-password-6170).
+
+## Software repository (6.19.0)
+Assets › Software › **Repository**: the approved programs engineers install on computers.
+
+**Adding a program** (administrators):
+- **Installer:** upload a `.msi` or `.exe` (Windows), or a `.deb`, `.rpm` or `.sh` (Linux), up to 2 GB.
+  - The upload goes in 8 MB pieces, so a proxy in front does not refuse it, and resumes where it stopped.
+  - The server keeps the file with its SHA-256. Give the vendor's SHA-256 to have it checked on arrival.
+  - Files are kept in `Assets:PackageDir`, by default `<install folder>\data\packages\<customer>`. Back that folder up with `data`.
+- **winget id** (for example `Google.Chrome`) or **Chocolatey id** for Windows.
+- **Package name** for the Linux package manager (apt, dnf, yum or zypper).
+- **Silent switches**: an `.msi` always gets `/qn /norestart`. For an `.exe`, give its own switches (for example `/S`, `/quiet`, `/verysilent`), or it may wait for a person and be stopped after 55 minutes.
+
+**Installing** (administrators and engineers with the Assets *change* right):
+- From the repository: **Install on…**, then choose Windows or Linux computers with a live agent.
+- From an asset: Applications › **Install from the repository**.
+- Each computer gets its own job (Logs tab, live output, exit code). The computer downloads the installer over a link that works for one day, checks the SHA-256, installs it silently and deletes the download. Exit codes 0, 1641 and 3010 count as success (3010: restart to finish).
+- winget runs as SYSTEM through App Installer's own copy. A computer without App Installer, or without Chocolatey, says so in the log.
+- Computers that are offline, have no agent, are blocked for remote tools, or run another system are skipped with the reason.
+- The number under **Installs** opens where and when the program was installed, by whom, and each result.
+
+Removing a program from the repository deletes its file. Computers that have it keep it; uninstall it from their Applications tab. Audit: `assets.package_added`, `assets.package_changed`, `assets.package_removed`, `assets.package_install`. Tables: `assets.packages`, `assets.package_installs` (migration 32).

@@ -447,6 +447,17 @@ public sealed class AssetsSchema : ITenantSchema
               department text not null default '', title text not null default '', enabled boolean not null default true,
               synced_at timestamptz not null default now(), primary key (company_id, account));
             create index if not exists directory_people_name on assets.directory_people (company_id, lower(name))"),
+        new(32, "software repository: approved programs and where they were installed", @"
+            create table if not exists assets.packages (
+              id serial primary key, name text not null, version text not null default '', publisher text not null default '',
+              os text not null check (os in ('windows','linux')), kind text not null check (kind in ('file','winget','choco','apt')),
+              source text not null default '', file_name text not null default '', size bigint not null default 0, sha256 text not null default '',
+              args text not null default '', notes text not null default '', enabled boolean not null default true, by_name text not null default '',
+              created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+            create table if not exists assets.package_installs (
+              job_id text primary key, package_id int not null references assets.packages(id) on delete cascade, asset_id bigint not null,
+              at timestamptz not null default now(), by_name text not null default '');
+            create index if not exists package_installs_package on assets.package_installs (package_id, at desc)"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -780,6 +791,7 @@ public sealed class AssetsModule : IPlatformModule
         AssetDash.Map(r, Key);
         AssetReports.Map(r, Key);
         ServicesApi.Map(r, Key);
+        PackagesApi.Map(r, Key);
         DeviceHealth.Map(r, Key);
         SecretHandoff.Map(r, Key);
         RenewalsApi.Map(r, Key);
