@@ -97,3 +97,7 @@ Vendor console › Business details has an **Invoice design** card with the same
 
 - **More sizes:** Vendor console › Price list › **Add a size** adds another edition (name, what it allows such as `agents=25`, prices) to any product. The same name twice is refused. Use the On sale tick of a size to hide it without deleting it.
 - **Delete a product:** the **Delete** button on a product removes it and its sizes. Only a product that is not part of the program and that no order or subscription uses can be deleted; otherwise switch it off. The website receives `product.changed` with `deleted: true` and `onSale: false`. Audited as `commerce.product_deleted` and `commerce.size_added`.
+
+## Monitoring needs Asset management (6.5.6)
+
+Monitoring watches the devices kept in Asset management, so it is not sold alone. In the platform's store, choosing a Monitoring size also chooses the smallest Asset management size and says so; the customer can pick a bigger one, and cannot set Asset management to "Not needed" while Monitoring is chosen. The server still refuses a quote or order with Monitoring and no Asset management ("Monitoring needs Asset management"), whoever sends it. The website's pricing page should do the same as the platform's store: when a visitor picks Monitoring, select the smallest Asset management size and tell them.

@@ -283,14 +283,14 @@ function Buy({ info, preset }: { info: Rec; preset?: string }) {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [kind, setKind] = useState(preset === 'onprem' ? 'onprem' : 'saas'); const [period, setPeriod] = useState('year'); const [country, setCountry] = useState('IN'); const [stateCode, setState] = useState('33'); const [gstin, setGstin] = useState('');
   const [sel, setSel] = useState<Record<string, number>>({});
-  const [quote, setQuote] = useState<Rec | null>(null); const [qErr, setQErr] = useState('');
+  const [quote, setQuote] = useState<Rec | null>(null); const [qErr, setQErr] = useState(''); const [needNote, setNeedNote] = useState('');
   const [buyer, setBuyer] = useState({ company: '', name: '', email: '', phone: '', address: '', city: '', pincode: '' });
   const [tenantId, setTenantId] = useState(''); const [avail, setAvail] = useState<Rec | null>(null);
   const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
   useEffect(() => { void call('/api/store/plans').then((p) => {
     const list = p as unknown as Plan[]; setPlans(list);
     const first = Array.isArray(list) ? list.find((x) => x.module === preset) : undefined;   // arriving from a product page: its smallest size is chosen
-    if (first) setSel({ [first.module]: first.id });
+    if (first) setSel(needs(list, { [first.module]: first.id }).sel);
   }, () => undefined); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const cur = country === 'IN' ? 'INR' : 'USD';
   const modules = useMemo(() => { const m: Record<string, Plan[]> = {}; for (const p of plans) (m[p.module] ??= []).push(p); return m; }, [plans]);
@@ -338,11 +338,12 @@ function Buy({ info, preset }: { info: Rec; preset?: string }) {
       </div>
       <table className="store-plans"><thead><tr><th>Module</th><th>Size</th><th>Price</th></tr></thead><tbody>
         {Object.entries(modules).map(([m, list]) => <tr key={m}><td><b>{list[0].moduleName}</b></td><td>
-          <select aria-label={list[0].moduleName + ' size'} value={sel[m] ?? ''} onChange={(e) => { const v = e.target.value; const n = { ...sel }; if (v) n[m] = Number(v); else delete n[m]; setSel(n); }}>
+          <select aria-label={list[0].moduleName + ' size'} value={sel[m] ?? ''} onChange={(e) => { const v = e.target.value; const n = { ...sel }; if (v) n[m] = Number(v); else delete n[m]; const r = needs(plans, n); setSel(r.sel); setNeedNote(r.note); }}>
             <option value="">Not needed</option>{list.map((p) => <option key={p.id} value={p.id}>{p.sizeLabel} · {money(price(p), cur)}</option>)}
           </select></td><td>{sel[m] ? money(price(list.find((p) => p.id === sel[m])!), cur) : ''}</td></tr>)}
       </tbody></table>
       <p className="muted small">4 or more modules: 25% off. Monitoring needs Asset management.</p>
+      {needNote && <p className="note" role="status">{needNote}</p>}
       {qErr && <p className="err" role="alert">{qErr}</p>}
     </section>
     <section className="store-card">
@@ -381,6 +382,17 @@ function Buy({ info, preset }: { info: Rec; preset?: string }) {
       <p className="muted small">By paying you accept the <a href="#/store/terms">Terms of Service</a> and the <a href="#/store/refund">Cancellation and Refund Policy</a>.</p>
     </aside>
   </div></section>;
+}
+
+/**
+ * Monitoring watches the devices kept in Asset management, so it cannot be bought alone: choosing Monitoring also chooses the smallest Asset management size
+ * (the customer can pick a bigger one), and Asset management cannot be dropped while Monitoring is chosen.
+ */
+export function needs(plans: Plan[], sel: Record<string, number>): { sel: Record<string, number>; note: string } {
+  if (!sel.monitoring) return { sel, note: '' };
+  const assets = plans.filter((p) => p.module === 'assets');
+  if (sel.assets || assets.length === 0) return { sel, note: '' };
+  return { sel: { ...sel, assets: assets[0].id }, note: 'Monitoring watches the devices kept in Asset management, so Asset management is chosen too (' + assets[0].sizeLabel + '). Pick a bigger size if you have more devices.' };
 }
 
 const TRIAL_MODULES: [string, string][] = [['servicedesk', 'Service Desk'], ['assets', 'Asset management'], ['monitoring', 'Monitoring'], ['adsuite', 'AD Manager'], ['vault', 'Vault'], ['backup', 'Backup']];
