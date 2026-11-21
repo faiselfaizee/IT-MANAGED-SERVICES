@@ -32,6 +32,7 @@ public sealed class AdModule : IPlatformModule
         s.AddScoped<ILicenseUsage, AdLicenseUsage>();
         s.AddSingleton<IJobHandler, AutomationJob>();
         s.AddSingleton<IJobHandler, PeopleSyncJob>();
+        s.AddScoped<ICompanyDirectorySignIn, CompanySignIn>();
         s.AddSingleton(new RecurringJob("adsuite.people", PeopleSyncJob.JobType, TimeSpan.FromHours(6)));
         s.AddSingleton(new RecurringJob("adsuite.automation", AutomationJob.JobType, TimeSpan.FromHours(24)));
     }

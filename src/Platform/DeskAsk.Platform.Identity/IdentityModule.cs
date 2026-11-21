@@ -330,12 +330,20 @@ public sealed class IdentityModule : IPlatformModule
         // people who came from Active Directory sign in with their directory password
         var viaDirectory = user != null && res == PasswordVerificationResult.Failed && await AdEndpoints.PasswordOkAsync(http, user, f["password"].ToString());
         if (viaDirectory) res = PasswordVerificationResult.Success;
+        // a customer's employees picked from their company's domain controller sign in with their Windows password (checked through the company's site controller)
+        DirectorySignIn? company = null;
+        if (user != null && res == PasswordVerificationResult.Failed && CompanyAccount.Parse(user.ExternalId) is { } ca && http.RequestServices.GetService<ICompanyDirectorySignIn>() is { } dir && f["password"].ToString().Length > 0)
+        {
+            try { company = await dir.CheckAsync(ca.CompanyId, ca.Account, f["password"].ToString(), http.RequestAborted); }
+            catch (Exception e) { log.LogWarning(e, "Checking a password with the company's domain controller failed"); company = new DirectorySignIn(false, "unreachable"); }
+            if (company.Valid) res = PasswordVerificationResult.Success;
+        }
         if (user == null || res == PasswordVerificationResult.Failed)
         {
             fails.AddOrUpdate(key, (1, DateTime.UtcNow.AddMinutes(15)), (_, o) => (o.until > DateTime.UtcNow ? o.n + 1 : 1, DateTime.UtcNow.AddMinutes(15)));
             log.LogWarning("Failed sign-in for {Email} on {Tenant}", email, tenant.Require().Id);
-            await audit.WriteAsync("auth.login_failed", target: email, actor: email);
-            return await Page(http, af, returnUrl, "Email or password is not correct.", StatusCodes.Status401Unauthorized);
+            await audit.WriteAsync("auth.login_failed", target: email, actor: email, detail: company is { Reason: { Length: > 0 } why } ? "windows: " + why : "");
+            return await Page(http, af, returnUrl, CompanyAccount.Message(company?.Reason), StatusCodes.Status401Unauthorized);
         }
         fails.TryRemove(key, out _);
         if (user.TotpEnabled) return await TwoStepEndpoints.Pending(http, af, user.Id, returnUrl);   // password was right; the session starts after the second step
@@ -367,3 +375,28 @@ public static class IdentityPipeline
     /// <summary>After tenancy and tenant schemas: authentication and authorization.</summary>
     public static IApplicationBuilder UseIdentity(this IApplicationBuilder app) => app.UseAuthentication().UseAuthorization();
 }
+
+/// <summary>A customer user picked from their company's domain controller: ExternalId "adc:&lt;company id&gt;:&lt;account name&gt;".</summary>
+public static class CompanyAccount
+{
+    public const string Prefix = "adc:";
+    public static string Make(int companyId, string account) => Prefix + companyId + ":" + account;
+    public static (int CompanyId, string Account)? Parse(string? ext)
+    {
+        if (ext == null || !ext.StartsWith(Prefix, StringComparison.Ordinal)) return null;
+        var rest = ext[Prefix.Length..]; var i = rest.IndexOf(':');
+        return i > 0 && int.TryParse(rest[..i], out var c) && i < rest.Length - 1 ? (c, rest[(i + 1)..]) : null;
+    }
+    /// <summary>What the sign-in page says. A wrong password and an unknown account read the same, so nobody learns which accounts exist.</summary>
+    public static string Message(string? reason) => reason switch
+    {
+        "disabled" => "Your Windows account is disabled. Ask your IT team.",
+        "locked" => "Your Windows account is locked. Wait a while or ask your IT team to unlock it.",
+        "expired" => "Your Windows password or account has expired. Change it on your computer, then sign in here.",
+        "must_change" => "Windows asks you to change your password first. Change it on your computer, then sign in here.",
+        "not_allowed" => "Windows does not allow this account to sign in now. Ask your IT team.",
+        "unreachable" or "old_controller" or "not_set_up" => "Your company's Windows sign-in cannot be checked right now. Try again later or ask your IT team.",
+        _ => "Email or password is not correct.",
+    };
+}
+

@@ -3,7 +3,11 @@ package collector
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"testing"
+	"time"
+
+	"github.com/deskask/platform/agent/internal/ldap"
 )
 
 func TestGuidSidAndPassword(t *testing.T) {
@@ -52,5 +56,35 @@ func TestJobErrors(t *testing.T) {
 	_, err = doDirectory(json.RawMessage(`{"conn":{"servers":["127.0.0.1:1"]},"ops":[{"op":"rootdse"}]}`))
 	if !errors.As(err, &de) || de.Message == "" {
 		t.Fatalf("unreachable server: %v", err)
+	}
+}
+
+func TestVerifyChecksThePersonsOwnPassword(t *testing.T) {
+	old := dial
+	defer func() { dial = old }()
+	var asked dirConn
+	dial = func(c dirConn, _ time.Duration) (*ldap.Conn, string, error) {
+		asked = c
+		if c.Password == "Right-Pass-1" {
+			a, b := net.Pipe()
+			go func() { _ = b.Close() }()
+			return ldap.NewConn(a), c.Servers[0], nil
+		}
+		return nil, c.Servers[0], &dirError{Code: ldap.CodeInvalidCreds, Message: "the domain controller refused: 80090308: LdapErr: DSID-0C09044E, comment: AcceptSecurityContext error, data 775, v4563"}
+	}
+	conn := dirConn{Servers: []string{"dc01:636", "dc02:636"}, TLS: true, BindDN: "svc@acme", Password: "svc-secret"}
+	r, err := verify("dc02:636", conn, dirOp{Op: "verify", DN: "CN=Ana,DC=acme", Password: "Right-Pass-1"})
+	if err != nil || r.Valid == nil || !*r.Valid {
+		t.Fatalf("a right password: %+v %v", r, err)
+	}
+	if asked.BindDN != "CN=Ana,DC=acme" || len(asked.Servers) != 1 || asked.Servers[0] != "dc02:636" || !asked.TLS {
+		t.Fatalf("must bind as the person on the controller that answered, keeping TLS: %+v", asked)
+	}
+	r, err = verify("dc02:636", conn, dirOp{Op: "verify", DN: "CN=Ana,DC=acme", Password: "nope"})
+	if err != nil || r.Valid == nil || *r.Valid || r.Reason != "locked" {
+		t.Fatalf("a locked account: %+v %v", r, err)
+	}
+	if _, err := verify("dc02:636", conn, dirOp{Op: "verify", DN: "CN=Ana,DC=acme", Password: ""}); err == nil {
+		t.Fatal("an empty password must never be tried (it would be an anonymous bind)")
 	}
 }

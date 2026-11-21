@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -18,7 +19,9 @@ public static class UsersEndpoints
     sealed record EditUser(string? Name, string? Role, bool? Active);
     sealed record Reset(string? Password);
 
-    static object Row(UserAccount u) => new { id = u.Id, email = u.Email, name = u.Name, role = u.Role, active = u.Active, twoStep = u.TotpEnabled, createdAt = u.CreatedAt };
+    static object Row(UserAccount u) => new { id = u.Id, email = u.Email, name = u.Name, role = u.Role, active = u.Active, twoStep = u.TotpEnabled, createdAt = u.CreatedAt, signIn = SignInKind(u.ExternalId) };
+    /// <summary>How the person signs in: password, windows (their company's domain controller), ad (this installation's AD), microsoft or google.</summary>
+    static string SignInKind(string? ext) => ext == null ? "password" : ext.StartsWith(CompanyAccount.Prefix, StringComparison.Ordinal) ? "windows" : ext.StartsWith("ad:", StringComparison.Ordinal) ? "ad" : ext.StartsWith("google:", StringComparison.Ordinal) ? "google" : "microsoft";
 
     static string? PasswordProblem(string? p) => string.IsNullOrEmpty(p) || p.Length < MinPassword ? $"The password needs at least {MinPassword} characters." : null;
 
@@ -101,6 +104,37 @@ public static class UsersEndpoints
             await audit.WriteAsync("user.password_reset", u.Email, ct: ct);
             return Results.Ok(new { ok = true });
         });
+
+        // a company's employees picked from its domain controller (Devices setup › Customers › a company › Users): they sign in with their Windows password
+        r.MapPost("/api/companies/{companyId:int}/users/from-directory", async (int companyId, JsonElement b, IdentityDb db, IPasswordHasher<UserAccount> hasher, ICompanyDirectory companies, IAccess access, IAuditLog audit, CancellationToken ct) =>
+        {
+            if (await companies.GetAsync(companyId, ct) == null) return Results.NotFound(new { error = "That company does not exist." });
+            var role = b.TryGetProperty("role", out var rv) && rv.ValueKind == JsonValueKind.String ? rv.GetString()!.Trim().ToLowerInvariant() : "customer";
+            if (role is not ("customer" or "cadmin")) return Results.BadRequest(new { error = "Choose employee or customer administrator." });
+            if (!b.TryGetProperty("people", out var ps) || ps.ValueKind != JsonValueKind.Array || ps.GetArrayLength() is 0 or > 500) return Results.BadRequest(new { error = "Choose 1 to 500 people." });
+            static string S(JsonElement e, string n) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()!.Trim() : "";
+            int created = 0, linked = 0, skipped = 0; var tie = new List<Guid>();
+            foreach (var p in ps.EnumerateArray())
+            {
+                var account = S(p, "account"); var email = S(p, "email").ToLowerInvariant(); var name = S(p, "name");
+                if (account.Length is 0 or > 104 || account.Any(char.IsControl) || account.Contains(':') || email.Length > 320 || !System.Net.Mail.MailAddress.TryCreate(email, out _)) { skipped++; continue; }
+                var ext = CompanyAccount.Make(companyId, account);
+                var ex = await db.Users.FirstOrDefaultAsync(x => x.Email == email, ct);
+                if (ex != null)
+                {
+                    // only a customer user who is not linked to another sign-in is taken over; staff and other links are left alone
+                    if (ex.Role is "customer" or "cadmin" && (ex.ExternalId == null || ex.ExternalId == ext)) { ex.ExternalId = ext; tie.Add(ex.Id); linked++; } else skipped++;
+                    continue;
+                }
+                var u = new UserAccount { Email = email, Name = name == "" ? email : (name.Length > 200 ? name[..200] : name), Role = role, ExternalId = ext };
+                u.PasswordHash = hasher.HashPassword(u, Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)));   // never used: they sign in with Windows
+                db.Users.Add(u); tie.Add(u.Id); created++;
+            }
+            await db.SaveChangesAsync(ct);
+            foreach (var id in tie) await access.SetCompanyAsync(id, companyId, ct);
+            await audit.WriteAsync("user.imported", "company:" + companyId, $"from the domain controller: created {created}, linked {linked}, skipped {skipped}, role {role}", ct: ct);
+            return Results.Ok(new { created, linked, skipped });
+        }).RequireAuthorization(p => p.RequireRole("admin"));
 
         g.MapPost("/{id:guid}/two-step/reset", async (Guid id, IdentityDb db, IAuditLog audit, CancellationToken ct) =>
         {

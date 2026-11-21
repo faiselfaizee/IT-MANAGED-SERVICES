@@ -38,3 +38,6 @@ Setting a password needs LDAPS (Active Directory refuses it otherwise). The serv
 
 ## LDAPS (v4.1.1)
 Test names the reason when LDAPS fails: no certificate on the domain controller, the certificate is for another name, issued by a CA the controller does not trust, expired, changed since you trusted it, or an old TLS version. For an untrusted or mismatched certificate it shows the certificate (names, issuer, expiry, SHA-256) and offers **Trust this certificate**: the controller then accepts exactly that certificate. Without LDAPS, a site controller on Windows sets passwords through ADSI with Kerberos/NTLM signing and sealing (give the service account as user@domain or DOMAIN\user).
+
+## Directory step "verify" (agent 6.17.0)
+The site controller checks a person's own password with a second connection bound as that person. It is used only for company employees signing in to DeskAsk with their Windows password. The answer is `valid` and `reason` (`wrong`, `disabled`, `locked`, `expired`, `must_change`, `not_allowed`). The service account's connection is not used for it.

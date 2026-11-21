@@ -28,6 +28,17 @@ public interface IDirectoryPeople
     Task ReplaceAsync(int companyId, IReadOnlyList<DirectoryPerson> people, CancellationToken ct = default);
 }
 
+/// <summary>The answer to a sign-in checked against a company's own domain controller. Reason when not valid: wrong, disabled, locked, expired,
+/// must_change, not_allowed, not_found, not_set_up, unreachable, old_controller (the site controller must be updated first).</summary>
+public sealed record DirectorySignIn(bool Valid, string Reason);
+
+/// <summary>Checks a customer user's Windows password against their company's domain controller, through the site controller in that company's network.
+/// The password is passed on once and never kept.</summary>
+public interface ICompanyDirectorySignIn
+{
+    Task<DirectorySignIn> CheckAsync(int companyId, string account, string password, CancellationToken ct = default);
+}
+
 /// <summary>A customer's own web address (desk.example.com) next to the built-in one. Token is what the customer puts in DNS to prove the address is theirs.</summary>
 public sealed record DomainRef(string Host, string Token, bool Verified, bool Primary, DateTime? VerifiedAt);
 

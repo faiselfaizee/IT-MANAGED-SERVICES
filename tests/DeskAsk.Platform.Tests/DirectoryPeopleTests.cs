@@ -79,4 +79,50 @@ public class DirectoryPeopleTests : IClassFixture<WebApplicationFactory<Program>
         Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync(path)).StatusCode);
         Assert.Empty((await J(await admin.GetAsync("/api/assets/directory-people?companyId=" + co))).GetProperty("items").EnumerateArray());
     }
+
+    static async Task<(HttpStatusCode Code, string Page)> SignIn(WebApplicationFactory<Program> f, string email, string password)
+    {
+        var c = f.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = true });
+        var page = await (await c.GetAsync("/account/login")).Content.ReadAsStringAsync();
+        var token = System.Text.RegularExpressions.Regex.Match(page, "name=\"__RequestVerificationToken\" value=\"([^\"]+)\"").Groups[1].Value;
+        var r = await c.PostAsync("/account/login", new FormUrlEncodedContent(new Dictionary<string, string> { ["__RequestVerificationToken"] = token, ["returnUrl"] = "/", ["email"] = email, ["password"] = password }));
+        return (r.StatusCode, await r.Content.ReadAsStringAsync());
+    }
+
+    [PgFact]
+    public async Task PeoplePickedFromTheCompanysDomainControllerSignInWithTheirWindowsPassword()
+    {
+        Fake.Reset();
+        var admin = await TestSupport.AdminClient(factory);
+        await admin.GetAsync("/api/assets/types");
+        await Sql("truncate adsuite.domains restart identity cascade; delete from assets.directory_people; delete from identity.users where \"Email\" in ('ana@acme.test', 'bo@acme.test')");
+        var co = (await J(await admin.PostAsync("/api/assets/companies", Json(new { name = "Win Ltd " + Guid.NewGuid().ToString("N")[..6] })))).GetProperty("id").GetInt32();
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/directory/companies/" + co, Json(new { baseDn = "DC=acme,DC=test", servers = "dc01.acme.test", tls = true, bindDn = "svc-deskask@acme.test", password = "Secret-Pw-1", controllerId = "ctl1" }))).StatusCode);
+        Fake.Passwords["CN=Ana Lee,OU=Sales,OU=Staff,DC=acme,DC=test"] = "Win-Pass-1";
+
+        var made = await J(await admin.PostAsync($"/api/companies/{co}/users/from-directory", Json(new { role = "customer", people = new object[] { new { account = "ana", name = "Ana Lee", email = "ana@acme.test" }, new { account = "bo", name = "Bo Kim", email = "bo@acme.test" }, new { account = "x", name = "No mail", email = "" } } })));
+        Assert.Equal(2, made.GetProperty("created").GetInt32()); Assert.Equal(1, made.GetProperty("skipped").GetInt32());
+        var users = (await J(await admin.GetAsync("/api/platform/users"))).EnumerateArray().ToList();
+        var ana = users.First(u => u.GetProperty("email").GetString() == "ana@acme.test");
+        Assert.Equal("windows", ana.GetProperty("signIn").GetString());
+        Assert.Contains((await J(await admin.GetAsync("/api/platform/access/user-companies"))).EnumerateArray(), x => x.GetProperty("userId").GetString() == ana.GetProperty("id").GetString() && x.GetProperty("companyId").GetInt32() == co);
+
+        // the right Windows password signs her in; it is checked through the controller and never stored
+        var me = await TestSupport.ClientFor(factory, "ana@acme.test", "Win-Pass-1");
+        Assert.Equal(HttpStatusCode.OK, (await me.GetAsync("/api/servicedesk/me")).StatusCode);
+        Assert.Contains("verify CN=Ana Lee,OU=Sales,OU=Staff,DC=acme,DC=test", Fake.Log);
+        var wrong = await SignIn(factory, "ana@acme.test", "nope-nope-1");
+        Assert.Equal(HttpStatusCode.Unauthorized, wrong.Code); Assert.Contains("Email or password is not correct.", wrong.Page);
+        // a disabled Windows account is told so
+        var bo = await SignIn(factory, "bo@acme.test", "anything-1");
+        Assert.Contains("Your Windows account is disabled.", bo.Page);
+        // a controller that has not been updated cannot check it, and says so
+        Fake.OldAgent = true;
+        var old = await SignIn(factory, "ana@acme.test", "Win-Pass-1");
+        Assert.Equal(HttpStatusCode.Unauthorized, old.Code); Assert.Contains("cannot be checked right now", old.Page);
+        Fake.OldAgent = false;
+        // only administrators pick people
+        Assert.Equal(HttpStatusCode.Forbidden, (await me.PostAsync($"/api/companies/{co}/users/from-directory", Json(new { people = new object[] { new { account = "cy", name = "Cy", email = "cy@acme.test" } } }))).StatusCode);
+    }
+
 }

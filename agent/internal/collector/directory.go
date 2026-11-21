@@ -30,7 +30,7 @@ type dirConn struct {
 }
 
 type dirOp struct {
-	Op        string              `json:"op"` // search, modify, add, delete, rename, setpw, rootdse
+	Op        string              `json:"op"` // search, modify, add, delete, rename, setpw, rootdse, verify
 	Base      string              `json:"base"`
 	Scope     string              `json:"scope"` // base, one, sub
 	Filter    string              `json:"filter"`
@@ -42,7 +42,7 @@ type dirOp struct {
 	Entry     map[string][]string `json:"entry"` // add
 	NewRDN    string              `json:"newRdn"`
 	NewParent string              `json:"newParent"`
-	Password  string              `json:"password"` // setpw
+	Password  string              `json:"password"` // setpw, verify
 	MustMove  bool                `json:"mustChange"`
 	Ignore    []int               `json:"ignore"` // result codes that are not a failure for this step (for example "already a member")
 }
@@ -67,6 +67,8 @@ type dirResult struct {
 	Server    string     `json:"server,omitempty"`
 	Entries   []dirEntry `json:"entries,omitempty"`
 	Truncated bool       `json:"truncated,omitempty"`
+	Valid     *bool      `json:"valid,omitempty"`  // verify: the person's password is right
+	Reason    string     `json:"reason,omitempty"` // verify: why it was refused (wrong, disabled, locked, expired, must_change, not_allowed)
 }
 
 // dirError carries the directory's own result code so the platform can say what went wrong.
@@ -95,6 +97,9 @@ func ldapAddr(s string, tls bool) string {
 
 // connect tries each server in turn. A refused login ends the attempt at once: trying the same password on every
 // domain controller would lock the service account.
+// dial opens a connection to the domain; tests replace it.
+var dial = connect
+
 func connect(c dirConn, timeout time.Duration) (*ldap.Conn, string, error) {
 	if len(c.Servers) == 0 {
 		return nil, "", &dirError{Message: "no domain controller is set"}
@@ -277,10 +282,49 @@ func runOp(l *ldap.Conn, server string, conn dirConn, o dirOp) (dirResult, error
 		if o.MustMove { // "must change at next sign-in"
 			return res, l.Modify(o.DN, []ldap.Change{{Op: ldap.ModReplace, Attr: "pwdLastSet", Vals: [][]byte{[]byte("0")}}})
 		}
+	case "verify":
+		return verify(server, conn, o)
 	default:
 		return res, fmt.Errorf("unknown directory step %q", o.Op)
 	}
 	return res, nil
+}
+
+// verify checks a person's own password for signing in to DeskAsk: a second connection to the controller that answered, bound as
+// the person. The service account's connection is not touched, and the password is neither kept nor logged. A refused password is a
+// result (valid=false with the reason Active Directory gives), not a failed job, so the platform can tell the person what is wrong.
+func verify(server string, conn dirConn, o dirOp) (dirResult, error) {
+	res := dirResult{Server: server}
+	if o.DN == "" || o.Password == "" { // an empty password is an anonymous bind, which a directory accepts: never a sign-in
+		return res, fmt.Errorf("a person and a password are needed")
+	}
+	pc := conn
+	pc.Servers, pc.BindDN, pc.Password = []string{server}, o.DN, o.Password
+	l, _, err := dial(pc, 15*time.Second)
+	no := false
+	if err != nil {
+		var de *dirError
+		if errors.As(err, &de) && de.Code == ldap.CodeInvalidCreds {
+			res.Valid, res.Reason = &no, adReason(de.Message)
+			return res, nil
+		}
+		return res, err
+	}
+	_ = l.Close()
+	yes := true
+	res.Valid = &yes
+	return res, nil
+}
+
+// adReason reads the "data 52e" part of Active Directory's answer to a refused bind.
+func adReason(msg string) string {
+	m := strings.ToLower(msg)
+	for code, why := range map[string]string{"data 52e": "wrong", "data 533": "disabled", "data 775": "locked", "data 532": "expired", "data 701": "expired", "data 773": "must_change", "data 530": "not_allowed", "data 531": "not_allowed"} {
+		if strings.Contains(m, code) {
+			return why
+		}
+	}
+	return "wrong"
 }
 
 // doDirectory runs the steps in order on one connection and stops at the first one that fails.
@@ -292,7 +336,7 @@ func doDirectory(raw json.RawMessage) (any, error) {
 	if len(j.Ops) == 0 || len(j.Ops) > 50 {
 		return nil, &dirError{Message: "a directory job has between 1 and 50 steps"}
 	}
-	l, server, err := connect(j.Conn, 20*time.Second)
+	l, server, err := dial(j.Conn, 20*time.Second)
 	if err != nil {
 		return nil, err
 	}

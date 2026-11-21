@@ -52,3 +52,20 @@ test('adding a user to a company creates the account and ties it to the company 
   expect(calls.find(([m, u]) => m === 'PUT' && u === '/api/platform/access/user-companies/new1')![2]).toContain('"companyId":4');
   expect(calls.find(([m, u]) => m === 'PUT' && u === '/api/servicedesk/people/new1')![2]).toContain('"mayModify":false');
 });
+
+test('people picked from the domain controller get accounts that sign in with Windows', async () => {
+  const calls: [string, string, string][] = [];
+  api({ '/api/platform/mode': { singleCompany: false }, '/api/platform/users': [{ id: 'x', email: 'old@acme.test', name: 'Old', role: 'customer', active: true }], '/api/platform/access/user-companies': [], '/api/servicedesk/people': [], '/api/assets/holders': { items: [] },
+    '/api/assets/directory-people': { items: [{ companyId: 4, account: 'ana', name: 'Ana Lee', email: 'ana@acme.test', department: 'Sales', enabled: true }, { companyId: 4, account: 'nomail', name: 'No Mail', email: '', enabled: true }, { companyId: 4, account: 'old', name: 'Old', email: 'old@acme.test', enabled: true }] },
+    '/api/companies/4/users/from-directory': { created: 1, linked: 0, skipped: 0 } }, calls);
+  render(<CompanyUsers company={{ id: 4, name: 'Acme' }} />);
+  fireEvent.click(await screen.findByText('Pick from the domain controller'));
+  await waitFor(() => expect(screen.getByLabelText('Choose Ana Lee')).toBeTruthy());
+  expect((screen.getByLabelText('Choose No Mail') as HTMLInputElement).disabled).toBe(true);
+  expect((screen.getByLabelText('Choose Old') as HTMLInputElement).disabled).toBe(true);
+  fireEvent.click(screen.getByLabelText('Choose Ana Lee'));
+  fireEvent.click(screen.getByText('Add 1'));
+  await waitFor(() => expect(screen.getByText('1 added, 0 linked, 0 skipped.')).toBeTruthy());
+  const body = calls.find(([m, u]) => m === 'POST' && u === '/api/companies/4/users/from-directory')![2];
+  expect(body).toContain('"account":"ana"'); expect(body).toContain('"role":"customer"');
+});
