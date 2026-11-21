@@ -23,9 +23,10 @@ public sealed record EntraConfig(bool Enabled, string TenantId, string ClientId,
     public static readonly EntraConfig None = new(false, "", "", "", "", false, "customer");
     public bool Ready => Enabled && TenantId != "" && ClientId != "" && Secret != "";
 
-    public static async Task<EntraConfig> LoadAsync(ISettings s, IDataProtectionProvider dp, CancellationToken ct)
+    /// <summary>The installation's own setup (company null) or one customer company's (Devices setup › Customers › a company › Sign-in).</summary>
+    public static async Task<EntraConfig> LoadAsync(ISettings s, IDataProtectionProvider dp, CancellationToken ct, int? company = null)
     {
-        var raw = await s.GetAsync(Key, ct);
+        var raw = await s.GetAsync(CompanySso.KeyFor(Key, company), ct);
         if (string.IsNullOrWhiteSpace(raw)) return None;
         try
         {
@@ -38,8 +39,8 @@ public sealed record EntraConfig(bool Enabled, string TenantId, string ClientId,
         catch (JsonException) { return None; }
     }
 
-    public static Task SaveAsync(ISettings s, IDataProtectionProvider dp, EntraConfig c, CancellationToken ct) =>
-        s.SetAsync(Key, JsonSerializer.Serialize(new { enabled = c.Enabled, tenantId = c.TenantId, clientId = c.ClientId, secret = c.Secret == "" ? "" : dp.CreateProtector("identity.entra").Protect(c.Secret), domains = c.Domains, autoCreate = c.AutoCreate, defaultRole = c.DefaultRole }), ct);
+    public static Task SaveAsync(ISettings s, IDataProtectionProvider dp, EntraConfig c, CancellationToken ct, int? company = null) =>
+        s.SetAsync(CompanySso.KeyFor(Key, company), JsonSerializer.Serialize(new { enabled = c.Enabled, tenantId = c.TenantId, clientId = c.ClientId, secret = c.Secret == "" ? "" : dp.CreateProtector("identity.entra").Protect(c.Secret), domains = c.Domains, autoCreate = c.AutoCreate, defaultRole = c.DefaultRole }), ct);
 }
 
 /// <summary>
@@ -89,16 +90,17 @@ public static class SsoEndpoints
     public static void Map(IEndpointRouteBuilder r)
     {
         // ---- the browser's way in
-        r.MapGet("/account/sso/microsoft", async (HttpContext http, ISettings st, IDataProtectionProvider dp, IConfiguration cfg, string? returnUrl) =>
+        r.MapGet("/account/sso/microsoft", async (HttpContext http, ISettings st, IDataProtectionProvider dp, IConfiguration cfg, string? returnUrl, int? company, string? hint) =>
         {
-            var c = await EntraConfig.LoadAsync(st, dp, http.RequestAborted);
+            var c = await EntraConfig.LoadAsync(st, dp, http.RequestAborted, company);
             if (!c.Ready) return Error("Sign in with Microsoft is not switched on.");
             var state = B64(RandomNumberGenerator.GetBytes(24)); var nonce = B64(RandomNumberGenerator.GetBytes(24)); var verifier = B64(RandomNumberGenerator.GetBytes(48));
-            var protectedState = dp.CreateProtector("identity.sso.state").Protect(JsonSerializer.Serialize(new { state, nonce, verifier, ret = IdentityModule.LocalOrRoot(returnUrl), exp = DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds() }));
+            var protectedState = dp.CreateProtector("identity.sso.state").Protect(JsonSerializer.Serialize(new { state, nonce, verifier, ret = IdentityModule.LocalOrRoot(returnUrl), co = company, exp = DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds() }));
             http.Response.Cookies.Append(StateCookie, protectedState, new CookieOptions { HttpOnly = true, Secure = http.Request.IsHttps, SameSite = SameSiteMode.Lax, MaxAge = TimeSpan.FromMinutes(10), Path = "/account/sso" });
             var challenge = B64(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
             var url = $"{Authority(cfg)}/{Uri.EscapeDataString(c.TenantId)}/oauth2/v2.0/authorize?client_id={Uri.EscapeDataString(c.ClientId)}&response_type=code&response_mode=query"
-                + $"&redirect_uri={Uri.EscapeDataString(Callback(http))}&scope={Uri.EscapeDataString("openid profile email")}&state={state}&nonce={nonce}&code_challenge={challenge}&code_challenge_method=S256&prompt=select_account";
+                + $"&redirect_uri={Uri.EscapeDataString(Callback(http))}&scope={Uri.EscapeDataString("openid profile email")}&state={state}&nonce={nonce}&code_challenge={challenge}&code_challenge_method=S256&prompt=select_account"
+                + (hint is { Length: > 3 and < 321 } h && h.Contains('@') ? "&login_hint=" + Uri.EscapeDataString(h) : "");
             return Results.Redirect(url);
         }).AllowAnonymous();
 
@@ -106,10 +108,11 @@ public static class SsoEndpoints
         {
             var q = http.Request.Query; var ct = http.RequestAborted;
             if (q.ContainsKey("error")) return Error("Microsoft did not sign you in: " + (q["error_description"].ToString().Split('\n')[0] is { Length: > 0 } d ? d : q["error"].ToString()));
-            var c = await EntraConfig.LoadAsync(st, dp, ct); if (!c.Ready) return Error("Sign in with Microsoft is not switched on.");
             JsonElement saved;
             try { saved = JsonDocument.Parse(dp.CreateProtector("identity.sso.state").Unprotect(http.Request.Cookies[StateCookie] ?? "")).RootElement.Clone(); }
             catch { return Error("The sign-in took too long or was started in another browser. Start again."); }
+            int? co = saved.TryGetProperty("co", out var cv) && cv.ValueKind == JsonValueKind.Number ? cv.GetInt32() : null;   // which company's sign-in this was (sealed in the state)
+            var c = await EntraConfig.LoadAsync(st, dp, ct, co); if (!c.Ready) return Error("Sign in with Microsoft is not switched on.");
             http.Response.Cookies.Delete(StateCookie, new CookieOptions { Path = "/account/sso" });
             if (saved.GetProperty("exp").GetInt64() < DateTimeOffset.UtcNow.ToUnixTimeSeconds() || q["state"] != Str(saved, "state") || string.IsNullOrEmpty(q["code"])) return Error("The sign-in could not be checked. Start again.");
 
@@ -133,6 +136,11 @@ public static class SsoEndpoints
 
             UserAccount? fresh = null;
             var user = await db.Users.FirstOrDefaultAsync(x => x.ExternalId == oid, ct) ?? await db.Users.FirstOrDefaultAsync(x => x.Email == email, ct);
+            if (user != null && await CompanySso.RefuseAsync(http, co, user, ct) is { } notOurs)
+            {
+                await audit.WriteAsync("auth.sso_refused", target: email, detail: "microsoft, company " + co, actor: email);
+                return Error(notOurs, 403);
+            }
             if (user == null)
             {
                 var domain = email[(email.IndexOf('@') + 1)..];
@@ -142,7 +150,7 @@ public static class SsoEndpoints
                     await audit.WriteAsync("auth.sso_refused", target: email, actor: email);
                     return Error("There is no DeskAsk account for " + email + ". Ask an administrator to add or import you.", 403);
                 }
-                var role = UsersEndpoints.Roles.Contains(c.DefaultRole) && c.DefaultRole != "admin" ? c.DefaultRole : "customer";
+                var role = CompanySso.RoleOk(co, c.DefaultRole) ? c.DefaultRole : "customer";
                 if (StaffLimit.IsStaff(role) && await StaffLimit.RefuseAsync(ent, db, 1, ct) != null) return Error("All staff accounts of the licence are in use. Ask an administrator to add you.", 403);
                 var name = Str(claims, "name") is { Length: > 0 } nm ? nm : email;
                 user = new UserAccount { Email = email, Name = name.Length > 200 ? name[..200] : name, Role = role };
@@ -153,22 +161,26 @@ public static class SsoEndpoints
             if (!user.Active) return Error("This account is disabled.", 403);
             if (user.ExternalId != oid) user.ExternalId = oid;
             await db.SaveChangesAsync(ct);
-            if (fresh != null) await SingleCompanyLink.TryAsync(http.RequestServices, new[] { fresh }, ct);
-            await audit.WriteAsync("auth.login", target: email, actor: email, detail: "microsoft");
+            if (fresh != null) await CompanySso.TieAsync(http.RequestServices, co, new[] { fresh }, ct);
+            await audit.WriteAsync("auth.login", target: email, actor: email, detail: co == null ? "microsoft" : "microsoft, company " + co);
             await http.SignInAsync(IdentityModule.CookieName, new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", user.Id.ToString()), new Claim("mfa", "1") }, IdentityModule.CookieName)));
             return Results.Redirect(IdentityModule.LocalOrRoot(Str(saved, "ret")));
         }).AllowAnonymous();
 
         // ---- the administrator's side
-        var g = r.MapGroup("/api/platform/sso").RequireAuthorization(p => p.RequireRole("admin"));
+        foreach (var g in new[] { r.MapGroup("/api/platform/sso"), r.MapGroup("/api/companies/{companyId:int}/sso/microsoft") })
+        {
+        g.RequireAuthorization(p => p.RequireRole("admin"));
         g.MapGet("", async (HttpContext http, ISettings st, IDataProtectionProvider dp, CancellationToken ct) =>
         {
-            var c = await EntraConfig.LoadAsync(st, dp, ct);
+            var co = CompanySso.Of(http); if (!await CompanySso.ExistsAsync(http, co, ct)) return Results.NotFound();
+            var c = await EntraConfig.LoadAsync(st, dp, ct, co);
             return Results.Ok(new { enabled = c.Enabled, tenantId = c.TenantId, clientId = c.ClientId, hasSecret = c.Secret != "", domains = c.Domains, autoCreate = c.AutoCreate, defaultRole = c.DefaultRole, redirectUri = Callback(http) });
         });
-        g.MapPut("", async (JsonElement b, ISettings st, IDataProtectionProvider dp, IAuditLog audit, CancellationToken ct) =>
+        g.MapPut("", async (HttpContext http, JsonElement b, ISettings st, IDataProtectionProvider dp, IAuditLog audit, CancellationToken ct) =>
         {
-            var old = await EntraConfig.LoadAsync(st, dp, ct);
+            var co = CompanySso.Of(http); if (!await CompanySso.ExistsAsync(http, co, ct)) return Results.NotFound();
+            var old = await EntraConfig.LoadAsync(st, dp, ct, co);
             bool Has(string n, out JsonElement v) { v = default; return b.ValueKind == JsonValueKind.Object && b.TryGetProperty(n, out v); }
             string T(string n, string cur) => Has(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()!.Trim() : cur;
             var tenantId = T("tenantId", old.TenantId); var clientId = T("clientId", old.ClientId);
@@ -178,16 +190,19 @@ public static class SsoEndpoints
             var role = T("defaultRole", old.DefaultRole);
             if (!Guid.TryParse(tenantId, out _) && tenantId != "") return Results.BadRequest(new { error = "The directory (tenant) id is a GUID like 11111111-2222-3333-4444-555555555555." });
             if (clientId != "" && !Guid.TryParse(clientId, out _)) return Results.BadRequest(new { error = "The application (client) id is a GUID." });
-            if (!UsersEndpoints.Roles.Contains(role) || role == "admin") return Results.BadRequest(new { error = "New people can be created as engineer, viewer, customer administrator or customer." });
+            if (co != null && !CompanySso.RoleOk(co, role)) role = "customer";   // a company's setup starts from the installation's default
+            if (!CompanySso.RoleOk(co, role)) return Results.BadRequest(new { error = CompanySso.RoleError(co) });
             if (enabled && (tenantId == "" || clientId == "" || secret == "")) return Results.BadRequest(new { error = "Enter the directory id, application id and secret before switching it on." });
-            await EntraConfig.SaveAsync(st, dp, new EntraConfig(enabled, tenantId, clientId, secret, T("domains", old.Domains), auto, role), ct);
-            await audit.WriteAsync("identity.entra_changed", ct: ct);
+            var domains = T("domains", old.Domains);
+            if (co != null && enabled && domains.Trim() == "") return Results.BadRequest(new { error = "Give the company's email domains: the sign-in page finds the company by them." });
+            await EntraConfig.SaveAsync(st, dp, new EntraConfig(enabled, tenantId, clientId, secret, domains, auto, role), ct, co);
+            await audit.WriteAsync("identity.entra_changed", co == null ? "" : "company:" + co, ct: ct);
             return Results.Ok(new { ok = true });
         });
         // check the registration works: the app can ask the directory for users
-        g.MapPost("/test", async (ISettings st, IDataProtectionProvider dp, IConfiguration cfg, CancellationToken ct) =>
+        g.MapPost("/test", async (HttpContext http, ISettings st, IDataProtectionProvider dp, IConfiguration cfg, CancellationToken ct) =>
         {
-            var c = await EntraConfig.LoadAsync(st, dp, ct);
+            var c = await EntraConfig.LoadAsync(st, dp, ct, CompanySso.Of(http));
             if (c.TenantId == "" || c.ClientId == "" || c.Secret == "") return Results.BadRequest(new { error = "Save the directory id, application id and secret first." });
             var (token, err) = await GraphToken(c, cfg, ct);
             if (token == null) return Results.BadRequest(new { error = err });
@@ -197,9 +212,9 @@ public static class SsoEndpoints
         });
 
         // the people in the directory, marked when they already have an account
-        g.MapGet("/entra/users", async (ISettings st, IDataProtectionProvider dp, IConfiguration cfg, IdentityDb db, CancellationToken ct) =>
+        g.MapGet("/entra/users", async (HttpContext http, ISettings st, IDataProtectionProvider dp, IConfiguration cfg, IdentityDb db, CancellationToken ct) =>
         {
-            var c = await EntraConfig.LoadAsync(st, dp, ct);
+            var c = await EntraConfig.LoadAsync(st, dp, ct, CompanySso.Of(http));
             var (token, err) = await GraphToken(c, cfg, ct); if (token == null) return Results.BadRequest(new { error = err });
             var items = new List<object>(); var next = Graph(cfg) + "/v1.0/users?$select=id,displayName,mail,userPrincipalName,accountEnabled,userType&$top=200";
             var have = (await db.Users.AsNoTracking().Select(x => x.Email).ToListAsync(ct)).ToHashSet();
@@ -221,10 +236,11 @@ public static class SsoEndpoints
             return Results.Ok(new { items, more = next != null });
         });
 
-        g.MapPost("/entra/import", async (JsonElement b, IServiceProvider sp, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
+        g.MapPost("/entra/import", async (HttpContext http, JsonElement b, IServiceProvider sp, IdentityDb db, IPasswordHasher<UserAccount> hasher, IAuditLog audit, IEntitlements ent, CancellationToken ct) =>
         {
+            var co = CompanySso.Of(http); if (!await CompanySso.ExistsAsync(http, co, ct)) return Results.NotFound();
             var role = (b.TryGetProperty("role", out var rv) && rv.ValueKind == JsonValueKind.String ? rv.GetString()! : "").Trim().ToLowerInvariant();
-            if (!UsersEndpoints.Roles.Contains(role)) return Results.BadRequest(new { error = "Choose a role." });
+            if (!CompanySso.ImportRoleOk(co, role)) return Results.BadRequest(new { error = co == null ? "Choose a role." : CompanySso.RoleError(co) });
             if (!b.TryGetProperty("users", out var us) || us.ValueKind != JsonValueKind.Array || us.GetArrayLength() is 0 or > 500) return Results.BadRequest(new { error = "Choose 1 to 500 people." });
             if (await StaffLimit.RefuseImportAsync(ent, db, role, us.EnumerateArray().Select(x => Str(x, "email")), ct) is { } over) return over;
             int created = 0, linked = 0, skipped = 0; var madeUsers = new List<UserAccount>();
@@ -233,15 +249,21 @@ public static class SsoEndpoints
                 var email = Str(u, "email").Trim().ToLowerInvariant(); var oid = Str(u, "id"); var name = Str(u, "name").Trim();
                 if (!email.Contains('@') || email.Length > 320) { skipped++; continue; }
                 var ex = await db.Users.FirstOrDefaultAsync(x => x.Email == email, ct);
-                if (ex != null) { if (ex.ExternalId != oid && oid != "") { ex.ExternalId = oid; linked++; } else skipped++; continue; }
+                if (ex != null)
+                {
+                    if (!await CompanySso.MayLinkAsync(sp, co, ex, ct)) { skipped++; continue; }
+                    if (ex.ExternalId != oid && oid != "") { ex.ExternalId = oid; linked++; madeUsers.Add(ex); } else skipped++;
+                    continue;
+                }
                 var acc = new UserAccount { Email = email, Name = name == "" ? email : (name.Length > 200 ? name[..200] : name), Role = role, ExternalId = oid == "" ? null : oid };
                 acc.PasswordHash = hasher.HashPassword(acc, B64(RandomNumberGenerator.GetBytes(32)));
                 db.Users.Add(acc); created++; madeUsers.Add(acc);
             }
             await db.SaveChangesAsync(ct);
-            await SingleCompanyLink.TryAsync(sp, madeUsers, ct);
-            await audit.WriteAsync("user.imported", "entra", $"created {created}, linked {linked}, skipped {skipped}, role {role}", ct: ct);
+            await CompanySso.TieAsync(sp, co, madeUsers, ct);
+            await audit.WriteAsync("user.imported", co == null ? "entra" : "entra, company:" + co, $"created {created}, linked {linked}, skipped {skipped}, role {role}", ct: ct);
             return Results.Ok(new { created, linked, skipped });
         });
+        }
     }
 }

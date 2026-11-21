@@ -69,3 +69,21 @@ test('people picked from the domain controller get accounts that sign in with Wi
   const body = calls.find(([m, u]) => m === 'POST' && u === '/api/companies/4/users/from-directory')![2];
   expect(body).toContain('"account":"ana"'); expect(body).toContain('"role":"customer"');
 });
+
+test("a company's own Microsoft sign-in is set up on its Sign-in tab, with company roles", async () => {
+  const calls: [string, string, string][] = [];
+  api({ '/api/platform/mode': { singleCompany: false }, '/api/assets/companies': [{ id: 4, name: 'Acme' }],
+    '/api/companies/4/sso/microsoft': { enabled: false, tenantId: '', clientId: '', hasSecret: false, domains: '', autoCreate: true, defaultRole: 'customer', redirectUri: 'https://x.test/account/sso/microsoft/callback' },
+    '/api/companies/4/sso/google': { enabled: false, domains: '' } }, calls);
+  location.hash = '#/setup/companies/4/signin';
+  const { default: CompanyPage } = await import('./CompanyPage');
+  render(<CompanyPage />);
+  fireEvent.click((await screen.findAllByText('Set up…'))[0]);
+  await waitFor(() => expect(screen.getByText('Acme: sign in with Microsoft')).toBeTruthy());
+  const roles = [...(screen.getByLabelText('Role of new people') as HTMLSelectElement).options].map((o) => o.value);
+  expect(roles).toEqual(['customer', 'cadmin']);
+  fireEvent.change(screen.getByLabelText('Email domains of this company (required)'), { target: { value: 'acme.com' } });
+  fireEvent.click(screen.getByText('Save'));
+  await waitFor(() => expect(calls.some(([m, u, b]) => m === 'PUT' && u === '/api/companies/4/sso/microsoft' && b.includes('"domains":"acme.com"'))).toBe(true));
+  location.hash = '';
+});

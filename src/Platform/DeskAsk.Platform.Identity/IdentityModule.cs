@@ -136,6 +136,7 @@ public sealed class IdentityModule : IPlatformModule
         FirstAdmin.Map(r);
         SsoEndpoints.Map(r);
         GoogleSso.Map(r);
+        CompanySso.Map(r);
         AdEndpoints.Map(r);
         UsersEndpoints.Map(r);
         BrandingApi.Map(r);
@@ -289,6 +290,7 @@ public sealed class IdentityModule : IPlatformModule
     {
         var sso = await SsoEndpoints.EnabledAsync(http);
         var google = await GoogleSso.EnabledAsync(http);
+        var companies = await CompanySso.AnyAsync(http);   // some customer company signs in with its own Microsoft or Google
         var t = af.GetAndStoreTokens(http);
         var brand = await BrandingApi.LoadAsync(http.RequestServices.GetRequiredService<ISettings>(), http.RequestAborted);
         var body = "<form method=\"post\" action=\"/account/login\">" + BrandingApi.LoginParts(brand).Mark + "<h2>Sign in</h2>"
@@ -298,9 +300,10 @@ public sealed class IdentityModule : IPlatformModule
             + "<input name=\"email\" type=\"email\" placeholder=\"Email\" autocomplete=\"username\" required>"
             + "<input name=\"password\" type=\"password\" placeholder=\"Password\" autocomplete=\"current-password\" required>"
             + "<button type=\"submit\">Sign in</button>"
-            + (sso || google ? "<p class=\"m\" style=\"margin:14px 0 0;justify-content:center\">or</p>" : "")
+            + (sso || google || companies ? "<p class=\"m\" style=\"margin:14px 0 0;justify-content:center\">or</p>" : "")
             + (sso ? "<a class=\"sso\" href=\"/account/sso/microsoft?returnUrl=" + Uri.EscapeDataString(LocalOrRoot(returnUrl)) + "\">Sign in with Microsoft</a>" : "")
             + (google ? "<a class=\"sso\" style=\"margin-top:8px\" href=\"/account/sso/google?returnUrl=" + Uri.EscapeDataString(LocalOrRoot(returnUrl)) + "\">Sign in with Google</a>" : "")
+            + (companies ? "<a class=\"sso\" style=\"margin-top:8px\" href=\"/account/sso/company?returnUrl=" + Uri.EscapeDataString(LocalOrRoot(returnUrl)) + "\">Sign in with your company account</a>" : "")
             + BrandingApi.Footer(brand) + "</form>";
         return Results.Content(Html(body, brand), "text/html; charset=utf-8", Encoding.UTF8, status);
     }

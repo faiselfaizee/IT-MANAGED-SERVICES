@@ -5,8 +5,9 @@ import { Act, Badge, Card, Empty, Err, Field, Loading, Modal, useSubmit } from '
 import { CompanyForm } from './Companies';
 import DirectorySetup from './DirectorySetup';
 import { Give, Holder } from './Peripherals';
+import { GoogleSettings, ImportEntra, SsoSettings } from '../Users';
 
-const TABS: [string, string][] = [['users', 'Users'], ['directory', 'Domain controller'], ['details', 'Details']];
+const TABS: [string, string][] = [['users', 'Users'], ['signin', 'Sign-in'], ['directory', 'Domain controller'], ['details', 'Details']];
 const ROLE: Record<string, string> = { cadmin: 'Customer administrator', customer: 'Employee' };
 
 /**
@@ -29,6 +30,7 @@ export default function CompanyPage({ id }: { id?: number }) {
     {co && <>
       <div className="tabs" role="tablist">{TABS.map(([k, l]) => <a key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} href={`${base}/${k}`}>{l}</a>)}</div>
       {tab === 'users' && <CompanyUsers company={{ id: co.id, name: co.name }} />}
+      {tab === 'signin' && <SignInTab company={{ id: co.id, name: co.name }} />}
       {tab === 'directory' && <DirectoryTab company={{ id: co.id, name: co.name }} />}
       {tab === 'details' && <Card title="Details">
         <dl className="facts"><dt>Name</dt><dd>{co.name}</dd><dt>Code</dt><dd>{co.code || '–'}</dd><dt>Contact</dt><dd>{co.contactName || '–'} <span className="muted">{co.contactEmail} {co.phone}</span></dd>
@@ -37,6 +39,29 @@ export default function CompanyPage({ id }: { id?: number }) {
       </Card>}
       {edit && <CompanyForm init={co} onClose={(ch) => { setEdit(false); if (ch) reload(); }} />}
     </>}
+  </>;
+}
+
+/** How the company's people sign in: their own Microsoft 365 or Google Workspace (found by email domain on the sign-in page), or Windows passwords. */
+function SignInTab({ company }: { company: { id: number; name: string } }) {
+  const ms = useLoad<Rec>(`/api/companies/${company.id}/sso/microsoft`); const g = useLoad<Rec>(`/api/companies/${company.id}/sso/google`);
+  const [open, setOpen] = useState<'' | 'ms' | 'g' | 'msimport' | 'gimport'>('');
+  const state = (d?: Rec | null) => d?.enabled ? <Badge tone="ok">On</Badge> : <Badge>Off</Badge>;
+  const done = () => { setOpen(''); ms.reload(); g.reload(); };
+  return <>
+    <Card title="Microsoft 365 (Entra ID)">
+      <p>{state(ms.data)} <span className="muted">{ms.data?.domains ? `for ${ms.data.domains}` : 'no domains yet'}</span></p>
+      <div className="tools"><button onClick={() => setOpen('ms')}>Set up…</button><button disabled={!ms.data?.tenantId} onClick={() => setOpen('msimport')}>Import people…</button></div>
+    </Card>
+    <Card title="Google Workspace">
+      <p>{state(g.data)} <span className="muted">{g.data?.domains ? `for ${g.data.domains}` : 'no domains yet'}</span></p>
+      <div className="tools"><button onClick={() => setOpen('g')}>Set up…</button><button disabled={!g.data?.serviceAccount} onClick={() => setOpen('gimport')}>Import people…</button></div>
+    </Card>
+    <Card title="Windows (Active Directory)"><p className="muted">People picked from the domain controller on the Users tab sign in with their email and Windows password, checked through the site controller in {company.name}'s network.</p></Card>
+    {open === 'ms' && <SsoSettings base={`/api/companies/${company.id}/sso/microsoft`} company={company.name} onClose={done} />}
+    {open === 'g' && <GoogleSettings base={`/api/companies/${company.id}/sso/google`} company={company.name} onClose={done} />}
+    {open === 'msimport' && <ImportEntra base={`/api/companies/${company.id}/sso/microsoft/entra`} title={`Import ${company.name}'s people from Microsoft`} company onClose={done} />}
+    {open === 'gimport' && <ImportEntra base={`/api/companies/${company.id}/sso/google`} title={`Import ${company.name}'s people from Google`} company onClose={done} />}
   </>;
 }
 

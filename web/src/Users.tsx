@@ -12,6 +12,8 @@ const roleName = (r: string) => ROLES.find(([k]) => k === r)?.[1] ?? r;
 const STAFF = ROLES.filter(([k]) => k === 'admin' || k === 'engineer' || k === 'viewer');
 const isStaff = (r: string) => STAFF.some(([k]) => k === r);
 /** The choices for "role of new people", keeping an older saved customer role visible until it is changed. */
+/** The roles people of a customer company can have. */
+export const COMPANY_ROLES: [string, string][] = [['customer', 'Employee'], ['cadmin', 'Customer administrator']];
 const newPeopleRoles = (cur: string) => [...STAFF.filter(([k]) => k !== 'admin'), ...ROLES.filter(([k]) => k === cur && !isStaff(k))];
 
 export default function Users({ meId, embedded = false }: { meId?: string; embedded?: boolean }) {
@@ -88,68 +90,73 @@ function PasswordForm({ user, onClose }: { user: Rec; onClose: () => void }) {
 }
 
 /** Setting up sign-in with Microsoft Entra ID: the app registration's ids and secret, and who may be created at their first sign-in. */
-function SsoSettings({ onClose }: { onClose: () => void }) {
-  const { data } = useLoad<Rec>('/api/platform/sso');
+/** base: the installation's own setup, or one company's (/api/companies/{id}/sso/microsoft), whose people are employees or customer administrators. */
+export function SsoSettings({ onClose, base = '/api/platform/sso', company }: { onClose: () => void; base?: string; company?: string }) {
+  const { data } = useLoad<Rec>(base);
   if (!data) return <Modal title="Sign in with Microsoft" onClose={onClose}><Loading loading error="" /></Modal>;
-  return <SsoForm init={data} onClose={onClose} />;
+  return <SsoForm init={data} onClose={onClose} base={base} company={company} />;
 }
-function SsoForm({ init, onClose }: { init: Rec; onClose: () => void }) {
+function SsoForm({ init, onClose, base, company }: { init: Rec; onClose: () => void; base: string; company?: string }) {
   const [v, setV] = useState<Rec>({ enabled: init.enabled, tenantId: init.tenantId, clientId: init.clientId, secret: '', domains: init.domains, autoCreate: init.autoCreate, defaultRole: init.defaultRole });
   const [note, setNote] = useState(''); const f = useSubmit(() => onClose()); const set = (k: string, x: unknown) => setV({ ...v, [k]: x });
-  const save = () => api('/api/platform/sso', { method: 'PUT', body: { ...v, secret: v.secret || undefined } });
-  return <Modal title="Sign in with Microsoft" onClose={onClose}><div className="form">
+  const save = () => api(base, { method: 'PUT', body: { ...v, secret: v.secret || undefined } });
+  const roles = company ? COMPANY_ROLES : newPeopleRoles(v.defaultRole);
+  return <Modal title={company ? `${company}: sign in with Microsoft` : 'Sign in with Microsoft'} onClose={onClose}><div className="form">
+    {company && <p className="muted small">For {company}'s own Microsoft 365. Their people choose "Sign in with your company account" and type their email; the domains below send them here.</p>}
     <p className="muted small">In the Microsoft Entra admin centre create an app registration (App registrations › New). Add the web redirect address below, create a client secret, and under API permissions add the Microsoft Graph <em>application</em> permission User.Read.All with admin consent (only needed to import users).</p>
     <Field label="Redirect address to register"><input value={init.redirectUri} readOnly onFocus={(e) => e.target.select()} /></Field>
     <Field label="Directory (tenant) id"><input value={v.tenantId} onChange={(e) => set('tenantId', e.target.value)} spellCheck={false} /></Field>
     <Field label="Application (client) id"><input value={v.clientId} onChange={(e) => set('clientId', e.target.value)} spellCheck={false} /></Field>
     <Field label={init.hasSecret ? 'Client secret (saved; type a new one to replace it)' : 'Client secret'}><input type="password" value={v.secret} onChange={(e) => set('secret', e.target.value)} autoComplete="new-password" /></Field>
     <label><input type="checkbox" checked={v.autoCreate} onChange={(e) => set('autoCreate', e.target.checked)} /> Create an account at first sign-in for people who have none</label>
-    {v.autoCreate && <div className="row"><Field label="Only these email domains (blank: any in the directory)"><input value={v.domains} onChange={(e) => set('domains', e.target.value)} placeholder="acme.com, acme.in" /></Field>
-      <Field label="Role of new people"><select value={v.defaultRole} onChange={(e) => set('defaultRole', e.target.value)}>{newPeopleRoles(v.defaultRole).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field></div>}
-    <label><input type="checkbox" checked={v.enabled} onChange={(e) => set('enabled', e.target.checked)} /> Show "Sign in with Microsoft" on the sign-in page</label>
+    {(v.autoCreate || company) && <Field label={company ? 'Email domains of this company (required)' : 'Only these email domains (blank: any in the directory)'}><input value={v.domains} onChange={(e) => set('domains', e.target.value)} placeholder="acme.com, acme.in" /></Field>}
+    {v.autoCreate && <Field label="Role of new people"><select value={roles.some(([k]) => k === v.defaultRole) ? v.defaultRole : roles[0][0]} onChange={(e) => set('defaultRole', e.target.value)}>{roles.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>}
+    <label><input type="checkbox" checked={v.enabled} onChange={(e) => set('enabled', e.target.checked)} /> {company ? `Let ${company}'s people sign in with Microsoft` : 'Show "Sign in with Microsoft" on the sign-in page'}</label>
     <p className="muted small">People are matched by their Microsoft email. Microsoft's own sign-in, including its multi-factor step, replaces the two-step code of DeskAsk for them. Password sign-in keeps working.</p>
     {note && <p className="note" role="status">{note}</p>}
     <Err text={f.err} /><div className="actions"><button onClick={onClose}>Cancel</button>
-      <button disabled={f.busy} onClick={() => f.submit(async () => { await save(); const r = await api<Rec>('/api/platform/sso/test', { method: 'POST', body: {} }).then(() => 'The app can read the directory.', (e) => (e as Error).message); setNote(r); throw new Error(''); })}>Save and test</button>
+      <button disabled={f.busy} onClick={() => f.submit(async () => { await save(); const r = await api<Rec>(`${base}/test`, { method: 'POST', body: {} }).then(() => 'The app can read the directory.', (e) => (e as Error).message); setNote(r); throw new Error(''); })}>Save and test</button>
       <button className="primary" disabled={f.busy} onClick={() => f.submit(save)}>Save</button></div>
   </div></Modal>;
 }
 
-function GoogleSettings({ onClose }: { onClose: () => void }) {
-  const { data } = useLoad<Rec>('/api/platform/sso/google');
+export function GoogleSettings({ onClose, base = '/api/platform/sso/google', company }: { onClose: () => void; base?: string; company?: string }) {
+  const { data } = useLoad<Rec>(base);
   if (!data) return <Modal title="Sign in with Google" onClose={onClose}><Loading loading error="" /></Modal>;
-  return <GoogleForm init={data} onClose={onClose} />;
+  return <GoogleForm init={data} onClose={onClose} base={base} company={company} />;
 }
-function GoogleForm({ init, onClose }: { init: Rec; onClose: () => void }) {
+function GoogleForm({ init, onClose, base, company }: { init: Rec; onClose: () => void; base: string; company?: string }) {
   const [v, setV] = useState<Rec>({ enabled: init.enabled, clientId: init.clientId, secret: '', domains: init.domains, autoCreate: init.autoCreate, defaultRole: init.defaultRole, serviceAccount: '', adminEmail: init.adminEmail });
   const [note, setNote] = useState(''); const f = useSubmit(() => onClose()); const set = (k: string, x: unknown) => setV({ ...v, [k]: x });
-  const save = () => api('/api/platform/sso/google', { method: 'PUT', body: { ...v, secret: v.secret || undefined, serviceAccount: v.serviceAccount || undefined } });
+  const save = () => api(base, { method: 'PUT', body: { ...v, secret: v.secret || undefined, serviceAccount: v.serviceAccount || undefined } });
+  const roles = company ? COMPANY_ROLES : newPeopleRoles(v.defaultRole);
   const readFile = (file?: File) => { if (file) void file.text().then((t) => set('serviceAccount', t)); };
-  return <Modal title="Sign in with Google" onClose={onClose}><div className="form">
+  return <Modal title={company ? `${company}: sign in with Google` : 'Sign in with Google'} onClose={onClose}><div className="form">
+    {company && <p className="muted small">For {company}'s own Google Workspace. Their people choose "Sign in with your company account" and type their email; the domains below send them here.</p>}
     <p className="muted small">In Google Cloud console (APIs &amp; Services › Credentials) create an OAuth client of type Web application and add the redirect address below. The OAuth consent screen can be Internal, so only your Workspace can use it.</p>
     <Field label="Redirect address to register"><input value={init.redirectUri} readOnly onFocus={(e) => e.target.select()} /></Field>
     <Field label="Client id"><input value={v.clientId} onChange={(e) => set('clientId', e.target.value)} spellCheck={false} placeholder="1234-abc.apps.googleusercontent.com" /></Field>
     <Field label={init.hasSecret ? 'Client secret (saved; type a new one to replace it)' : 'Client secret'}><input type="password" value={v.secret} onChange={(e) => set('secret', e.target.value)} autoComplete="new-password" /></Field>
-    <Field label="Workspace domains allowed to sign in (blank: any Google account that already has a DeskAsk account)"><input value={v.domains} onChange={(e) => set('domains', e.target.value)} placeholder="acme.com, acme.in" /></Field>
+    <Field label={company ? 'Workspace domains of this company (required)' : 'Workspace domains allowed to sign in (blank: any Google account that already has a DeskAsk account)'}><input value={v.domains} onChange={(e) => set('domains', e.target.value)} placeholder="acme.com, acme.in" /></Field>
     <label><input type="checkbox" checked={v.autoCreate} onChange={(e) => set('autoCreate', e.target.checked)} /> Create an account at first sign-in for people of these domains who have none</label>
-    {v.autoCreate && <Field label="Role of new people"><select value={v.defaultRole} onChange={(e) => set('defaultRole', e.target.value)}>{newPeopleRoles(v.defaultRole).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>}
+    {v.autoCreate && <Field label="Role of new people"><select value={roles.some(([k]) => k === v.defaultRole) ? v.defaultRole : roles[0][0]} onChange={(e) => set('defaultRole', e.target.value)}>{roles.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>}
     <h3 style={{ margin: '6px 0 0', fontSize: 14 }}>Importing users (optional)</h3>
     <p className="muted small">Create a service account in the same project, turn on the Admin SDK API, and download a JSON key. In the Google Admin console (Security › API controls › Domain-wide delegation) add the service account's client id with the scope <code>https://www.googleapis.com/auth/admin.directory.user.readonly</code>.</p>
     <Field label={init.serviceAccount ? `Service account key (saved: ${init.serviceAccount}; choose a new file to replace it)` : 'Service account key (JSON file)'}><input type="file" accept=".json,application/json" onChange={(e) => readFile(e.target.files?.[0])} /></Field>
     <Field label="Workspace administrator it acts as"><input value={v.adminEmail} onChange={(e) => set('adminEmail', e.target.value)} placeholder="admin@acme.com" /></Field>
-    <label><input type="checkbox" checked={v.enabled} onChange={(e) => set('enabled', e.target.checked)} /> Show "Sign in with Google" on the sign-in page</label>
+    <label><input type="checkbox" checked={v.enabled} onChange={(e) => set('enabled', e.target.checked)} /> {company ? `Let ${company}'s people sign in with Google` : 'Show "Sign in with Google" on the sign-in page'}</label>
     <p className="muted small">People are matched by their Google account or email. Google's sign-in, including its 2-step verification, replaces DeskAsk's two-step code for them. A personal Gmail address is refused when domains are set.</p>
     {note && <p className="note" role="status">{note}</p>}
     <Err text={f.err} /><div className="actions"><button onClick={onClose}>Cancel</button>
-      <button disabled={f.busy} onClick={() => f.submit(async () => { await save(); const r = await api<Rec>('/api/platform/sso/google/test', { method: 'POST', body: {} }).then(() => 'The service account can read the Workspace directory.', (e) => (e as Error).message); setNote(r); throw new Error(''); })}>Save and test import</button>
+      <button disabled={f.busy} onClick={() => f.submit(async () => { await save(); const r = await api<Rec>(`${base}/test`, { method: 'POST', body: {} }).then(() => 'The service account can read the Workspace directory.', (e) => (e as Error).message); setNote(r); throw new Error(''); })}>Save and test import</button>
       <button className="primary" disabled={f.busy} onClick={() => f.submit(save)}>Save</button></div>
   </div></Modal>;
 }
 
 /** Choose people from the Microsoft directory and give them DeskAsk accounts. */
-function ImportEntra({ onClose, base = '/api/platform/sso/entra', title = 'Import from Microsoft' }: { onClose: (changed: boolean) => void; base?: string; title?: string }) {
+export function ImportEntra({ onClose, base = '/api/platform/sso/entra', title = 'Import from Microsoft', company = false }: { onClose: (changed: boolean) => void; base?: string; title?: string; company?: boolean }) {
   const { data, error, loading } = useLoad<Rec>(`${base}/users`);
-  const [sel, setSel] = useState<Set<string>>(new Set()); const [role, setRole] = useState('engineer'); const [q, setQ] = useState(''); const [done, setDone] = useState('');
+  const [sel, setSel] = useState<Set<string>>(new Set()); const [role, setRole] = useState(company ? 'customer' : 'engineer'); const [q, setQ] = useState(''); const [done, setDone] = useState('');
   const f = useSubmit(() => undefined);
   const items = ((data?.items ?? []) as Rec[]).filter((u) => !q || `${u.name} ${u.email}`.toLowerCase().includes(q.toLowerCase()));
   const pick = (u: Rec) => { const n = new Set(sel); if (n.has(u.id)) n.delete(u.id); else n.add(u.id); setSel(n); };
@@ -162,8 +169,8 @@ function ImportEntra({ onClose, base = '/api/platform/sso/entra', title = 'Impor
           {items.length === 0 && <p className="muted">Nobody found.</p>}
           {items.map((u) => <label key={u.id} style={{ display: 'block' }}><input type="checkbox" disabled={u.exists} checked={sel.has(u.id)} onChange={() => pick(u)} /> {u.name} <span className="muted">{u.email}</span> {u.exists && <Badge tone="ok">has an account</Badge>} {u.guest && <Badge>guest</Badge>} {!u.enabled && <Badge tone="bad">disabled in Microsoft</Badge>}</label>)}
         </div>
-        <Field label={`Role for the ${sel.size} chosen`}><select value={role} onChange={(e) => setRole(e.target.value)}>{STAFF.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
-        <p className="muted small">Imported people sign in with their directory account. For customer roles, link the person to a company afterwards (Edit).</p>
+        <Field label={`Role for the ${sel.size} chosen`}><select value={role} onChange={(e) => setRole(e.target.value)}>{(company ? COMPANY_ROLES : STAFF).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
+        <p className="muted small">Imported people sign in with their directory account{company ? ' and belong to this company.' : '.'}</p>
         <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button>
           <button className="primary" disabled={f.busy || sel.size === 0} onClick={() => f.submit(async () => { const r = await api<Rec>(`${base}/import`, { body: { role, users: ((data.items ?? []) as Rec[]).filter((u) => sel.has(u.id)) } }); setDone(`${r.created} added, ${r.linked} linked, ${r.skipped} skipped.`); })}>Import {sel.size}</button></div></>}
     </>}
