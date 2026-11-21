@@ -5,3 +5,6 @@ web/dist/
 out/
 *.user
 .vs/
+# compiler output if "tsc -b" is run by hand (the build uses tsc --noEmit)
+web/src/**/*.js
+web/*.tsbuildinfo
