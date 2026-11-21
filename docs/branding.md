@@ -51,3 +51,14 @@ Administration › Branding has a **Reports and exports (PDF)** card. It sets th
 - **Line at the foot of every page**: for example your company name and website (up to 120 characters).
 
 Colours are written `#rrggbb`. The small preview on the card shows the table as it will print. **Save design** keeps it; **Use the standard design** puts the logo colours back (press Save to keep that). Each change is written to the audit log (`branding.pdf_changed`, `branding.pdf_reset`).
+
+## Your own web address
+
+Administration › Branding › *Your own web address* lets a customer open DeskAsk at their own name (desk.example.com) next to the built-in one (acme.deskask.in), which keeps working.
+
+1. The administrator adds the address (up to 5; addresses under `Platform:ReservedDomains`, default `deskask.in`, are refused).
+2. DeskAsk shows two DNS records: a **TXT** record `_deskask-verify.<address>` with a one-time value (proves the address is theirs) and a **CNAME** from the address to the built-in address (or `Platform:CustomDomainTarget` when set).
+3. **Check** reads DNS. Once the TXT value is found the address is verified: it finds the customer, and the web sign-in is registered for it (no restart).
+4. **Use in links and emails** makes it the main address: mail links and the address agents are given use it.
+
+Certificates: the proxy asks `GET /api/platform/domain-check?domain=<name>` before it requests a certificate. The answer is 200 only for a verified address, so nobody can make the proxy request certificates for other names (Caddy `on_demand_tls { ask ... }`; HAProxy/ACME setups use the same check). Database: `platform.tenant_domains` (catalog migration 2, created on first use).

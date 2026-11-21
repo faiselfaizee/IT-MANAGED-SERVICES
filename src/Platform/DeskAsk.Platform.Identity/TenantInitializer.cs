@@ -45,14 +45,21 @@ public sealed class IdentitySchema : ITenantSchema
         await SeedAdminAsync(db, cfg, sp.GetRequiredService<IPasswordHasher<UserAccount>>(), ct);
         var apps = sp.GetRequiredService<IOpenIddictApplicationManager>();
         await SeedClientsAsync(apps, cfg, ct);
-        await EnsureWebClientAsync(apps, tenant.Host, ct);
+        var domains = sp.GetService<ITenantDomains>();
+        if (domains == null) await EnsureWebClientAsync(apps, tenant.Host, ct);
+        else
+        {
+            // the built-in address always works, and so does every verified address of the customer's own
+            await EnsureWebClientAsync(apps, await domains.BuiltInHostAsync(tenant.Id, ct) is { Length: > 0 } b ? b : tenant.Host, ct);
+            foreach (var d in await domains.ListAsync(tenant.Id, ct)) if (d.Verified) await EnsureWebClientAsync(apps, d.Host, ct);
+        }
     }
 
     /// <summary>
     /// The web app signs in as client "web" and comes back to https://{this customer's address}/auth/callback.
     /// Each customer has its own address, so that address is registered here, whatever Identity:Clients says.
     /// </summary>
-    static async Task EnsureWebClientAsync(IOpenIddictApplicationManager apps, string host, CancellationToken ct)
+    internal static async Task EnsureWebClientAsync(IOpenIddictApplicationManager apps, string host, CancellationToken ct)
     {
         var redirects = new List<Uri>(); var after = new List<Uri>();
         foreach (var scheme in new[] { "https", "http" })

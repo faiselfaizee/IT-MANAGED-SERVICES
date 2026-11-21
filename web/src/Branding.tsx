@@ -4,6 +4,7 @@ import { DEFAULT_BRAND, contrast, iconUrl, inkOn, isHex, logoUrl, setBrand, useB
 import { api, message } from './http';
 import { Card, Err, Field } from './ui';
 import PdfDesign from './PdfDesign';
+import Domains from './Domains';
 
 const TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml'];
 const MAX = 256 * 1024;
@@ -125,6 +126,7 @@ export default function Branding() {
         {f.footerText && <div className="p-foot">{f.footerText}</div>}
       </div>
     </div>
+    <Domains />
     <PdfDesign url="/api/branding/pdf" title="Reports and exports (PDF)" intro="The design of the PDFs this installation makes: service and uptime reports and asset exports. Save, then download any report to see it. 'Use the standard design' is the logo's teal with black letters and borders; press Save design to keep it." />
   </>;
 }

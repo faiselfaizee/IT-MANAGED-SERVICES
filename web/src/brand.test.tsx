@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import Branding from './Branding';
 import { DEFAULT_BRAND, applyBrand, contrast, inkOn, setBrand } from './brand';
+vi.mock('./Domains', () => ({ default: () => null }));
 
 beforeEach(() => setBrand(DEFAULT_BRAND));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });

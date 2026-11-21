@@ -18,6 +18,32 @@ public interface ITenantCatalog
     Task<IReadOnlyList<TenantInfo>> ListActiveAsync(CancellationToken ct = default);
 }
 
+/// <summary>A customer's own web address (desk.example.com) next to the built-in one. Token is what the customer puts in DNS to prove the address is theirs.</summary>
+public sealed record DomainRef(string Host, string Token, bool Verified, bool Primary, DateTime? VerifiedAt);
+
+/// <summary>The customers' own domains, kept in the platform catalog so a request can be matched to a customer by any verified address.</summary>
+public interface ITenantDomains
+{
+    Task<IReadOnlyList<DomainRef>> ListAsync(string tenantId, CancellationToken ct = default);
+    /// <summary>Null when added; otherwise the sentence that says why not (already used, too many).</summary>
+    Task<string?> AddAsync(string tenantId, string host, string token, int max, CancellationToken ct = default);
+    Task<bool> MarkVerifiedAsync(string tenantId, string host, CancellationToken ct = default);
+    Task<bool> RemoveAsync(string tenantId, string host, CancellationToken ct = default);
+    /// <summary>Makes a verified domain the one used in links (or none, to go back to the built-in address).</summary>
+    Task<bool> SetPrimaryAsync(string tenantId, string host, bool primary, CancellationToken ct = default);
+    /// <summary>The customer's built-in address (the one a customer's CNAME points to).</summary>
+    Task<string> BuiltInHostAsync(string tenantId, CancellationToken ct = default);
+    /// <summary>Every verified customer domain, for the proxy that issues certificates.</summary>
+    Task<IReadOnlyList<string>> VerifiedHostsAsync(CancellationToken ct = default);
+}
+
+/// <summary>Reads DNS for the domain check. A test replaces it.</summary>
+public interface IDnsLookup
+{
+    Task<IReadOnlyList<string>> TxtAsync(string name, CancellationToken ct = default);
+    Task<IReadOnlyList<string>> CnameAsync(string name, CancellationToken ct = default);
+}
+
 /// <summary>The process roles one build can take (ADR 0004). Set with Platform:Roles, for example "web,worker".</summary>
 [Flags]
 public enum PlatformRole { None = 0, Web = 1, Worker = 2, Connect = 4, All = Web | Worker | Connect }
