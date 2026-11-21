@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, go, useLoad, type Rec } from '../http';
+import PdfDesign from '../PdfDesign';
 import { Act, Badge, Card, Copy, Dl, Empty, Err, Field, Loading, Modal, copyText, fmtDate, fmtDay } from '../ui';
 
 /** Module names and the one size limit each is sold by. */
@@ -32,7 +33,7 @@ export default function VendorApp({ path }: { path: string[] }) {
       : tab === 'prices' ? <Prices />
       : tab === 'orders' ? <Orders />
       : tab === 'invoices' ? <InvoiceList />
-      : tab === 'business' ? <BusinessDetails />
+      : tab === 'business' ? <><BusinessDetails /><PdfDesign url="/api/commerce/invoice-style" previewUrl="/api/commerce/invoice-style/preview.pdf" withNote title="Invoice design" intro="The look of the invoices the store sends: header colour and letters, borders, text, a foot line and the closing note (payment terms, bank details). The sample invoice uses the saved design and your business details." /></>
       : tab === 'pages' ? <WebsitePages slug={path[1]} />
       : tab === 'link' ? <WebsiteLink />
       : tab === 'payments' ? <Payments />

@@ -267,9 +267,9 @@ public static class Invoices
     }
 
     /// <summary>The invoice PDF.</summary>
-    public static byte[] Pdf(Business biz, string number, DateTime at, Buyer b, Store.Quote q, string paymentRef)
+    public static byte[] Pdf(Business biz, string number, DateTime at, Buyer b, Store.Quote q, string paymentRef, PdfStyle? style = null)
     {
-        var pdf = new PdfDoc();
+        var pdf = new PdfDoc(style);
         pdf.Heading(q.Currency == "INR" ? "Tax Invoice" : "Invoice (export of services)", 16, rule: true);
         pdf.Paragraph(biz.LegalName, 11, bold: true);
         pdf.Paragraph(biz.Address + (biz.City != "" ? ", " + biz.City : "") + (biz.State != "" ? ", " + biz.State : "") + (biz.Pincode != "" ? " " + biz.Pincode : "") + ", " + biz.Country, 9);
@@ -299,7 +299,7 @@ public static class Invoices
         pdf.Paragraph("Amount in words: " + Words(q.Total, q.Currency), 9);
         if (q.TaxNote != "") pdf.Paragraph(q.TaxNote, 9);
         pdf.Gap(10);
-        pdf.Paragraph("Paid in full. This is a computer-generated invoice and needs no signature.", 8);
+        pdf.Paragraph(style != null && style.Clean().Note != "" ? style.Clean().Note : PdfStyle.DefaultNote, 8);
         return pdf.ToBytes();
     }
 }

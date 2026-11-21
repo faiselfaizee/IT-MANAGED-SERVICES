@@ -88,3 +88,7 @@ It checks the customer exists, sets `Commerce:Enabled` and `Commerce:VendorTenan
 `https://<vendor platform>/#/store` is now a website: home, Products (one page per module with its sizes and prices), Pricing (the checkout), Free trial, FAQ, About, Contact and the policy pages (Terms, Privacy, Cancellation and refunds, Delivery). The module texts are in `web/src/store/content.ts`.
 
 The About and policy pages start as the draft from the legal review and are edited in **Vendor console › Website pages** (Markdown). "Go back to the draft" restores the built-in text. A link set under Business details (Terms URL and so on) replaces the built-in page in the footer.
+
+## Invoice design
+
+Vendor console › Business details has an **Invoice design** card with the same colours as the report design (table header colour and letters, borders, letters, headings) plus a foot line and a **closing note** (payment terms, bank details or thanks, up to 600 characters; empty uses the standard "Paid in full" wording). **Download a sample invoice** makes a PDF from a made-up customer using the saved design, so you can check it before the next real invoice. Changes are audited as `commerce.invoice_style_changed`. Invoices already sent are not changed; new ones use the saved design.

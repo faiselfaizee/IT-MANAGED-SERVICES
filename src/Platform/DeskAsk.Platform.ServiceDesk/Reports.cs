@@ -13,7 +13,7 @@ internal static class ReportsApi
 {
     public static void Map(IEndpointRouteBuilder r, string key)
     {
-        r.MapGet("/api/servicedesk/reports/monthly", async (string? month, int? companyId, ClaimsPrincipal u, ITenantContext t, ICompanyDirectory companies, CancellationToken ct) =>
+        r.MapGet("/api/servicedesk/reports/monthly", async (string? month, int? companyId, ClaimsPrincipal u, ITenantContext t, ICompanyDirectory companies, ISettings settings, CancellationToken ct) =>
         {
             await using var db = await ServiceDeskModule.Open(t, ct);
             var w = await ServiceDeskModule.WhoAsync(u, db, ct);
@@ -42,7 +42,7 @@ internal static class ReportsApi
             if (co is int ci) { var c0 = await companies.GetAsync(ci, ct); if (c0 == null) return ServiceDeskModule.Bad("bad_company", "That company does not exist."); companyName = c0.Name; }
 
             var d = await Build(db, start, end, co, w.Staff || w.Role == "viewer", ct);
-            var bytes = ReportPdf.Render(companyName, start, d);
+            var bytes = ReportPdf.Render(companyName, start, d, await PdfStyle.LoadAsync(settings, ct));
             return Results.File(bytes, "application/pdf", "service-report-" + m + ".pdf");
         }).RequireAuthorization().RequireModule(key);
     }

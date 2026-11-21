@@ -104,6 +104,27 @@ public static class VendorConsole
             return Results.Ok(new { saved = true });
         }));
 
+        // ------------------------------------------------------------------ the look of invoices (and the closing note)
+        Console(r.MapGet("/api/commerce/invoice-style", async (CommerceOptions o, CancellationToken ct) => Results.Ok(PdfStyle.Parse(await CommerceDb.GetSettingAsync(o, "pdf_style", ct)))));
+        Console(r.MapPut("/api/commerce/invoice-style", async (PdfStyle b, CommerceOptions o, IAuditLog audit, CancellationToken ct) =>
+        {
+            foreach (var c in new[] { b.HeaderColor, b.HeaderText, b.Border, b.Text, b.Accent })
+                if (!PdfStyle.IsHex(c)) return Bad("bad_colour", "Colours look like #207178.");
+            var next = b.Clean();
+            await CommerceDb.SetSettingAsync(o, "pdf_style", next.ToJson(), ct);
+            await audit.WriteAsync("commerce.invoice_style_changed", detail: $"header={next.HeaderColor}; text={next.Text}; border={next.Border}", ct: ct);
+            return Results.Ok(next);
+        }));
+        Console(r.MapGet("/api/commerce/invoice-style/preview.pdf", async (CommerceOptions o, CancellationToken ct) =>
+        {
+            var biz = await Business.LoadAsync(o, ct);
+            var buyer = new Invoices.Buyer("Sample Customer Pvt Ltd", "Priya Sharma", "priya@example.com", "", "1 Sample Street", "Chennai", "33", "Tamil Nadu", "600001", "India", "");
+            var lines = new List<Store.QuoteLine> { new("servicedesk", 1, "Service Desk, 10 agents, 1 year", 12000m), new("monitoring", 2, "Monitoring, 100 devices, 1 year", 9000m) };
+            var q = new Store.Quote("INR", "saas", "year", lines, 0m, 21000m, new List<Store.TaxLine> { new("CGST", 9m, 1890m), new("SGST", 9m, 1890m) }, 3780m, 24780m, "", new Dictionary<string, Dictionary<string, int>>());
+            var style = PdfStyle.Parse(await CommerceDb.GetSettingAsync(o, "pdf_style", ct));
+            return Results.File(Invoices.Pdf(biz, "SAMPLE-0001", DateTime.UtcNow, buyer, q, "pay_sample", style), "application/pdf", "sample-invoice.pdf");
+        }));
+
         // ------------------------------------------------------------------ products on sale (the website sees the same list)
         Console(r.MapGet("/api/commerce/products", async (CommerceOptions o, CancellationToken ct) => Results.Ok(await Products.ListViewAsync(o, ct))));
         Console(r.MapPut("/api/commerce/products/{key}", async (string key, JsonElement b, ClaimsPrincipal u, IServiceProvider sp, CancellationToken ct) =>

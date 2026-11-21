@@ -68,9 +68,9 @@ public static class ReportsApi
     static string Pct(double v) => v >= 99.995 ? "100%" : v.ToString(v >= 99 ? "0.00" : "0.0", Inv) + "%";
     static string Mins(double m) => m < 1 ? "none" : MonitoringModule.Dur(TimeSpan.FromMinutes(m));
 
-    public static byte[] Pdf(Report r, string site)
+    public static byte[] Pdf(Report r, string site, PdfStyle? style = null)
     {
-        var d = new PdfDoc();
+        var d = new PdfDoc(style);
         d.Heading($"Uptime report: {r.Title}", 17, rule: true);
         d.Paragraph($"{r.Month}. Prepared by {site} from DeskAsk Monitoring on {DateTime.UtcNow:d MMMM yyyy}.", 9.5);
         d.Gap(6);
@@ -139,10 +139,10 @@ public static class ReportsApi
             var (err, rep) = await Get(http, company, month, ct); return err ?? Results.Ok(rep);
         }).RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Read);
 
-        r.MapGet("/api/monitoring/reports/uptime.pdf", async (string? company, string? month, HttpContext http, ITenantContext t, CancellationToken ct) =>
+        r.MapGet("/api/monitoring/reports/uptime.pdf", async (string? company, string? month, HttpContext http, ITenantContext t, ISettings pdfSettings, CancellationToken ct) =>
         {
             var (err, rep) = await Get(http, company, month, ct); if (err != null) return err;
-            return Results.File(Pdf(rep!, t.Require().Name), "application/pdf", $"uptime-{(company ?? "all")}-{month ?? DateTime.UtcNow.AddMonths(-1).ToString("yyyy-MM", Inv)}.pdf");
+            return Results.File(Pdf(rep!, t.Require().Name, await PdfStyle.LoadAsync(pdfSettings, ct)), "application/pdf", $"uptime-{(company ?? "all")}-{month ?? DateTime.UtcNow.AddMonths(-1).ToString("yyyy-MM", Inv)}.pdf");
         }).RequireAuthorization().RequireModule(key).RequireAccess(key, Acts.Read);
 
         r.MapPost("/api/monitoring/reports/send", async (JsonElement b, IJobQueue jobs, IAuditLog audit, CancellationToken ct) =>
@@ -178,6 +178,7 @@ public sealed class ReportJob : IJobHandler
         if (forced != null && DateTime.TryParseExact(forced, "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var fm)) first = DateTime.SpecifyKind(fm, DateTimeKind.Utc);
         var month = first.ToString("yyyy-MM", CultureInfo.InvariantCulture);
         var site = job.Tenant.Name;
+        var pdfStyle = await PdfStyle.LoadAsync(sp.GetRequiredService<ISettings>(), ct);
         await using var db = new NpgsqlConnection(job.Tenant.ConnectionString); await db.OpenAsync(ct);
 
         async Task<bool> Claim(string scope, string to)
@@ -194,7 +195,7 @@ public sealed class ReportJob : IJobHandler
         }
         async Task Send(string scope, IEnumerable<string> to, ReportsApi.Report rep, string file)
         {
-            var pdf = new MailFile(file, "application/pdf", ReportsApi.Pdf(rep, site));
+            var pdf = new MailFile(file, "application/pdf", ReportsApi.Pdf(rep, site, pdfStyle));
             var values = new Dictionary<string, string>
             {
                 ["company"] = rep.Title, ["month"] = rep.Month, ["availability"] = rep.Availability >= 99.995 ? "100%" : rep.Availability.ToString("0.00", CultureInfo.InvariantCulture) + "%",

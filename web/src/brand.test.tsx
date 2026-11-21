@@ -17,6 +17,9 @@ test('colours become CSS variables with readable text, and the theme is forced',
   expect(root.style.getPropertyValue('--accent')).toBe(''); expect(root.hasAttribute('data-theme')).toBe(false);
 });
 
+// The PDF design card has its own tests (PdfDesign.test.tsx) and its own requests; keep these tests about the brand.
+vi.mock('./PdfDesign', () => ({ default: () => null }));
+
 test('ink and contrast', () => {
   expect(inkOn('#0d3b66')).toBe('#ffffff'); expect(inkOn('#ffffff')).toBe('#101820');
   expect(contrast('#000000', '#ffffff')).toBeGreaterThan(20);
