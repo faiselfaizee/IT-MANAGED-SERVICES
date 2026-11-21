@@ -21,6 +21,7 @@ export default function Domains() {
           <tr><td>TXT</td><td><code>{d.txtName}</code></td><td><code>{d.txtValue}</code></td></tr>
           <tr><td>CNAME</td><td><code>{d.host}</code></td><td><code>{d.cname}</code></td></tr>
         </tbody></table></>}
+      {d.verified && <p className="muted small">If people sign in with Microsoft or Google, add <code>{`https://${d.host}/account/sso/microsoft/callback`}</code> (and the google one) to that sign-in's allowed redirect addresses. Agents already installed keep working on the old address; new install commands use the address you are signed in at.</p>}
       <p>
         {!d.verified && <button type="button" className="primary" onClick={() => void act(() => api<Rec>(`/api/platform/domains/${encodeURIComponent(d.host)}/verify`, { method: 'POST', body: {} }))}>Check</button>}{' '}
         {d.verified && <button type="button" onClick={() => void act(() => api(`/api/platform/domains/${encodeURIComponent(d.host)}/primary`, { method: 'POST', body: { primary: !d.primary } }), d.primary ? 'Links now use the built-in address.' : 'Links in emails now use this address.')}>{d.primary ? 'Use the built-in address in links' : 'Use in links and emails'}</button>}{' '}
