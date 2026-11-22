@@ -1,22 +1,21 @@
 import { useState } from 'react';
 import { api, useLoad, type Rec } from '../http';
-import DirectorySetup from './DirectorySetup';
 import { Act, Badge, Empty, Err, Field, Loading, Modal, useSubmit } from '../ui';
 
 const blank = { name: '', code: '', contactName: '', contactEmail: '', phone: '', address: '', notes: '', status: 'active', remoteAllowed: false, renewalTo: '' };
 
 export default function Companies() {
-  const { data, error, loading, reload } = useLoad<Rec[]>('/api/assets/companies'); const [edit, setEdit] = useState<Rec | null>(null); const [dir, setDir] = useState<Rec | null>(null); const list = Array.isArray(data) ? data : [];
+  const { data, error, loading, reload } = useLoad<Rec[]>('/api/assets/companies'); const [edit, setEdit] = useState<Rec | null>(null); const list = Array.isArray(data) ? data : [];
   return <>
-    <h1>Companies</h1>
+    <h1>Customers</h1>
     <div className="tools"><button className="primary" onClick={() => setEdit({ ...blank })}>Add company</button><span className="muted">Customers whose devices you look after. Open a customer for its users, domain controller and details. Remote access to a customer's devices is off until you switch it on.</span></div>
     <Loading loading={loading && !data} error={error} />
-    {data && (list.length === 0 ? <Empty>No companies yet.</Empty> : <table><thead><tr><th>Name</th><th>Contact</th><th className="num">Assets</th><th>Remote access</th><th>Status</th><th /></tr></thead><tbody>
+    {data && (list.length === 0 ? <Empty>No companies yet.</Empty> : <table><thead><tr><th>Name</th><th>Contact</th><th className="num">Assets</th><th>Remote access</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>
       {list.map((c) => <tr key={c.id}><td><a href={`#/setup/companies/${c.id}`}>{c.name}</a> <span className="muted">{c.code}</span></td><td>{c.contactName}<div className="muted">{c.contactEmail} {c.phone}</div></td><td className="num">{c.assets}</td>
         <td><label><input type="checkbox" checked={c.remoteAllowed} onChange={async (e) => { await api(`/api/assets/companies/${c.id}`, { method: 'PUT', body: { remoteAllowed: e.target.checked } }); reload(); }} /> {c.remoteAllowed ? 'Allowed' : 'Off'}</label></td>
         <td><Badge tone={c.status === 'active' ? 'ok' : undefined}>{c.status}</Badge></td>
-        <td><a href={`#/assets/locations?company=${c.id}`}>Locations</a> <button onClick={() => setEdit(c)}>Edit</button> <a href={`#/setup/companies/${c.id}/users`}>Users</a> <button onClick={() => setDir(c)}>Domain controller</button> <Act label="Delete" danger confirm={`Delete ${c.name}?`} disabled={c.assets > 0} run={async () => { await api(`/api/assets/companies/${c.id}`, { method: 'DELETE' }); reload(); }} /></td></tr>)}</tbody></table>)}
-    {dir && <DirectorySetup company={{ id: dir.id, name: dir.name }} onClose={() => setDir(null)} />}
+        <td className="row-actions"><a className="button" href={`#/setup/companies/${c.id}`}>Open</a><button onClick={() => setEdit(c)}>Edit</button>
+          <Act label="Delete" danger confirm={`Delete ${c.name}?`} disabled={c.assets > 0} run={async () => { await api(`/api/assets/companies/${c.id}`, { method: 'DELETE' }); reload(); }} /></td></tr>)}</tbody></table>)}
     {edit && <CompanyForm init={edit} onClose={(ch) => { setEdit(null); if (ch) reload(); }} />}
   </>;
 }

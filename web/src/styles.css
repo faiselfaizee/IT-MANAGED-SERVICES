@@ -752,3 +752,76 @@ tr.gone td { opacity: .55; text-decoration: line-through; } tr.gone td:last-chil
 .tabs a { border-bottom: 2px solid transparent; padding: 8px 12px; color: var(--muted); white-space: nowrap; text-decoration: none; }
 .tabs a.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
 dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 12px; } dl.facts dt { color: var(--muted); } dl.facts dd { margin: 0; }
+/* a table's actions stay on one line, at the right, the same size */
+td.row-actions { white-space: nowrap; text-align: right; width: 1%; }
+td.row-actions > * { vertical-align: middle; } td.row-actions > * + * { margin-left: 6px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ===== 6.21: products along the top, the current product's menu on the left ===== */
+.shell.shell-top { display: block; min-height: 100vh; grid-template-columns: none; grid-template-rows: none; }
+.topnav { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 14px; height: 64px; padding: 0 14px 0 18px; background: var(--nav); color: var(--nav-ink); }
+.topnav .brand { display: flex; align-items: center; gap: 10px; flex: none; color: var(--nav-hi); font-weight: 700; text-decoration: none; padding-right: 6px; height: auto; }
+.topnav .brand:hover { text-decoration: none; }
+.topnav .brand, .topnav .brand:hover { border: 0; box-shadow: none; background: none; } .topnav .brand strong { color: var(--nav-hi); }
+.topnav .brand .logo-chip { display: grid; place-items: center; height: 38px; padding: 3px 8px; border-radius: 6px; background: #fff; }
+.topnav .brand .logo-chip img { max-height: 32px; max-width: 120px; display: block; }
+.topnav .brand-text strong { font-size: 15px; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; display: block; }
+.topnav .products { display: flex; align-items: stretch; align-self: stretch; gap: 2px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.topnav .products a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 80px; padding: 0 10px; color: var(--nav-ink); font-size: 12px; font-weight: 500; white-space: nowrap; text-decoration: none; border-bottom: 3px solid transparent; }
+.topnav .products a:hover { color: var(--nav-hi); background: var(--nav-2); }
+.topnav .products a.on { color: var(--nav-hi); background: var(--nav-2); border-bottom-color: #3fcfc0; font-weight: 600; }
+.topnav .products a .ico { opacity: 1; }
+.topnav .products .admin-small { display: none; }
+.topnav-right { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: none; }
+.topnav .gear { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 8px; color: var(--nav-ink); }
+.topnav .gear:hover, .topnav .gear.on { background: var(--nav-2); color: var(--nav-hi); text-decoration: none; }
+.topnav .gear.on { box-shadow: inset 0 -3px 0 #3fcfc0; }
+.topnav .usermenu { margin-left: 0; }
+.topnav .userbtn { color: var(--nav-hi); background: transparent; border-color: transparent; box-shadow: none; }
+.topnav .userbtn .who strong { color: var(--nav-hi); }
+.topnav .userbtn:hover:not(:disabled) { background: var(--nav-2); border-color: transparent; }
+.topnav .userbtn .who small, .topnav .userbtn i { color: var(--nav-ink); }
+.topnav-menu { display: none; width: 44px; height: 44px; padding: 0; place-items: center; background: transparent; border: 0; box-shadow: none; color: var(--nav-hi); }
+.topnav-menu:hover:not(:disabled) { background: var(--nav-2); }
+
+/* the area under the top row: the product's menu is a rail on the left, the page takes the rest */
+.shell-top .main { max-width: none; width: auto; padding: 0; display: grid; grid-template-columns: 232px minmax(0, 1fr); align-content: start; min-height: calc(100vh - 64px); }
+.shell-top .main > * { grid-column: 2; }
+.shell-top .main > .crumb-line { padding: 18px 32px 0; font-size: 13px; color: var(--muted); }
+.shell-top .main > .crumb-line .here { color: var(--ink); font-weight: 600; }
+.shell-top .main > p.err { margin: 14px 32px 0; }
+.shell-top .main > .site-foot { padding: 0 32px 24px; }
+.shell-top .main > .modshell { display: contents; }
+.shell-top .main > .modshell > .modnav { grid-column: 1; grid-row: 1 / span 40; position: sticky; top: 64px; align-self: start; height: calc(100vh - 64px); overflow-y: auto; box-sizing: border-box;
+  margin: 0; padding: 16px 12px 24px; border: 0; border-right: 1px solid var(--line); border-radius: 0; box-shadow: none; background: var(--glass); }
+.shell-top .main > .modshell > .modnav .modnav-head > strong { display: none; }   /* the product's name is already lit in the top row */
+.shell-top .main > .modshell > .modnav .modnav-head:not(:has(> :not(strong))) { display: none; }
+.shell-top .main > .modshell > .modnav .modnav-group h4 { margin-top: 14px; }
+.shell-top .main > .modshell > .modnav .modnav-group:first-of-type h4, .shell-top .main > .modshell > .modnav .modnav-head + .modnav-group h4 { margin-top: 4px; }
+.shell-top .main > .modshell > .modmain { padding: 10px 32px 48px; }
+/* pages with no product menu (Home, a locked Vault) use the full width */
+.shell-top .main:not(:has(> .modshell)) { grid-template-columns: minmax(0, 1fr); }
+.shell-top .main:not(:has(> .modshell)) > * { grid-column: 1; }
+.shell-top .main > .page, .shell-top .main:not(:has(> .modshell)) > :not(.crumb-line):not(p.err):not(.site-foot) { padding: 10px 32px 48px; }
+html[data-look='compact'] .topnav { height: 54px; } html[data-look='compact'] .shell-top .main > .modshell > .modnav { top: 54px; height: calc(100vh - 54px); }
+html[data-look='compact'] .shell-top .main > .modshell > .modmain, html[data-look='compact'] .shell-top .main > .page { padding: 8px 20px 36px; }
+
+@media (max-width: 1100px) { .topnav .brand-text { display: none; } .topnav .products a { min-width: 68px; padding: 0 6px; } }
+@media (max-width: 900px) {
+  .topnav-menu { display: grid; order: -1; }
+  .topnav .products { display: none; position: absolute; top: 64px; left: 0; right: 0; flex-direction: column; gap: 0; padding: 8px; background: var(--nav); box-shadow: var(--shadow-pop); max-height: calc(100vh - 64px); overflow-y: auto; }
+  .topnav .products.open { display: flex; }
+  .topnav .products a { flex-direction: row; justify-content: flex-start; gap: 12px; min-height: 44px; font-size: 15px; border-bottom: 0; border-radius: 6px; }
+  .topnav .products a.on { box-shadow: inset 3px 0 0 #3fcfc0; }
+  .topnav .products .admin-small { display: flex; border-top: 1px solid var(--nav-line); margin-top: 6px; padding-top: 6px; }
+  .topnav .gear, .topnav .userbtn .who { display: none; }
+  .shell-top .main { display: block; }
+  .shell-top .main > .modshell { display: block; }
+  .shell-top .main > .modshell > .modnav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: nowrap; gap: 2px; padding: 8px 12px; overflow-x: auto; scrollbar-width: thin; }
+  .shell-top .main > .modshell > .modnav .modnav-group { display: flex; flex-wrap: nowrap; align-items: center; gap: 2px; flex: none; }
+  .shell-top .main > .modshell > .modnav a { white-space: nowrap; }
+  .shell-top .main > .modshell > .modnav .modnav-head { flex: none; padding: 0 8px 0 0; margin: 0; border: 0; }
+  .shell-top .main > .modshell > .modnav .modnav-group h4 { display: none; }
+  .shell-top .main > .modshell > .modmain, .shell-top .main > .page { padding: 10px 16px 40px; }
+  .shell-top .main > .crumb-line { padding: 12px 16px 0; }
+}
