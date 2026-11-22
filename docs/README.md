@@ -50,3 +50,8 @@ The website (www.deskask.in) has its own guide in the `deskask-website` reposito
 - For a problem, write **Symptom**, **Cause**, **Fix**, and how to **Check** it worked.
 - Give commands in full, ready to copy. Say where to run them (which server, PowerShell as Administrator).
 - When a release changes behaviour, update the page and mention the version (for example "from 6.14.0").
+
+## Finding your way around (6.21.0)
+- **Top row:** the products in your licence (Home, Service Desk, Assets, Monitoring, AD Manager, Vault, Backup). The ⚙ icon opens Administration. Your name opens Appearance and Sign out.
+- **Left side:** only the menu of the product you are in. Under ⚙ it lists Users, then Devices setup (Customers or Our organisation, Credentials, Agents & collectors, Discover, Duplicates), then Mail, Branding, Updates, Licence, Subscription and Vendor console.
+- **Small screens:** the ☰ button opens the products and Administration. The product's menu becomes one row you can scroll sideways.

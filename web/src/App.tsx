@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { whoAmI, type WhoAmI } from './api';
 import { signOut } from './auth';
 import { LOOKS, currentLook, setLook } from './look';
@@ -6,6 +6,7 @@ import { Icon, Logo } from './chrome';
 import { logoUrl, useBrand } from './brand';
 import { Ring } from './Rings';
 import { useSingleCompany } from './mode';
+import { setupPages } from './setupPages';
 import { useHash, useLoad, type Rec } from './http';
 
 export const MODULES = ['Service Desk', 'Assets', 'Monitoring', 'AD Manager', 'Vault', 'Backup'];
@@ -48,8 +49,6 @@ function UsersArea({ meId, tab }: { meId?: string; tab: string }) {
   </>;
 }
 
-const SECTION: Record<string, string> = { '': 'Home', servicedesk: 'Service Desk', assets: 'Assets', monitoring: 'Monitoring', setup: 'Devices setup', admanager: 'AD Manager', vault: 'Vault', backup: 'Backup',
-  users: 'Administration › Users', access: 'Administration › Users', mail: 'Administration › Mail', updates: 'Administration › Updates', licence: 'Administration › Licence', subscription: 'Administration › Subscription', branding: 'Administration › Branding', vendor: 'Administration › Vendor console' };
 const ROLE: Record<string, string> = { admin: 'Administrator', engineer: 'Engineer', viewer: 'Viewer', cadmin: 'Customer administrator', customer: 'Customer' };
 
 /** The signed-in person: name and role, appearance, two-step sign-in and signing out. */
@@ -181,10 +180,31 @@ export function Home({ who, live, assets, monitoring = false, vault = false, adm
   </>;
 }
 
+/** The side menu under ⚙ Administration: your team, devices setup (shared by Assets and Monitoring) and the platform's own settings. */
+function AdminNav({ section, canSetup, canUpdate, isVendor, children }: { section: string; canSetup: boolean; canUpdate: boolean; isVendor: boolean; children: ReactNode }) {
+  const one = useSingleCompany();
+  const setup = setupPages(one);
+  const cur = section.startsWith('setup/') ? 'setup/' + (setup.some(([k]) => 'setup/' + k === section) ? section.slice(6) : setup[0][0]) : section;
+  const groups: [string, [string, string][]][] = [
+    ['People', [['users', 'Users']]],
+    ...(canSetup ? [['Devices setup', setup.map(([k, l]) => ['setup/' + k, l] as [string, string])] as [string, [string, string][]]] : []),
+    ['Platform', [['mail', 'Mail'], ['branding', 'Branding'], ...(canUpdate ? [['updates', 'Updates'] as [string, string]] : []), ['licence', 'Licence'], ['subscription', 'Subscription'], ...(isVendor ? [['vendor', 'Vendor console'] as [string, string]] : [])]],
+  ];
+  return <div className="modshell">
+    <aside className="modnav" aria-label="Administration">
+      <div className="modnav-head"><strong>Administration</strong></div>
+      {groups.map(([g, items]) => <div key={g} className="modnav-group"><h4>{g}</h4>
+        {items.map(([k, l]) => <a key={k} href={'#/' + k} className={cur === k ? 'on' : ''} aria-current={cur === k ? 'page' : undefined}>{l}</a>)}</div>)}
+    </aside>
+    <main className="modmain">{children}</main>
+  </div>;
+}
+
 export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const [who, setWho] = useState<WhoAmI | null>(null);
   const [err, setErr] = useState('');
   const [look, setLookState] = useState(currentLook());
+  const [menuOpen, setMenuOpen] = useState(false);
   const parts = useHash();
   useEffect(() => { whoAmI(fetcher).then(setWho, (e: Error) => setErr(e.message)); }, [fetcher]);
   const singleCompany = useSingleCompany();   // one company: the pickers and filters for customers are hidden everywhere (styles.css)
@@ -225,46 +245,36 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const isVendor = isAdmin && !!commerce.data?.enabled;
   const inVendor = parts[0] === 'vendor' && isVendor;
   const readOnly = Array.isArray(mods.data) ? mods.data.filter((m) => m.readOnly).length > 0 : false;
+  const inAdmin = inUsers || inSetup || inMail || inUpdates || inLicence || inSub || inBranding || inVendor;
+  const inHome = !inAssets && !inSetup && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inSub && !inBranding && !inMail && !inUpdates && !inVendor;
+  // the top row: the products this person may open (a module the licence does not include is not shown)
+  const products: [string, string, string, boolean][] = [['home', '#/', 'Home', inHome],
+    ...(canDesk ? [['Service Desk', '#/servicedesk', 'Service Desk', inDesk] as [string, string, string, boolean]] : []),
+    ...(canAssets ? [['Assets', '#/assets', 'Assets', inAssets] as [string, string, string, boolean]] : []),
+    ...(canMon ? [['Monitoring', '#/monitoring', 'Monitoring', inMon] as [string, string, string, boolean]] : []),
+    ...(canAd ? [['AD Manager', '#/admanager', 'AD Manager', inAd] as [string, string, string, boolean]] : []),
+    ...(canVault ? [['Vault', '#/vault', 'Vault', inVault] as [string, string, string, boolean]] : []),
+    ...(canBackup ? [['Backup', '#/backup', 'Backup', inBackup] as [string, string, string, boolean]] : [])];
+  const adminPage = (page: ReactNode) => <AdminNav section={parts[0] === 'setup' ? 'setup/' + (parts[1] ?? '') : parts[0] === 'access' ? 'users' : (parts[0] ?? '')} canSetup={canSetup} canUpdate={canUpdate} isVendor={isVendor}>{page}</AdminNav>;
   return (
-    <div className="shell">
-      <nav aria-label="Modules" className="side">
-        <a className="brand" href="#/" aria-label={brand.name + ' home'}>{brand.hasLogo ? <span className="logo-chip"><img src={logoUrl(brand)} alt="" /></span> : <Logo size={38} />}<span className="brand-text"><strong>{brand.name}</strong><small>{brand.headerText || 'IT managed services'}</small></span></a>
-        <div className="side-group">
-          <a href="#/" className={!inAssets && !inSetup && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inSub && !inBranding && !inMail && !inUpdates && !inVendor ? 'on' : ''}><Icon name="home" />Home</a>
-          {MODULES.filter((m) => m !== 'Assets' || canAssets).map((m) => m === 'Assets'
-            ? <a key={m} href="#/assets" className={inAssets ? 'on' : ''}><Icon name={m} />{m}</a>
-            : m === 'Service Desk' && canDesk
-              ? <a key={m} href="#/servicedesk" className={inDesk ? 'on' : ''}><Icon name={m} />{m}</a>
-            : m === 'Monitoring' && canMon
-              ? <a key={m} href="#/monitoring" className={inMon ? 'on' : ''}><Icon name={m} />{m}</a>
-            : m === 'AD Manager' && canAd
-              ? <a key={m} href="#/admanager" className={inAd ? 'on' : ''}><Icon name={m} />{m}</a>
-            : m === 'Backup' && canBackup
-              ? <a key={m} href="#/backup" className={inBackup ? 'on' : ''}><Icon name={m} />{m}</a>
-            : m === 'Vault' && canVault
-              ? <a key={m} href="#/vault" className={inVault ? 'on' : ''}><Icon name={m} />{m}</a>
-              : null)}   {/* a module the licence does not include is not shown: no menu entry, no tile */}
+    <div className="shell shell-top">
+      <header className="topnav">
+        <a className="brand" href="#/" aria-label={brand.name + ' home'}>{brand.hasLogo ? <span className="logo-chip"><img src={logoUrl(brand)} alt="" /></span> : <Logo size={32} />}<span className="brand-text"><strong>{brand.name}</strong></span></a>
+        <button className="topnav-menu" aria-label="Menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}><Icon name="menu" size={22} /></button>
+        <nav aria-label="Products" className={'products' + (menuOpen ? ' open' : '')} onClick={() => setMenuOpen(false)}>
+          {products.map(([key, href, label, on]) => <a key={key} href={href} className={on ? 'on' : ''} aria-current={on ? 'page' : undefined}><Icon name={key} size={20} /><span>{label}</span></a>)}
+          {isAdmin ? <a href="#/users" className={'admin-small' + (inAdmin ? ' on' : '')} aria-current={inAdmin ? 'page' : undefined}><Icon name="settings" size={20} /><span>Administration</span></a> : null}
+        </nav>
+        <div className="topnav-right">
+          {isAdmin ? <a href="#/users" className={'gear' + (inAdmin ? ' on' : '')} aria-label="Administration" title="Administration" aria-current={inAdmin ? 'page' : undefined}><Icon name="settings" size={22} /></a> : null}
+          <UserMenu name={String(me.data?.name ?? who?.name ?? '')} role={String(me.data?.role ?? '')} look={look} onLook={(v) => { setLook(v); setLookState(v); }} live={!fetcher} />
         </div>
-        {isAdmin ? <div className="side-group"><h4>Administration</h4>
-          <a href="#/users" className={inUsers ? 'on' : ''}><Icon name="users" />Users</a>
-          {canSetup ? <a href="#/setup" className={inSetup ? 'on' : ''}><Icon name="Assets" />Devices setup</a> : null}
-          <a href="#/mail" className={inMail ? 'on' : ''}><Icon name="mail" />Mail</a>
-          {canUpdate ? <a href="#/updates" className={inUpdates ? 'on' : ''}><Icon name="updates" />Updates</a> : null}
-          <a href="#/licence" className={inLicence ? 'on' : ''}><Icon name="licence" />Licence</a>
-          <a href="#/subscription" className={inSub ? 'on' : ''}><Icon name="licence" />Subscription</a>
-          <a href="#/branding" className={inBranding ? 'on' : ''}><Icon name="branding" />Branding</a>
-          {isVendor ? <a href="#/vendor" className={inVendor ? 'on' : ''}><Icon name="store" />Vendor console</a> : null}
-        </div> : null}
-      </nav>
-      <header className="topbar">
-        <nav className="crumb" aria-label="You are here">{who?.name ? <><span>{who.name}</span><b aria-hidden>›</b></> : null}{(SECTION[parts[0] ?? ''] ?? 'Home').split(' › ').map((x, i, all) => <span key={x} className={i === all.length - 1 ? 'here' : ''}>{x}{i < all.length - 1 ? <b aria-hidden> › </b> : null}</span>)}</nav>
-        <UserMenu name={String(me.data?.name ?? who?.name ?? '')} role={String(me.data?.role ?? '')} look={look} onLook={(v) => { setLook(v); setLookState(v); }} live={!fetcher} />
       </header>
       <main className="main">
         {err ? <p role="alert" className="err">{err}</p> : null}
         {readOnly ? <p role="alert" className="err">The licence has ended, so DeskAsk is read-only: everything stays visible, but nothing can be changed.{isAdmin ? <> <a href="#/licence">Renew or install a licence</a>.</> : ' Ask your administrator to renew the licence.'}</p> : null}
         {isAdmin && Math.abs(skewMin) >= 3 ? <p role="alert" className="err">The server's clock is about {Math.floor(Math.abs(skewMin) / 60)} h {Math.abs(skewMin) % 60} min {skewMin > 0 ? 'ahead of' : 'behind'} this computer, so times shown here and written to logs are wrong. On the server, set the correct time zone first (Windows: <code>Set-TimeZone -Id "India Standard Time"</code> for India), then correct the time (<code>w32tm /resync</code>).</p> : null}
-        {inSetup ? <Suspense fallback={<p className="muted">Loading…</p>}><SetupApp /></Suspense>
+        {inSetup ? adminPage(<Suspense fallback={<p className="muted">Loading…</p>}><SetupApp bare /></Suspense>)
           : inAssets
           ? <Suspense fallback={<p className="muted">Loading…</p>}><AssetsApp /></Suspense>
           : inDesk ? <Suspense fallback={<p className="muted">Loading…</p>}><ServiceDeskApp /></Suspense>
@@ -272,14 +282,14 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           : inVault ? <Suspense fallback={<p className="muted">Loading…</p>}><VaultApp /></Suspense>
           : inAd ? <Suspense fallback={<p className="muted">Loading…</p>}><AdApp /></Suspense>
           : inBackup ? <Suspense fallback={<p className="muted">Loading…</p>}><BackupApp /></Suspense>
-          : inUpdates ? <Suspense fallback={<p className="muted">Loading…</p>}><Updates /></Suspense>
-          : inMail ? <Suspense fallback={<p className="muted">Loading…</p>}><Mail /></Suspense>
-          : inSub ? <Suspense fallback={<p className="muted">Loading…</p>}><Subscription /></Suspense>
-          : inBranding ? <Suspense fallback={<p className="muted">Loading…</p>}><Branding /></Suspense>
-          : inLicence ? <Suspense fallback={<p className="muted">Loading…</p>}><Licence /></Suspense>
-          : inVendor ? <Suspense fallback={<p className="muted">Loading…</p>}><VendorApp path={parts.slice(1)} /></Suspense>
-          : inUsers ? <Suspense fallback={<p className="muted">Loading…</p>}><UsersArea meId={me.data?.sub} tab={parts[0] === 'access' ? 'groups' : (parts[1] ?? '')} /></Suspense>
-          : !err ? <Home who={who} live={!fetcher} assets={canAssets} monitoring={canMon && !fetcher} vault={canVault} adm={canAd} backup={canBackup} deskOn={canDesk} customer={isCustomer} /> : null}
+          : inUpdates ? adminPage(<Suspense fallback={<p className="muted">Loading…</p>}><Updates /></Suspense>)
+          : inMail ? adminPage(<Suspense fallback={<p className="muted">Loading…</p>}><Mail /></Suspense>)
+          : inSub ? adminPage(<Suspense fallback={<p className="muted">Loading…</p>}><Subscription /></Suspense>)
+          : inBranding ? adminPage(<Suspense fallback={<p className="muted">Loading…</p>}><Branding /></Suspense>)
+          : inLicence ? adminPage(<Suspense fallback={<p className="muted">Loading…</p>}><Licence /></Suspense>)
+          : inVendor ? adminPage(<Suspense fallback={<p className="muted">Loading…</p>}><VendorApp path={parts.slice(1)} /></Suspense>)
+          : inUsers ? adminPage(<Suspense fallback={<p className="muted">Loading…</p>}><UsersArea meId={me.data?.sub} tab={parts[0] === 'access' ? 'groups' : (parts[1] ?? '')} /></Suspense>)
+          : !err ? <div className="page"><Home who={who} live={!fetcher} assets={canAssets} monitoring={canMon && !fetcher} vault={canVault} adm={canAd} backup={canBackup} deskOn={canDesk} customer={isCustomer} /></div> : null}
         {brand.footerText ? <footer className="site-foot">{brand.footerText}</footer> : null}
       </main>
     </div>

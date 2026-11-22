@@ -7,7 +7,7 @@ const blank = { name: '', code: '', contactName: '', contactEmail: '', phone: ''
 export default function Companies() {
   const { data, error, loading, reload } = useLoad<Rec[]>('/api/assets/companies'); const [edit, setEdit] = useState<Rec | null>(null); const list = Array.isArray(data) ? data : [];
   return <>
-    <h1>Companies</h1>
+    <h1>Customers</h1>
     <div className="tools"><button className="primary" onClick={() => setEdit({ ...blank })}>Add company</button><span className="muted">Customers whose devices you look after. Open a customer for its users, domain controller and details. Remote access to a customer's devices is off until you switch it on.</span></div>
     <Loading loading={loading && !data} error={error} />
     {data && (list.length === 0 ? <Empty>No companies yet.</Empty> : <table><thead><tr><th>Name</th><th>Contact</th><th className="num">Assets</th><th>Remote access</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>
