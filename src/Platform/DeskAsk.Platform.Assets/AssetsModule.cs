@@ -495,7 +495,9 @@ public sealed class AssetsSchema : ITenantSchema
             $f$;
             drop trigger if exists assets_apply_tag_prefix on assets.assets;
             create trigger assets_apply_tag_prefix before insert or update of type_id on assets.assets for each row execute function assets.apply_tag_prefix();
-            alter table assets.packages add column if not exists script text not null default ''"),
+            alter table assets.packages add column if not exists script text not null default '';
+            alter table assets.packages drop constraint if exists packages_kind_check;
+            alter table assets.packages add constraint packages_kind_check check (kind in ('file', 'winget', 'choco', 'apt', 'script'))"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -1079,13 +1081,13 @@ public sealed class AssetsModule : IPlatformModule
             await using var tx = await db.BeginTransactionAsync(ct);
             Dictionary<string, string> before = new(); int? typeId = null;
             int? assetCompany = null;
-            await using (var c = new NpgsqlCommand("select name, type_id, status, manufacturer, model, serial, location, assigned_to, purchase_date, purchase_cost, warranty_end, notes, custom, site_id, vendor_id, po_number, invoice_number, warranty_months, ip_address, hostname, (select coalesce(string_agg(x, ',' order by x), '') from jsonb_array_elements_text(mac_addresses) x), monitored, company_id from assets.assets where id = @i for update", db, tx))
+            await using (var c = new NpgsqlCommand("select name, type_id, status, manufacturer, model, serial, location, assigned_to, purchase_date, purchase_cost, warranty_end, notes, custom, site_id, vendor_id, po_number, invoice_number, warranty_months, ip_address, hostname, (select coalesce(string_agg(x, ',' order by x), '') from jsonb_array_elements_text(mac_addresses) x), monitored, ownership_kind, hosted_at, company_id from assets.assets where id = @i for update", db, tx))
             {
                 P(c, "i", id);
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 if (!await rd.ReadAsync(ct)) return Results.NotFound();
                 typeId = rd.IsDBNull(1) ? null : rd.GetInt32(1);
-                string[] names = { "name", "type_id", "status", "manufacturer", "model", "serial", "location", "assigned_to", "purchase_date", "purchase_cost", "warranty_end", "notes", "custom", "site_id", "vendor_id", "po_number", "invoice_number", "warranty_months", "ip_address", "hostname", "mac_addresses", "monitored" };
+                string[] names = { "name", "type_id", "status", "manufacturer", "model", "serial", "location", "assigned_to", "purchase_date", "purchase_cost", "warranty_end", "notes", "custom", "site_id", "vendor_id", "po_number", "invoice_number", "warranty_months", "ip_address", "hostname", "mac_addresses", "monitored", "ownership_kind", "hosted_at" };
                 assetCompany = rd.IsDBNull(names.Length) ? null : rd.GetInt32(names.Length);
                 for (var i = 0; i < names.Length; i++) before[names[i]] = rd.IsDBNull(i) ? "" : rd.GetValue(i) is DateTime dt ? dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : rd.GetValue(i) is decimal dm ? Money(dm) : Convert.ToString(rd.GetValue(i), CultureInfo.InvariantCulture) ?? "";
             }
