@@ -25,6 +25,7 @@ type Sample struct {
 	MemTotal uint64  `json:"mem_total"`
 	Disks    []Disk  `json:"disks"`
 	Uptime   int64   `json:"uptime"`
+	Top      *Top    `json:"top,omitempty"` // the busiest programs, only while the computer is busy
 }
 
 // ErrUnsupported is returned on systems the agent cannot read (macOS for now).
@@ -35,6 +36,7 @@ type Sampler struct {
 	mu        sync.Mutex
 	idle, all uint64
 	primed    bool
+	procs     procTracker
 }
 
 // Take reads one sample.
@@ -58,7 +60,7 @@ func (s *Sampler) Take() (Sample, error) {
 	if err != nil {
 		return Sample{}, err
 	}
-	return Sample{CPU: pct, MemUsed: used, MemTotal: total, Disks: disks, Uptime: uptime()}, nil
+	return Sample{CPU: pct, MemUsed: used, MemTotal: total, Disks: disks, Uptime: uptime(), Top: s.procs.busiest(pct, used, total)}, nil
 }
 
 // cpuPct is the share of time not idle between two readings of (idle, total) counters, rounded to one decimal.

@@ -92,7 +92,7 @@ public static class MonitoringApi
     {
         id = r.D.Id, tag = r.D.Tag, name = r.D.Name, company = r.D.Company, companyId = r.D.CompanyId, kind = r.D.Kind, ip = r.D.Ip, os = r.D.Os, status = r.Status,
         agent = r.D.HasAgent, agentVersion = r.D.AgentVersion, agentSeen = r.D.AgentSeen, pingUp = r.D.PingUp, downSince = r.D.DownSince, rttMs = r.D.RttMs, checkedAt = r.D.CheckedAt,
-        metricsAt = r.D.MetricsAt, cpu = r.D.Cpu, mem = r.D.Mem, memTotal = r.D.MemTotal, uptimeS = r.D.UptimeS, worstDisk = WorstDisk(r.D),
+        metricsAt = r.D.MetricsAt, cpu = r.D.Cpu, mem = r.D.Mem, memTotal = r.D.MemTotal, uptimeS = r.D.UptimeS, worstDisk = WorstDisk(r.D), topCpu = r.D.TopCpu, topMem = r.D.TopMem,
         disks = r.D.Disks.Select(k => new { name = k.Name, freePct = k.FreePct, free = k.FreeBytes, total = k.TotalBytes }),
         checks = r.D.Checks.Select(c => new { c.Id, c.Name, c.Type, c.Ok, c.Fails, certDays = c.CertDays, c.Detail, c.At }),
         faults = r.D.Faults.Select(f => new { f.Part, f.Name, f.State }),

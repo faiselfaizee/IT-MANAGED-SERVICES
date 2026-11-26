@@ -3,6 +3,8 @@ import { api, uploadInPieces, useLoad, type Rec } from '../http';
 import { Act, Badge, Empty, Err, Field, Loading, Modal, useSubmit } from '../ui';
 import { JobView } from './DetailOps';
 
+/** Silent switches for the common kinds of installer, so nobody has to look them up. */
+const PRESETS: [string, string][] = [['Inno Setup', '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART'], ['NSIS', '/S'], ['InstallShield', '/s /v"/qn /norestart"'], ['WiX Burn or Visual Studio', '/quiet /norestart'], ['Squirrel', '--silent']];
 const KIND: Record<string, string> = { file: 'Installer', winget: 'winget', choco: 'Chocolatey', apt: 'Package manager', script: 'Script' };
 const size = (n: number) => n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)} GB` : n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n > 0 ? `${Math.max(1, Math.round(n / 1024))} KB` : '';
 
@@ -56,6 +58,7 @@ function AddPackage({ onClose }: { onClose: (changed: boolean) => void }) {
     <div className="row"><Field label="Name"><input value={v.name} onChange={(e) => set('name', e.target.value)} /></Field><Field label="Version"><input value={v.version} onChange={(e) => set('version', e.target.value)} /></Field></div>
     <Field label="Publisher"><input value={v.publisher} onChange={(e) => set('publisher', e.target.value)} /></Field>
     {!['apt', 'script'].includes(v.kind) && <Field label={v.kind === 'file' ? 'Silent switches (an .msi gets /qn /norestart already; for an .exe, for example /S or /quiet)' : 'Installer switches to pass on (optional)'}><input value={v.args} onChange={(e) => set('args', e.target.value)} spellCheck={false} /></Field>}
+    {v.kind === 'file' && v.os === 'windows' && <Field label="Installer type"><select value="" onChange={(e) => e.target.value && set('args', e.target.value)}><option value="">Fill in the switches for…</option>{PRESETS.map(([n, a]) => <option key={n} value={a}>{n}: {a}</option>)}</select></Field>}
     <Field label="Notes"><textarea rows={2} value={v.notes} onChange={(e) => set('notes', e.target.value)} /></Field>
     {file && f.busy && <p role="status">Uploading {Math.round((sent / Math.max(1, file.size)) * 100)}%…</p>}
     <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button>

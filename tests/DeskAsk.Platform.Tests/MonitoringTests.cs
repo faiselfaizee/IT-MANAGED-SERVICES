@@ -133,7 +133,7 @@ public class MonitoringTests : IClassFixture<WebApplicationFactory<Program>>
         var asset = long.Parse(en.GetProperty("assetId").GetString()!);
         async Task Sample(double mem, double cFree)
         {
-            var r = await agent.PostAsync("/agent/v1/metrics", Json(new { cpu = 42.5, mem_used = (long)(mem * 160_000_000), mem_total = 16_000_000_000L, uptime = 7200, disks = new[] { new { mount = "C:", total = 100_000_000_000L, free = (long)(cFree * 1_000_000_000) }, new { mount = "D:", total = 500_000_000_000L, free = 400_000_000_000L } } }));
+            var r = await agent.PostAsync("/agent/v1/metrics", Json(new { cpu = 42.5, mem_used = (long)(mem * 160_000_000), mem_total = 16_000_000_000L, uptime = 7200, top = new { cpu = new[] { new { name = "sqlservr", pct = 31.4 }, new { name = "chrome", pct = 6.0 } }, mem = new[] { new { name = "sqlservr", mem_mb = 2048 }, new { name = "chrome", mem_mb = 400 } } }, disks = new[] { new { mount = "C:", total = 100_000_000_000L, free = (long)(cFree * 1_000_000_000) }, new { mount = "D:", total = 500_000_000_000L, free = 400_000_000_000L } } }));
             Assert.Equal(HttpStatusCode.OK, r.StatusCode); Assert.Equal(60, (await J(r)).GetProperty("every").GetInt32());
         }
         // asset ids restart with each test's truncate, so tickets other tests opened for an asset with the same id may still be there: count only the ones opened from here on
@@ -170,6 +170,8 @@ public class MonitoringTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(3, dev.GetProperty("worstDisk").GetDouble(), 1); Assert.Equal(2, dev.GetProperty("disks").GetArrayLength());
         var series = await J(await api.GetAsync($"/api/monitoring/devices/{asset}/series?range=6h"));
         Assert.Single(series.GetProperty("points").EnumerateArray()); Assert.False(series.GetProperty("hourly").GetBoolean());
+        Assert.Equal("sqlservr 31.4%, chrome 6%", dev.GetProperty("topCpu").GetString()); Assert.Equal("sqlservr 2 GB, chrome 400 MB", dev.GetProperty("topMem").GetString());
+        Assert.Equal(1, await Scalar("select count(*) from monitoring.alerts where metric = 'memory' and text like '%Largest: sqlservr 2 GB, chrome 400 MB.'"));
         Assert.Equal(HttpStatusCode.BadRequest, (await api.GetAsync($"/api/monitoring/devices/{asset}/series?range=1y")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await api.GetAsync("/api/monitoring/devices/999999")).StatusCode);
 

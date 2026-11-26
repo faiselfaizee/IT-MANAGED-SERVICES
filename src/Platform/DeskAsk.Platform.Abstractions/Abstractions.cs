@@ -350,7 +350,7 @@ public sealed record DeviceState(long Id, string Tag, string Name, int? CompanyI
     IReadOnlyList<CheckState> Checks, IReadOnlyList<PartFault> Faults,
     IReadOnlyList<PortState>? Ports = null, DateTime? PortsAt = null, IReadOnlyList<WatchedItem>? Watched = null, DateTime? WatchedAt = null,
     IReadOnlyList<ServiceInfo>? Inventory = null, DateTime? InventoryAt = null, IReadOnlyDictionary<string, string>? ServiceModes = null,
-    PrinterState? Printer = null, DateTime? PrinterAt = null)
+    PrinterState? Printer = null, DateTime? PrinterAt = null, string? TopCpu = null, string? TopMem = null)
 {
     /// <summary>Every service the agent listed (empty before the first list).</summary>
     public IReadOnlyList<ServiceInfo> InventoryList => Inventory ?? Array.Empty<ServiceInfo>();

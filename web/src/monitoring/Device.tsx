@@ -41,6 +41,8 @@ export default function Device({ id }: { id: string }) {
       <div><span className="muted">Processor</span><b>{d.cpu == null ? '–' : d.cpu.toFixed(0) + '%'}</b></div>
       <div><span className="muted">Memory</span><b>{d.mem == null ? '–' : d.mem.toFixed(0) + '%'}</b><span className="muted small">{d.memTotal ? 'of ' + fmtBytes(d.memTotal) : ''}</span></div>
       <div><span className="muted">Lowest disk free</span><b>{d.worstDisk == null ? '–' : d.worstDisk.toFixed(0) + '%'}</b></div>
+      {d.topCpu && <div><span className="muted">Busiest programs</span><b>{d.topCpu}</b></div>}
+      {d.topMem && <div><span className="muted">Largest in memory</span><b>{d.topMem}</b></div>}
       <div><span className="muted">Running for</span><b>{d.uptimeS ? fmtUptime(d.uptimeS) : '–'}</b></div>
       </>}
       <div><span className="muted">Reachable</span><b>{d.pingUp === false ? 'No' : d.pingUp ? 'Yes' : '–'}</b><span className="muted small">{d.pingUp ? d.rttMs + ' ms' : d.pingUp === false && d.downSince ? 'since ' + ago(d.downSince) : 'no site controller'}</span></div>
