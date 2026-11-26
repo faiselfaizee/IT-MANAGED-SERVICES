@@ -138,7 +138,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; padding: 0; border-radius: 6px; vertical-align: middle; cursor: pointer; background: var(--field); border: 1.5px solid var(--line); display: inline-grid; place-content: center; }
 input[type=checkbox]:checked { background: var(--accent); border-color: transparent; }
 input[type=checkbox]:checked::after { content: ''; width: 9px; height: 5px; border-left: 2px solid var(--accent-ink); border-bottom: 2px solid var(--accent-ink); transform: translateY(-1px) rotate(-45deg); }
-select option { color: #0f1b2d; }
+select option, select optgroup { color: var(--ink); background-color: var(--field); }
+select option:disabled { color: var(--muted); }
+select option:checked { background-color: var(--accent-soft); }
 textarea { width: 100%; font-family: ui-monospace, Consolas, monospace; }
 button { background: var(--glass-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 15px; cursor: pointer; font-weight: 500;
   box-shadow: inset 0 1px 0 var(--edge-hi); transition: transform .12s, border-color .15s, box-shadow .15s; }
@@ -826,3 +828,17 @@ html[data-look='compact'] .shell-top .main > .modshell > .modmain, html[data-loo
   .shell-top .main > .crumb-line { padding: 12px 16px 0; }
 }
 .page-size { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+
+.ask { max-width: 980px; }
+.ask-log { display: grid; gap: 18px; margin: 14px 0 90px; }
+.ask-q { margin: 0; justify-self: end; max-width: 80%; background: var(--accent-soft); border-radius: 14px 14px 4px 14px; padding: 9px 14px; }
+.ask-a { background: var(--glass); border: 1px solid var(--line); border-radius: 4px 14px 14px 14px; padding: 12px 16px; }
+.ask-a > p:first-child { margin-top: 0; }
+.ask-count { font-size: 1.5rem; margin-right: 6px; }
+.ask-table { margin-top: 10px; overflow-x: auto; }
+.ask-table-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.ask-form { position: sticky; bottom: 0; display: flex; gap: 8px; padding: 12px 0; background: var(--base); }
+.ask-form input { flex: 1; }
+.ask-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ask-chip { border-radius: 999px; padding: 6px 13px; font-weight: 400; }
+@media print { .no-print, .topnav, .modnav, .ask-form { display: none !important; } .ask-a { border: 0; } }

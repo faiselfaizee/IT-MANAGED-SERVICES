@@ -20,6 +20,7 @@ const ABOUT: Record<string, string> = {
   Backup: 'Results of the backup software customers already run',
 };
 const AssetsApp = lazy(() => import('./assets/AssetsApp'));
+const Assistant = lazy(() => import('./Assistant'));
 const Users = lazy(() => import('./Users'));
 const Access = lazy(() => import('./Access'));
 const Licence = lazy(() => import('./Licence'));
@@ -228,6 +229,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const inMon = parts[0] === 'monitoring' && canMon;
   const canVault = !fetcher && !!me.data && me.data.role !== 'customer' && !!(Array.isArray(mods.data) && (mods.data.find((m) => m.key === 'vault')?.licensed || mods.data.find((m) => m.key === 'vault')?.readOnly));
   const inVault = parts[0] === 'vault' && canVault;
+  const inAsk = parts[0] === 'assistant' && canAssets;
   const canAd = !fetcher && !!me.data && me.data.role !== 'customer' && !!(Array.isArray(mods.data) && (mods.data.find((m) => m.key === 'adsuite')?.licensed || mods.data.find((m) => m.key === 'adsuite')?.readOnly));
   const inAd = parts[0] === 'admanager' && canAd;
   const canBackup = !fetcher && !!(Array.isArray(mods.data) && (mods.data.find((m) => m.key === 'backup')?.licensed || mods.data.find((m) => m.key === 'backup')?.readOnly)) && !!mine.data?.backup?.read && mine.data.backup.read !== 'none';
@@ -246,7 +248,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
   const inVendor = parts[0] === 'vendor' && isVendor;
   const readOnly = Array.isArray(mods.data) ? mods.data.filter((m) => m.readOnly).length > 0 : false;
   const inAdmin = inUsers || inSetup || inMail || inUpdates || inLicence || inSub || inBranding || inVendor;
-  const inHome = !inAssets && !inSetup && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inSub && !inBranding && !inMail && !inUpdates && !inVendor;
+  const inHome = !inAsk && !inAssets && !inSetup && !inDesk && !inMon && !inVault && !inAd && !inBackup && !inUsers && !inLicence && !inSub && !inBranding && !inMail && !inUpdates && !inVendor;
   // the top row: the products this person may open (a module the licence does not include is not shown)
   const products: [string, string, string, boolean][] = [['home', '#/', 'Home', inHome],
     ...(canDesk ? [['Service Desk', '#/servicedesk', 'Service Desk', inDesk] as [string, string, string, boolean]] : []),
@@ -266,6 +268,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           {isAdmin ? <a href="#/users" className={'admin-small' + (inAdmin ? ' on' : '')} aria-current={inAdmin ? 'page' : undefined}><Icon name="settings" size={20} /><span>Administration</span></a> : null}
         </nav>
         <div className="topnav-right">
+          {canAssets ? <a href="#/assistant" className={'gear' + (inAsk ? ' on' : '')} aria-label="Ask DeskAsk" title="Ask DeskAsk" aria-current={inAsk ? 'page' : undefined}><Icon name="ask" size={22} /></a> : null}
           {isAdmin ? <a href="#/users" className={'gear' + (inAdmin ? ' on' : '')} aria-label="Administration" title="Administration" aria-current={inAdmin ? 'page' : undefined}><Icon name="settings" size={22} /></a> : null}
           <UserMenu name={String(me.data?.name ?? who?.name ?? '')} role={String(me.data?.role ?? '')} look={look} onLook={(v) => { setLook(v); setLookState(v); }} live={!fetcher} />
         </div>
@@ -279,6 +282,7 @@ export default function App({ fetcher }: { fetcher?: typeof fetch }) {
           ? <Suspense fallback={<p className="muted">Loading…</p>}><AssetsApp /></Suspense>
           : inDesk ? <Suspense fallback={<p className="muted">Loading…</p>}><ServiceDeskApp /></Suspense>
           : inMon ? <Suspense fallback={<p className="muted">Loading…</p>}><MonitoringApp /></Suspense>
+          : inAsk ? <Suspense fallback={<p className="muted">Loading…</p>}><Assistant /></Suspense>
           : inVault ? <Suspense fallback={<p className="muted">Loading…</p>}><VaultApp /></Suspense>
           : inAd ? <Suspense fallback={<p className="muted">Loading…</p>}><AdApp /></Suspense>
           : inBackup ? <Suspense fallback={<p className="muted">Loading…</p>}><BackupApp /></Suspense>

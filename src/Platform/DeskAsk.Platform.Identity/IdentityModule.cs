@@ -330,6 +330,8 @@ public sealed class IdentityModule : IPlatformModule
 
         var user = await db.Users.FirstOrDefaultAsync(x => x.Email == email && x.Active, http.RequestAborted);
         var res = hasher.VerifyHashedPassword(user ?? Dummy, user?.PasswordHash ?? hasher.HashPassword(Dummy, "x"), f["password"].ToString());   // same work whether or not the account exists
+        // a person who came from a directory never signs in with a local password, whatever an old hash in the table would say
+        if (user != null && DirectoryAccount.Is(user.ExternalId)) res = PasswordVerificationResult.Failed;
         // people who came from Active Directory sign in with their directory password
         var viaDirectory = user != null && res == PasswordVerificationResult.Failed && await AdEndpoints.PasswordOkAsync(http, user, f["password"].ToString());
         if (viaDirectory) res = PasswordVerificationResult.Success;
@@ -380,6 +382,12 @@ public static class IdentityPipeline
 }
 
 /// <summary>A customer user picked from their company's domain controller: ExternalId "adc:&lt;company id&gt;:&lt;account name&gt;".</summary>
+/// <summary>People who came from a directory (the main one, "ad:", or a customer's domain controller, "adc:") are signed in only by that directory. They have no local password.</summary>
+public static class DirectoryAccount
+{
+    public static bool Is(string? ext) => ext != null && (ext.StartsWith("ad:", StringComparison.Ordinal) || ext.StartsWith(CompanyAccount.Prefix, StringComparison.Ordinal));
+}
+
 public static class CompanyAccount
 {
     public const string Prefix = "adc:";

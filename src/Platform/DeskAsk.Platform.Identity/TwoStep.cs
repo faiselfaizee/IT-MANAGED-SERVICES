@@ -156,7 +156,7 @@ public sealed class TwoStepService
     {
         var u = await db.Users.FirstOrDefaultAsync(x => x.Id == id && x.Active, ct);
         if (u == null || !u.TotpEnabled) return false;
-        if (hasher.VerifyHashedPassword(u, u.PasswordHash, password ?? "") == PasswordVerificationResult.Failed) { await audit.WriteAsync("auth.2fa_failed", u.Email, "wrong password while switching off", actor: u.Email, ct: ct); return false; }
+        if (!DirectoryAccount.Is(u.ExternalId) && hasher.VerifyHashedPassword(u, u.PasswordHash, password ?? "") == PasswordVerificationResult.Failed) { await audit.WriteAsync("auth.2fa_failed", u.Email, "wrong password while switching off", actor: u.Email, ct: ct); return false; }
         if (await VerifyAsync(id, code, ct) == StepResult.Bad) return false;
         u = await db.Users.FirstAsync(x => x.Id == id, ct);
         u.TotpEnabled = false; u.TotpSecret = null; u.RecoveryHashes = "[]";
