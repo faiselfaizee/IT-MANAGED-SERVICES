@@ -517,3 +517,9 @@ Values that people type never become script code: KB numbers and package names a
 **Install scripts in the repository.** A program of kind **Script** is an administrator's own multi-line script: PowerShell on Windows (run as SYSTEM, stops at the first error) or bash on Linux (`set -e`, run as root), up to 20,000 characters. Use it for installs that need several steps, such as downloading an installer and enrolling an agent. Its SHA-256 is kept and shows in the audit log when it changes. Do not put passwords in it: it is stored in the repository and shown to administrators. Column `assets.packages.script` (migration 34).
 
 Not in this release: small encrypted extra files that travel with a package (for example an enrolment key), assisted install on the user's screen, and adding the busiest processes to the alert text itself.
+
+## 6.26.0: busiest programs in alerts
+
+- While a computer is busy (processor at 75% or more, or memory at 85% or more) the agent adds the five busiest programs to its sample, by processor and by memory. Programs with several processes (a browser) are added together. A quiet computer sends nothing extra.
+- The last list is kept on the asset. A processor or memory alert now ends with "Busiest: sqlservr 31.4%, chrome 6%." (or "Largest: sqlservr 2 GB, ..."), so the mail and the ticket say what to look at before anyone opens the computer. The monitoring device page shows the same lines.
+- Package form: an "Installer type" list fills in the silent switches for Inno Setup, NSIS, InstallShield, WiX Burn and Squirrel installers.

@@ -82,12 +82,13 @@ public sealed class DeviceHealth : IDeviceHealth
                 }
             var dj = JsonSerializer.Serialize(disks);
             var up = (long)Math.Max(0, Num("uptime") ?? 0);
+            var topJson = TopJson(b);
             await using (var c = new NpgsqlCommand(@"insert into assets.metrics (asset_id, at, cpu, mem, disks) values (@a, date_trunc('second', now()), @c, @m, @d::jsonb) on conflict do nothing;
-                update assets.assets set m_at = now(), m_cpu = @c, m_mem = @m, m_mem_total = @mt, m_disks = @d::jsonb, m_uptime = @u where id = @a;
+                update assets.assets set m_at = now(), m_cpu = @c, m_mem = @m, m_mem_total = @mt, m_disks = @d::jsonb, m_uptime = @u, m_top = @top::jsonb where id = @a;
                 update assets.agents set last_seen = now() where id = @g", db))
             {
                 AgentsApi.P(c, "a", ag.Value.AssetId); AgentsApi.P(c, "c", cpu == null ? null : (float)cpu.Value); AgentsApi.P(c, "m", mem == null ? null : (float)mem.Value);
-                AgentsApi.P(c, "mt", memTotal); AgentsApi.P(c, "d", dj); AgentsApi.P(c, "u", up); AgentsApi.P(c, "g", ag.Value.Id);
+                AgentsApi.P(c, "mt", memTotal); AgentsApi.P(c, "d", dj); AgentsApi.P(c, "u", up); AgentsApi.P(c, "g", ag.Value.Id); AgentsApi.P(c, "top", topJson);
                 await c.ExecuteNonQueryAsync(ct);
             }
             // services and programs Monitoring asked about, and new Windows event log errors
@@ -248,7 +249,7 @@ public sealed class DeviceHealth : IDeviceHealth
         await using (var c = new NpgsqlCommand($@"select a.id, a.tag, a.name, a.company_id, coalesce(co.name, ''), {AssetDash.KindSql}, a.ip_address, trim(a.os_name || ' ' || a.os_version),
                 g.id is not null, coalesce(g.version, ''), g.last_seen, case when a.collector_id <> '' and a.monitor <> '' then a.check_up end, a.check_down_at, a.check_rtt, a.checked_at,
                 a.m_at, a.m_cpu, a.m_mem, a.m_mem_total, a.m_uptime, a.m_disks::text, coalesce(a.hw_extra->'datastores', '[]')::text,
-                a.m_ports::text, a.m_ports_at, a.m_services::text, a.m_services_at, a.m_svc_inv::text, a.m_svc_inv_at, a.m_printer::text, a.m_printer_at
+                a.m_ports::text, a.m_ports_at, a.m_services::text, a.m_services_at, a.m_svc_inv::text, a.m_svc_inv_at, a.m_printer::text, a.m_printer_at, a.m_top::text
             from assets.assets a left join assets.types t on t.id = a.type_id left join assets.companies co on co.id = a.company_id
             left join assets.agents g on g.id = a.agent_id and g.deleted_at is null
             where {where} order by a.id", db))
@@ -289,10 +290,55 @@ public sealed class DeviceHealth : IDeviceHealth
                     checks.TryGetValue(id, out var ck) ? ck : Array.Empty<CheckState>(), faults.TryGetValue(id, out var fl) ? fl : Array.Empty<PartFault>(),
                     ports, rd.IsDBNull(23) ? null : rd.GetDateTime(23), watched, rd.IsDBNull(25) ? null : rd.GetDateTime(25),
                     inventory, rd.IsDBNull(27) ? null : rd.GetDateTime(27), svcModes.TryGetValue(id, out var sm) ? sm : null,
-                    PrinterApi.Parse(rd.IsDBNull(28) ? null : rd.GetString(28)), rd.IsDBNull(29) ? null : rd.GetDateTime(29)));
+                    PrinterApi.Parse(rd.IsDBNull(28) ? null : rd.GetString(28)), rd.IsDBNull(29) ? null : rd.GetDateTime(29),
+                    TopText(rd.IsDBNull(30) ? null : rd.GetString(30), "cpu"), TopText(rd.IsDBNull(30) ? null : rd.GetString(30), "mem")));
             }
         }
         return outList;
+    }
+
+    /// <summary>The busiest programs an agent attached to a sample, cleaned up for storing; null when it sent none.</summary>
+    internal static string? TopJson(JsonElement b)
+    {
+        if (b.ValueKind != JsonValueKind.Object || !b.TryGetProperty("top", out var t) || t.ValueKind != JsonValueKind.Object) return null;
+        List<object> List(string key, bool cpu)
+        {
+            var l = new List<object>();
+            if (!t.TryGetProperty(key, out var a) || a.ValueKind != JsonValueKind.Array) return l;
+            foreach (var p in a.EnumerateArray().Take(5))
+            {
+                if (p.ValueKind != JsonValueKind.Object) continue;
+                var name = AgentsApi.Clip(AgentsApi.Str(p, "name"), 60); if (name == "") continue;
+                var n = cpu ? "pct" : "mem_mb";
+                var v = p.TryGetProperty(n, out var nv) && nv.ValueKind == JsonValueKind.Number ? nv.GetDouble() : 0;
+                if (v <= 0) continue;
+                l.Add(cpu ? new { name, pct = Math.Round(Math.Min(v, 100), 1) } : new { name, mem_mb = (long)v });
+            }
+            return l;
+        }
+        var cpuL = List("cpu", true); var memL = List("mem", false);
+        return cpuL.Count == 0 && memL.Count == 0 ? null : JsonSerializer.Serialize(new { cpu = cpuL, mem = memL });
+    }
+
+    /// <summary>"sqlservr 45%, chrome 12%" for the processor, "sqlservr 2.0 GB, chrome 400 MB" for memory; null when there is nothing to name.</summary>
+    internal static string? TopText(string? json, string which)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try
+        {
+            var parts = new List<string>();
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty(which, out var a) || a.ValueKind != JsonValueKind.Array) return null;
+            foreach (var p in a.EnumerateArray().Take(3))
+            {
+                var name = AgentsApi.Str(p, "name") ?? "";
+                if (name == "") continue;
+                if (which == "cpu") parts.Add($"{name} {D(p, "pct").ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)}%");
+                else { var mb = D(p, "mem_mb"); parts.Add(mb >= 1024 ? $"{name} {(mb / 1024).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} GB" : $"{name} {mb:0} MB"); }
+            }
+            return parts.Count == 0 ? null : string.Join(", ", parts);
+        }
+        catch (JsonException) { return null; }
     }
 
     public async Task<IReadOnlyDictionary<long, Sustained>> SustainedAsync(int minutes, CancellationToken ct = default)

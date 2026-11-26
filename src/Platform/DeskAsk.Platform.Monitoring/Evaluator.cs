@@ -79,7 +79,9 @@ public static class Evaluator
                             var low = r.Metric == "cpu" ? s?.MinCpu : s?.MinMem;
                             over = s != null && low != null && s.Samples >= 2 && s.First <= now.AddMinutes(-r.Minutes * 0.7) && low > r.Threshold;
                         }
-                        if (over) Add("", r.Severity, r.Minutes <= 1 ? $"{word} use is {now1:0.#}% (above {th}%)." : $"{word} use has been above {th}% for {r.Minutes} minutes; now {now1:0.#}%.", now1);
+                        var busy = r.Metric == "cpu" ? d.TopCpu : d.TopMem;
+                        var busyText = busy == null ? "" : (r.Metric == "cpu" ? " Busiest: " : " Largest: ") + busy + ".";
+                        if (over) Add("", r.Severity, (r.Minutes <= 1 ? $"{word} use is {now1:0.#}% (above {th}%)." : $"{word} use has been above {th}% for {r.Minutes} minutes; now {now1:0.#}%.") + busyText, now1);
                         break;
                     }
                     case "disk":

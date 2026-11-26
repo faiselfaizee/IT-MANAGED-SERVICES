@@ -498,6 +498,8 @@ public sealed class AssetsSchema : ITenantSchema
             alter table assets.packages add column if not exists script text not null default '';
             alter table assets.packages drop constraint if exists packages_kind_check;
             alter table assets.packages add constraint packages_kind_check check (kind in ('file', 'winget', 'choco', 'apt', 'script'))"),
+        new(35, "the busiest programs from the last busy sample", @"
+            alter table assets.assets add column if not exists m_top jsonb"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
