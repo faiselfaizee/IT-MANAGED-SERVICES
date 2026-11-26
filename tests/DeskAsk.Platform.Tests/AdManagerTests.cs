@@ -614,7 +614,8 @@ public class AdManagerTests : IClassFixture<WebApplicationFactory<Program>>
         var map = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/map"));
         var kids = map.GetProperty("tree").GetProperty("children").EnumerateArray().Select(x => x.GetProperty("name").GetString()).ToList();
         Assert.Contains("Staff", kids); Assert.Contains("Servers", kids);
-        var health = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/health"));
+        var hr = await admin.GetAsync($"/api/adsuite/domains/{dom}/health"); Assert.True(hr.IsSuccessStatusCode, await hr.Content.ReadAsStringAsync());
+        var health = await J(hr);
         var keys = health.GetProperty("findings").EnumerateArray().Select(x => x.GetProperty("key").GetString()).ToList();
         Assert.Contains("dcs", keys); Assert.Contains("stale", keys);
 

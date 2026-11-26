@@ -164,7 +164,7 @@ internal static class InsightApi
                 if (fl != null && fl.A.ContainsKey("msDS-Behavior-Version")) { var v = fl.Num("msDS-Behavior-Version"); Add("forest-level", "Forest functional level", v < 6 ? "warn" : "ok", $"The forest runs at {LevelName(v)}."); }
             }
         }
-        catch (DirError) { /* the configuration partition could not be read with this account */ }
+        catch (Exception) { /* the configuration partition could not be read with this account, or answered something unexpected */ }
 
         // privileged accounts
         var admins = da?.Ranged("member").Select(Dir.RdnValue).OrderBy(x => x).ToList() ?? new List<string>();
@@ -288,6 +288,7 @@ internal static class InsightApi
             var (d, fail) = await Gate(id, u, t, dp, access, ct); if (d == null) return fail!;
             try { var res = await Health(relay, d, ct); await audit.WriteAsync("adsuite.health", d.Name, null, null, ct); return Results.Ok(res); }
             catch (DirError e) { return Dir.Explain(e); }
+            catch (Exception e) { return Results.Json(new { error = "insight_failed", detail = e.GetType().Name + ": " + e.Message }, statusCode: 500); }
         }), key);
 
         AdModule.Use(r.MapGet("/api/adsuite/domains/{id:int}/group-policy", async (int id, ClaimsPrincipal u, ITenantContext t, IDataProtectionProvider dp, IControllerRelay relay, IAccess access, CancellationToken ct) =>
