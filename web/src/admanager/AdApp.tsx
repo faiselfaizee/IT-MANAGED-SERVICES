@@ -10,6 +10,7 @@ import { NewUser } from './UserForm';
 import { BulkCreate, BulkModify } from './Bulk';
 import { Automation, Templates } from './Settings';
 import { CreateOther } from './Create';
+import { Health, Policies, Dns, DirMap } from './Insight';
 
 type Item = { key: string; label: string; admin?: boolean; right?: string };
 const MENU: { group: string; items: Item[] }[] = [
@@ -18,6 +19,7 @@ const MENU: { group: string; items: Item[] }[] = [
   { group: 'Create', items: [{ key: 'new-user', label: 'New user', right: 'create' }, { key: 'new-other', label: 'New group or OU', right: 'create' }, { key: 'bulk-create', label: 'Users from a file', right: 'create' }, { key: 'bulk-modify', label: 'Change from a file', right: 'modify' }] },
   { group: 'Workflow', items: [{ key: 'requests', label: 'Account requests' }, { key: 'approvals', label: 'Approvals' }] },
   { group: 'Reports', items: [{ key: 'reports', label: 'All reports' }] },
+  { group: 'Insight', items: [{ key: 'health', label: 'Health check' }, { key: 'policies', label: 'Group Policy' }, { key: 'dns', label: 'DNS' }, { key: 'map', label: 'Directory map' }] },
   { group: 'Settings', items: [{ key: 'automation', label: 'Automation', admin: true }, { key: 'templates', label: 'User templates', admin: true }, { key: 'domains', label: 'Domains and delegation', admin: true }] },
 ];
 
@@ -79,6 +81,10 @@ export default function AdApp() {
     else if (section === 'new-other') page = <><h1>New group or OU</h1><CreateOther domain={domain} /></>;
     else if (section === 'bulk-create') page = <><h1>Users from a file</h1><BulkCreate domain={domain} /></>;
     else if (section === 'bulk-modify') page = <><h1>Change users from a file</h1><BulkModify domain={domain} /></>;
+    else if (section === 'health') page = <Health domain={domain} />;
+    else if (section === 'policies') page = <Policies domain={domain} />;
+    else if (section === 'dns') page = <Dns domain={domain} />;
+    else if (section === 'map') page = <DirMap domain={domain} />;
     else if (section === 'reports') page = <><h1>Reports</h1><Reports domains={domains} /></>;
     else if (section === 'requests') page = <><h1>Account requests</h1><Requests domains={domains} mode="requests" /></>;
     else if (section === 'approvals') page = <><h1>Approvals</h1><Requests domains={domains} mode="approvals" /></>;

@@ -581,4 +581,46 @@ public class AdManagerTests : IClassFixture<WebApplicationFactory<Program>>
         var pl = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/policies"));
         Assert.Contains("changed", pl[0].GetProperty("lastResult").GetString());
     }
+
+    [PgFact]
+    public async Task HealthPoliciesDnsAndTheMapAreReadFromTheDirectory()
+    {
+        var (admin, dom, eve, _, _) = await Start();
+        const string Gpo = "{31B2F340-016D-11D2-945F-00C04FB984F9}", Old = "{6AC1786C-016F-11D2-945F-00C04FB984F9}";
+        FakeController.Obj Make(params (string, string)[] a) { var o = new FakeController.Obj(); foreach (var (k, v) in a) o[k] = new List<string> { v }; return o; }
+        Fake.Dir[$"CN={Gpo},CN=Policies,CN=System," + Base] = Make(("objectClass", "groupPolicyContainer"), ("displayName", "Default Domain Policy"), ("versionNumber", "131074"), ("flags", "0"));
+        Fake.Dir[$"CN={Old},CN=Policies,CN=System," + Base] = Make(("objectClass", "groupPolicyContainer"), ("displayName", "Old Policy"), ("versionNumber", "0"), ("flags", "3"));
+        Fake.Dir[Base]["gPLink"] = new List<string> { $"[LDAP://CN={Gpo},CN=Policies,CN=System,{Base};2]" };
+        Fake.Dir["DC=acme.test,CN=MicrosoftDNS,DC=DomainDnsZones," + Base] = Make(("objectClass", "dnsZone"), ("name", "acme.test"));
+        var rec = new byte[28]; rec[0] = 4; rec[2] = 1; rec[4] = 5; rec[5] = 240; rec[14] = 0x0E; rec[15] = 0x10; rec[24] = 10; rec[27] = 5;   // an A record, 10.0.0.5, TTL 3600
+        Fake.Dir["DC=www,DC=acme.test,CN=MicrosoftDNS,DC=DomainDnsZones," + Base] = Make(("objectClass", "dnsNode"), ("name", "www"), ("dnsRecord", "base64:" + Convert.ToBase64String(rec)));
+
+        // group policy: what exists, where it applies, what is unused
+        var pol = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/group-policy"));
+        Assert.Equal(2, pol.GetProperty("summary").GetProperty("total").GetInt32()); Assert.Equal(1, pol.GetProperty("summary").GetProperty("unlinked").GetInt32());
+        var def = pol.GetProperty("gpos").EnumerateArray().First(x => x.GetProperty("name").GetString() == "Default Domain Policy");
+        Assert.Equal(2, def.GetProperty("userVersion").GetInt32()); Assert.True(def.GetProperty("links")[0].GetProperty("enforced").GetBoolean()); Assert.Contains("(domain)", def.GetProperty("links")[0].GetProperty("target").GetString());
+        var old = pol.GetProperty("gpos").EnumerateArray().First(x => x.GetProperty("name").GetString() == "Old Policy");
+        Assert.True(old.GetProperty("unlinked").GetBoolean()); Assert.True(old.GetProperty("empty").GetBoolean()); Assert.True(old.GetProperty("allOff").GetBoolean());
+
+        // dns: the zone, then its record
+        var zones = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/dns"));
+        Assert.Equal("acme.test", zones.GetProperty("zones")[0].GetProperty("name").GetString());
+        var recs = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/dns?zone=acme.test&source=domain"));
+        var a = recs.GetProperty("records")[0]; Assert.Equal("www", a.GetProperty("name").GetString()); Assert.Equal("A", a.GetProperty("type").GetString()); Assert.Equal("10.0.0.5", a.GetProperty("data").GetString()); Assert.Equal(3600, a.GetProperty("ttl").GetInt64());
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync($"/api/adsuite/domains/{dom}/dns?zone=a,b&source=domain")).StatusCode);
+
+        // the map and the health check answer with findings
+        var map = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/map"));
+        var kids = map.GetProperty("tree").GetProperty("children").EnumerateArray().Select(x => x.GetProperty("name").GetString()).ToList();
+        Assert.Contains("Staff", kids); Assert.Contains("Servers", kids);
+        var hr = await admin.GetAsync($"/api/adsuite/domains/{dom}/health"); Assert.True(hr.IsSuccessStatusCode, await hr.Content.ReadAsStringAsync());
+        var health = await J(hr);
+        var keys = health.GetProperty("findings").EnumerateArray().Select(x => x.GetProperty("key").GetString()).ToList();
+        Assert.Contains("dcs", keys); Assert.Contains("stale", keys);
+
+        // these read the whole domain, so a person with no rights on it is refused
+        Assert.Equal(HttpStatusCode.Forbidden, (await eve.GetAsync($"/api/adsuite/domains/{dom}/health")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await eve.GetAsync($"/api/adsuite/domains/{dom}/group-policy")).StatusCode);
+    }
 }
