@@ -18,12 +18,12 @@ public static class CannedApi
         var anyone = (RouteHandlerBuilder b) => b.RequireAuthorization().RequireModule(key);
         var admin = (RouteHandlerBuilder b) => b.RequireAuthorization(p => p.RequireRole("admin")).RequireModule(key);
 
-        anyone(r.MapGet("/api/servicedesk/canned", async (System.Security.Claims.ClaimsPrincipal u, ITenantContext t, bool? all, CancellationToken ct) =>
+        anyone(r.MapGet("/api/servicedesk/canned", async (System.Security.Claims.ClaimsPrincipal u, ITenantContext t, string? all, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
             var who = await WhoAsync(u, db, ct);
             if (!who.Staff) return Results.Json(new { error = "forbidden" }, statusCode: 403);
-            var everything = all == true && who.Admin;
+            var everything = (all == "1" || string.Equals(all, "true", StringComparison.OrdinalIgnoreCase)) && who.Admin;
             await using var c = new NpgsqlCommand("select id, title, body, active from servicedesk.canned" + (everything ? "" : " where active") + " order by lower(title)", db);
             var list = new List<object>();
             await using var rd = await c.ExecuteReaderAsync(ct);
