@@ -26,7 +26,7 @@ export function Health({ domain }: { domain: Rec }) {
 
 /** Group Policy objects and where they are linked. Read only. */
 export function Policies({ domain }: { domain: Rec }) {
-  const p = useLoad<Rec>(`/api/adsuite/domains/${domain.id}/policies`, [domain.id]);
+  const p = useLoad<Rec>(`/api/adsuite/domains/${domain.id}/group-policy`, [domain.id]);
   const [only, setOnly] = useState('');
   if (!p.data) return <><h1>Group Policy</h1><Loading loading={p.loading} error={p.error} /></>;
   const s = p.data.summary as Rec; const all = (p.data.gpos ?? []) as Rec[];

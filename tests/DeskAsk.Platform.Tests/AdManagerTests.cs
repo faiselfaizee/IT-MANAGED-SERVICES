@@ -596,7 +596,7 @@ public class AdManagerTests : IClassFixture<WebApplicationFactory<Program>>
         Fake.Dir["DC=www,DC=acme.test,CN=MicrosoftDNS,DC=DomainDnsZones," + Base] = Make(("objectClass", "dnsNode"), ("name", "www"), ("dnsRecord", "base64:" + Convert.ToBase64String(rec)));
 
         // group policy: what exists, where it applies, what is unused
-        var pol = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/policies"));
+        var pol = await J(await admin.GetAsync($"/api/adsuite/domains/{dom}/group-policy"));
         Assert.Equal(2, pol.GetProperty("summary").GetProperty("total").GetInt32()); Assert.Equal(1, pol.GetProperty("summary").GetProperty("unlinked").GetInt32());
         var def = pol.GetProperty("gpos").EnumerateArray().First(x => x.GetProperty("name").GetString() == "Default Domain Policy");
         Assert.Equal(2, def.GetProperty("userVersion").GetInt32()); Assert.True(def.GetProperty("links")[0].GetProperty("enforced").GetBoolean()); Assert.Contains("(domain)", def.GetProperty("links")[0].GetProperty("target").GetString());
@@ -620,6 +620,6 @@ public class AdManagerTests : IClassFixture<WebApplicationFactory<Program>>
 
         // these read the whole domain, so a person with no rights on it is refused
         Assert.Equal(HttpStatusCode.Forbidden, (await eve.GetAsync($"/api/adsuite/domains/{dom}/health")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await eve.GetAsync($"/api/adsuite/domains/{dom}/policies")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await eve.GetAsync($"/api/adsuite/domains/{dom}/group-policy")).StatusCode);
     }
 }

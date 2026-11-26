@@ -290,7 +290,7 @@ internal static class InsightApi
             catch (DirError e) { return Dir.Explain(e); }
         }), key);
 
-        AdModule.Use(r.MapGet("/api/adsuite/domains/{id:int}/policies", async (int id, ClaimsPrincipal u, ITenantContext t, IDataProtectionProvider dp, IControllerRelay relay, IAccess access, CancellationToken ct) =>
+        AdModule.Use(r.MapGet("/api/adsuite/domains/{id:int}/group-policy", async (int id, ClaimsPrincipal u, ITenantContext t, IDataProtectionProvider dp, IControllerRelay relay, IAccess access, CancellationToken ct) =>
         {
             var (d, fail) = await Gate(id, u, t, dp, access, ct); if (d == null) return fail!;
             try
