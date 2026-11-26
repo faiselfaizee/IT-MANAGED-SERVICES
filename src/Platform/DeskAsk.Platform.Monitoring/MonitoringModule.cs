@@ -157,6 +157,8 @@ public sealed class MonitorSettings
     public bool ReportEnabled { get; set; }
     public string ReportTo { get; set; } = "";
     public bool ReportCustomers { get; set; } = true;
+    /// <summary>Who is mailed for which alerts, first matching route wins; an alert that matches none goes to the customer's list or the default list (6.22.0).</summary>
+    public List<AlertRoute> Routes { get; set; } = new();
 
     public static async Task<MonitorSettings> LoadAsync(ISettings s, CancellationToken ct)
     {
@@ -171,5 +173,24 @@ public sealed class MonitorSettings
     public string TeamsFor(int? companyId, Func<string, string> open) =>
         companyId is int c && CompanyTeams.TryGetValue(c.ToString(), out var own) && own != "" ? open(own) : Teams != "" ? open(Teams) : "";
 
+    /// <summary>The addresses for one alert: the first route that fits its kind of device, customer and severity, else the usual list.</summary>
+    public List<string> For(int? companyId, string kind, string severity)
+    {
+        foreach (var r in Routes)
+            if ((r.Kinds.Length == 0 || r.Kinds.Contains(kind)) && (r.CompanyId == null || r.CompanyId == companyId) && (r.Severity == "" || r.Severity == severity) && Split(r.To).Count > 0) return Split(r.To);
+        return For(companyId);
+    }
+
     public List<string> For(int? companyId) => Split(companyId is int c && Companies.TryGetValue(c.ToString(), out var own) && own.Trim() != "" ? own : Recipients);
+}
+
+/// <summary>One alert route: which alerts (kinds of device, a customer, a severity; empty means any) go to which addresses.</summary>
+public sealed class AlertRoute
+{
+    public string Name { get; set; } = "";
+    public string[] Kinds { get; set; } = Array.Empty<string>();
+    public int? CompanyId { get; set; }
+    /// <summary>"" for any, or critical or warning.</summary>
+    public string Severity { get; set; } = "";
+    public string To { get; set; } = "";
 }

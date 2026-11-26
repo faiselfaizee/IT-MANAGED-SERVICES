@@ -175,3 +175,7 @@ The menu follows the licence: Service Desk, Assets, Monitoring, AD Manager, Vaul
 ## Setup is under Administration (6.6.0)
 
 Customers, credentials, agents and discovery are at Administration › Devices setup, shared with Asset management, so Monitoring can be used without the Assets licence.
+
+## Alert routing (6.22.0)
+
+Monitoring › Settings › Alert routing sends some alerts to different people. A route says which alerts it takes (a kind of device, a customer and a severity; leave a choice empty for any) and which addresses get them. The **first route that fits** an alert is used. An alert that fits no route goes to the customer's own list if it has one, else to the default list, as before. Routes apply to the alert mail (opening and clearing); Teams channels and escalation are unchanged. Example: printers to the local IT team, network devices to the network team, everything critical for one customer to its manager. Order matters: use "Up" to move a route higher. API: `routes` in `GET/PUT /api/monitoring/settings` (each `{name, kinds, companyId, severity, to}`).

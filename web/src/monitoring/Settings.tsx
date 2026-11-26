@@ -3,6 +3,7 @@ import { api, useLoad, type Rec } from '../http';
 import { Field, Loading } from '../ui';
 
 type Own = { companyId: number; recipients: string; teams: string };
+const KINDS: Record<string, string> = { computer: 'Computers', server: 'Servers', network: 'Network devices', printer: 'Printers', other: 'Other devices' };
 
 /** Where alerts go (mail and Teams, with a customer's own where needed), escalation of unacknowledged alerts, and the monthly report. */
 export default function Settings() {
@@ -14,6 +15,9 @@ export default function Settings() {
   useEffect(() => { if (data) { setV({ ...data }); setOwn(((data.companies ?? []) as Rec[]).map((c) => ({ companyId: Number(c.companyId), recipients: String(c.recipients ?? ''), teams: String(c.teams ?? '') }))); } }, [data]);
   const cos = (Array.isArray(companies.data) ? companies.data : ((companies.data as Rec | null)?.items ?? [])) as Rec[];
   const set = (k: string, x: unknown) => setV({ ...v, [k]: x });
+  const routes = (v.routes ?? []) as Rec[];
+  const setRoute = (i: number, patch: Rec) => set('routes', routes.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const moveRoute = (i: number, d: number) => { const a = [...routes]; const j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; set('routes', a); };
   const save = async () => {
     setMsg(''); setErr('');
     try { await api('/api/monitoring/settings', { method: 'PUT', body: { ...v, escalateMinutes: Number(v.escalateMinutes ?? 0), companies: own } }); setMsg('Saved.'); reload(); } catch (e) { setErr((e as Error).message); }
@@ -43,6 +47,19 @@ export default function Settings() {
         <button type="button" onClick={() => setOwn(own.filter((_, j) => j !== i))}>Remove</button>
       </fieldset>)}
       <div className="tools"><button type="button" onClick={() => setOwn([...own, { companyId: 0, recipients: '', teams: '' }])}>Add a customer</button></div>
+
+      <h2>Alert routing</h2>
+      <p className="muted">Send some alerts to different people, for example printers to the local IT team and network devices to the network team. The first route that fits an alert is used; an alert that fits none goes to the lists above. Leave a choice empty for any.</p>
+      {routes.map((r, i) => <fieldset key={i} className="own">
+        <input value={r.name ?? ''} aria-label="Route name" placeholder="Name, for example Network team" onChange={(e) => setRoute(i, { name: e.target.value })} />
+        <select value={(r.kinds ?? [])[0] ?? ''} aria-label="Kind of device" onChange={(e) => setRoute(i, { kinds: e.target.value ? [e.target.value] : [] })}><option value="">Any device</option>{Object.entries(KINDS).map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select>
+        <select value={r.companyId ?? ''} aria-label="Customer" onChange={(e) => setRoute(i, { companyId: e.target.value ? Number(e.target.value) : null })}><option value="">Any customer</option>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        <select value={r.severity ?? ''} aria-label="Severity" onChange={(e) => setRoute(i, { severity: e.target.value })}><option value="">Any severity</option><option value="critical">Critical only</option><option value="warning">Warning only</option></select>
+        <input value={r.to ?? ''} aria-label="Route addresses" placeholder="network@yourcompany.com" onChange={(e) => setRoute(i, { to: e.target.value })} />
+        <button type="button" disabled={i === 0} onClick={() => moveRoute(i, -1)} aria-label="Move up">Up</button>
+        <button type="button" onClick={() => set('routes', routes.filter((_, j) => j !== i))}>Remove</button>
+      </fieldset>)}
+      <div className="tools"><button type="button" onClick={() => set('routes', [...routes, { name: '', kinds: [], companyId: null, severity: '', to: '' }])}>Add a route</button></div>
 
       <h2>Escalation</h2>
       <p className="muted">When nobody acknowledges a critical alert in time, it goes once to these people and this channel as well.</p>

@@ -52,6 +52,7 @@ public sealed class ServiceDeskModule : IPlatformModule
         CatalogApi.Map(r, Key);
         ItilApi.Map(r, Key);
         KnowledgeApi.Map(r, Key);
+        CannedApi.Map(r, Key);
     }
 
     // ---------------------------------------------------------------- shared helpers

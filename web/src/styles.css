@@ -825,3 +825,4 @@ html[data-look='compact'] .shell-top .main > .modshell > .modmain, html[data-loo
   .shell-top .main > .modshell > .modmain, .shell-top .main > .page { padding: 10px 16px 40px; }
   .shell-top .main > .crumb-line { padding: 12px 16px 0; }
 }
+.page-size { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }

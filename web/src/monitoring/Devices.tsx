@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useInterval, useLoad, type Rec } from '../http';
-import { ago, Empty, Loading } from '../ui';
+import { ago, Empty, Loading, PageSize, usePageSize } from '../ui';
 
 /** Filters that come from a ring part, with the words shown for them. */
 export const DEV_FILTERS: Record<string, Record<string, string>> = {
@@ -29,7 +29,7 @@ export default function Devices() {
   const qs = new URLSearchParams(location.hash.split('?')[1] ?? '');
   const company = qs.get('company') ?? '';
   const filters = Object.keys(DEV_FILTERS).map((k) => [k, qs.get(k) ?? ''] as const).filter(([k, v]) => v && DEV_FILTERS[k][v]);
-  const [search, setSearch] = useState(''); const [skip, setSkip] = useState(0); const take = 50;
+  const [search, setSearch] = useState(''); const [skip, setSkip] = useState(0); const [take, setTake] = usePageSize('devices', 50);
   const co = useLoad<Rec>(company ? `/api/monitoring/dashboard?company=${encodeURIComponent(company)}` : null);
   const coName = company ? String(co.data?.customer?.company ?? (company === 'none' ? 'No customer' : '…')) : '';
   const q = `/api/monitoring/devices?search=${encodeURIComponent(search)}` + (company ? `&company=${encodeURIComponent(company)}` : '') + filters.map(([k, v]) => `&${k}=${v}`).join('') + `&skip=${skip}&take=${take}`;
@@ -58,6 +58,6 @@ export default function Devices() {
           <td>{d.alerts > 0 ? <a href={`#/monitoring/device/${d.id}`}>{d.alertsCritical > 0 ? <span className="badge bad">{d.alerts}</span> : <span className="badge warn">{d.alerts}</span>}</a> : <span className="muted">0</span>}</td>
         </tr>)}</tbody>
       </table></div>)}
-    {total > take && <div className="tools"><button disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - take))}>Previous</button><span className="muted">{skip + 1}–{Math.min(skip + take, total)} of {total}</span><button disabled={skip + take >= total} onClick={() => setSkip(skip + take)}>Next</button></div>}
+    {total > 10 && <div className="tools"><button disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - take))}>Previous</button><span className="muted">{skip + 1}–{Math.min(skip + take, total)} of {total}</span><button disabled={skip + take >= total} onClick={() => setSkip(skip + take)}>Next</button><PageSize value={take} onChange={(n) => { setTake(n); setSkip(0); }} /></div>}
   </>;
 }

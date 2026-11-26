@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { go, useLoad, type Rec } from '../http';
-import { Badge, Empty, Loading, ago } from '../ui';
+import { Badge, Empty, Loading, PageSize, ago, usePageSize } from '../ui';
 import { Ring } from '../Rings';
 
 export const STATUS: Record<string, string> = { open: 'Open', progress: 'In progress', hold: 'Awaiting customer', resolved: 'Resolved', closed: 'Closed' };
@@ -19,7 +19,7 @@ export const SlaBadge = ({ s }: { s: string }) => { const [t, tone] = SLA[s] ?? 
 export default function List({ me, kind = '', major = false }: { me: Rec | null; kind?: '' | 'incident' | 'request'; major?: boolean }) {
   const staff = !!me?.staff;
   const [status, setStatus] = useState('active'); const [priority, setPriority] = useState(''); const [assignee, setAssignee] = useState('');
-  const [text, setText] = useState(''); const [overdue, setOverdue] = useState(false); const [skip, setSkip] = useState(0); const take = 25;
+  const [text, setText] = useState(''); const [overdue, setOverdue] = useState(false); const [skip, setSkip] = useState(0); const [take, setTake] = usePageSize('tickets', 25);
   const qs = `status=${status === 'all' ? '' : status}&priority=${priority}&assignee=${assignee}&q=${encodeURIComponent(text)}${overdue ? '&overdue=1' : ''}${kind ? '&kind=' + kind : ''}${major ? '&major=1' : ''}&skip=${skip}&take=${take}`;
   const { data, error, loading } = useLoad<Rec>('/api/servicedesk/tickets?' + qs);
   const sum = useLoad<Rec>('/api/servicedesk/summary' + (major ? '?major=1' : kind ? '?kind=' + kind : ''));
@@ -64,7 +64,7 @@ export default function List({ me, kind = '', major = false }: { me: Rec | null;
         {staff && <td>{t.assignee || <span className="muted">Unassigned</span>}</td>}
         <td><SlaBadge s={t.sla} /></td><td className="muted">{ago(t.updatedAt)}</td>
       </tr>)}</tbody></table>)}
-    {total > take && <div className="tools"><button disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - take))}>Previous</button>
-      <span className="muted">{skip + 1}–{Math.min(skip + take, total)} of {total}</span><button disabled={skip + take >= total} onClick={() => setSkip(skip + take)}>Next</button></div>}
+    {total > 10 && <div className="tools"><button disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - take))}>Previous</button>
+      <span className="muted">{skip + 1}–{Math.min(skip + take, total)} of {total}</span><button disabled={skip + take >= total} onClick={() => setSkip(skip + take)}>Next</button><PageSize value={take} onChange={(n) => { setTake(n); setSkip(0); }} /></div>}
   </>;
 }

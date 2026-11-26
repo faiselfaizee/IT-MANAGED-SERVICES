@@ -51,3 +51,14 @@ export function useSubmit(done: () => void) {
 export function str(o: Rec, k: string): string { const v = o[k]; return v === null || v === undefined ? '' : String(v); }
 export const copyText = (t: string) => { try { void navigator.clipboard.writeText(t); } catch { /* clipboard not available */ } };
 export function Copy({ text }: { text: string }) { return <code className="copy" onClick={() => copyText(text)} title="Click to copy">{text}</code>; }
+
+export const PAGE_SIZES = [10, 25, 50, 100, 200];
+/** Rows per page for a long list, remembered in this browser per list. */
+export function usePageSize(key: string, def = 50): [number, (n: number) => void] {
+  const read = () => { try { const v = Number(localStorage.getItem('pageSize.' + key)); return PAGE_SIZES.includes(v) ? v : def; } catch { return def; } };
+  const [n, setN] = useState(read);
+  return [n, (v) => { setN(v); try { localStorage.setItem('pageSize.' + key, String(v)); } catch { /* storage not available */ } }];
+}
+export function PageSize({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  return <label className="page-size"><span className="muted small">Rows per page</span> <select value={value} aria-label="Rows per page" onChange={(e) => onChange(Number(e.target.value))}>{PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}</select></label>;
+}

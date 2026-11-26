@@ -209,6 +209,34 @@ public sealed class ServiceDeskSchema : ITenantSchema
             alter table servicedesk.tickets add constraint tickets_rating_check check (rating is null or rating in ('up','down'));
             alter table servicedesk.tickets add column if not exists rating_comment text not null default '';
             alter table servicedesk.tickets add column if not exists rated_at timestamptz"),
+        new(10, "canned replies and working hours", @"
+            create table if not exists servicedesk.canned (
+              id serial primary key, title text not null, body text not null, active boolean not null default true,
+              created_by text not null default '', created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+            create unique index if not exists canned_title on servicedesk.canned (lower(title));
+            -- the moment a target is reached when only working time counts: from t0, spend secs seconds inside the working window (minutes since midnight s..e on the ISO weekdays in d, in the zone tz)
+            create or replace function servicedesk.work_due(t0 timestamptz, secs double precision, on_ boolean, s int, e int, d int[], tz text) returns timestamptz language plpgsql stable as $f$
+            declare cur timestamp; rem double precision := secs; day date; opens timestamp; closes timestamp; avail double precision; n int := 0;
+            begin
+              if on_ is not true or e <= s or coalesce(array_length(d, 1), 0) = 0 then return t0 + make_interval(secs => secs); end if;
+              cur := t0 at time zone tz;
+              loop
+                n := n + 1;
+                exit when n > 4000;
+                day := cur::date;
+                if extract(isodow from day)::int = any(d) then
+                  opens := day + make_interval(mins => s); closes := day + make_interval(mins => e);
+                  if cur < opens then cur := opens; end if;
+                  if cur < closes then
+                    avail := extract(epoch from closes - cur);
+                    if rem <= avail then return (cur + make_interval(secs => rem)) at time zone tz; end if;
+                    rem := rem - avail;
+                  end if;
+                end if;
+                cur := (day + 1)::timestamp;
+              end loop;
+              return cur at time zone tz;
+            end $f$"),
     };
     public Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct) =>
         SchemaMigrator.RunAsync(tenant.ConnectionString, Name, Migrations, ct);

@@ -483,3 +483,17 @@ Assets › Software › **Repository**: the approved programs engineers install 
 - The number under **Installs** opens where and when the program was installed, by whom, and each result.
 
 Removing a program from the repository deletes its file. Computers that have it keep it; uninstall it from their Applications tab. Audit: `assets.package_added`, `assets.package_changed`, `assets.package_removed`, `assets.package_install`. Tables: `assets.packages`, `assets.package_installs` (migration 32).
+
+## Relationships between assets (6.22.0)
+
+The asset page has a **Relationships** tab. Link an asset to another with one of: *runs on* (a virtual machine on its host), *depends on* (an application on a database), *is part of*, or *is connected to* (a server to its switch). The tab lists links in both directions and, under it, **If this asset fails**: every asset that would suffer, nearest first, with its open tickets. The same list shows on a ticket whose asset is down.
+
+How the walk goes: *runs on*, *depends on* and *is part of* mean the first asset suffers when the second fails; *connected to* counts both ways. It follows up to four steps, never loops, and shows at most 200 assets. Customer administrators see only assets of their own company. Adding and removing links needs the right to modify assets and is written to the audit log (`assets.relation_added`, `assets.relation_removed`). API: `GET/POST /api/assets/{id}/relations`, `DELETE /api/assets/relations/{id}`, `GET /api/assets/{id}/impact`.
+
+## Required and prohibited software (6.22.0)
+
+Edit a program in the repository and choose a **Company rule**: *Required* (every computer of its system should have it) or *Prohibited*. "Name in the inventory" is part of the name as the agent lists it (empty means the program's own name; case is ignored). The repository page then lists **Computers that break a software rule**, from the last program list each agent sent. Computers that never sent a list, and retired or lost ones, are left out. API: `GET /api/assets/packages/violations?company=<id>`.
+
+## Rows per page (6.22.0)
+
+The asset list, the ticket list and the Monitoring device list have a "Rows per page" choice (10, 25, 50, 100 or 200), remembered in the browser for each list.

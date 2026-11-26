@@ -22,12 +22,25 @@ public sealed class SlaConfig
     public Dictionary<string, double> Resolve = new() { ["critical"] = 4, ["high"] = 8, ["medium"] = 24, ["low"] = 72 };
     public int WarnPct = 75;
     public bool Pause = true, Escalate = true;
+    /// <summary>When on, the targets count only working time: the days and hours below, in the given time zone.</summary>
+    public bool Business;
+    public int StartMin = 9 * 60, EndMin = 18 * 60;
+    public int[] Days = { 1, 2, 3, 4, 5 };
+    public string Zone = "UTC";
 
     public const string Key = "servicedesk.sla";
     public static readonly string[] DefaultCategories = { "Hardware", "Software", "Network", "Email", "Access and accounts", "Other" };
     public const string CategoriesKey = "servicedesk.categories";
 
-    public object ToJson() => new { respond = Respond, resolve = Resolve, warnPct = WarnPct, pause = Pause, escalate = Escalate };
+    static string Clock(int m) => (m / 60).ToString("00") + ":" + (m % 60).ToString("00");
+    public object ToJson() => new { respond = Respond, resolve = Resolve, warnPct = WarnPct, pause = Pause, escalate = Escalate, hours = new { enabled = Business, start = Clock(StartMin), end = Clock(EndMin), days = Days, zone = Zone } };
+
+    static bool Minutes(JsonElement v, out int m)
+    {
+        m = 0; if (v.ValueKind != JsonValueKind.String) return false;
+        var t = v.GetString()!.Split(':');
+        return t.Length == 2 && int.TryParse(t[0], out var h) && int.TryParse(t[1], out var mi) && h is >= 0 and <= 24 && mi is >= 0 and < 60 && (m = h * 60 + mi) <= 24 * 60;
+    }
 
     /// <summary>Reads and checks the settings JSON; null with an error text when something is out of range.</summary>
     public static SlaConfig? Parse(JsonElement b, out string? error)
@@ -54,6 +67,28 @@ public sealed class SlaConfig
         }
         if (b.TryGetProperty("pause", out var pa) && pa.ValueKind is JsonValueKind.True or JsonValueKind.False) c.Pause = pa.GetBoolean();
         if (b.TryGetProperty("escalate", out var es) && es.ValueKind is JsonValueKind.True or JsonValueKind.False) c.Escalate = es.GetBoolean();
+        if (b.TryGetProperty("hours", out var hh) && hh.ValueKind == JsonValueKind.Object)
+        {
+            c.Business = hh.TryGetProperty("enabled", out var en) && en.ValueKind == JsonValueKind.True;
+            if (hh.TryGetProperty("start", out var st)) { if (!Minutes(st, out var sm)) { error = "The start of the working day must look like 09:00."; return null; } c.StartMin = sm; }
+            if (hh.TryGetProperty("end", out var ed)) { if (!Minutes(ed, out var em)) { error = "The end of the working day must look like 18:00."; return null; } c.EndMin = em; }
+            if (c.Business && c.EndMin <= c.StartMin) { error = "The working day must end after it starts."; return null; }
+            if (hh.TryGetProperty("days", out var dv))
+            {
+                if (dv.ValueKind != JsonValueKind.Array) { error = "The working days must be a list."; return null; }
+                var days = new SortedSet<int>();
+                foreach (var x in dv.EnumerateArray()) { if (x.ValueKind != JsonValueKind.Number || !x.TryGetInt32(out var dd) || dd is < 1 or > 7) { error = "Working days are numbered 1 (Monday) to 7 (Sunday)."; return null; } days.Add(dd); }
+                c.Days = days.ToArray();
+            }
+            if (c.Business && c.Days.Length == 0) { error = "Choose at least one working day."; return null; }
+            if (hh.TryGetProperty("zone", out var zv))
+            {
+                var z = zv.ValueKind == JsonValueKind.String ? zv.GetString()!.Trim() : "";
+                if (z.Length == 0) z = "UTC";
+                try { TimeZoneInfo.FindSystemTimeZoneById(z); } catch (Exception e) when (e is TimeZoneNotFoundException or InvalidTimeZoneException) { error = "The time zone '" + z + "' is not known. Use a name such as Asia/Kolkata or Europe/London."; return null; }
+                c.Zone = z;
+            }
+        }
         return c;
     }
 
@@ -75,11 +110,13 @@ public sealed class SlaConfig
     public void Bind(NpgsqlCommand c)
     {
         foreach (var p in Prios) { c.Parameters.AddWithValue("rp_" + p, Respond[p]); c.Parameters.AddWithValue("rs_" + p, Resolve[p]); }
+        c.Parameters.AddWithValue("bh_on", Business); c.Parameters.AddWithValue("bh_s", StartMin); c.Parameters.AddWithValue("bh_e", EndMin);
+        c.Parameters.AddWithValue("bh_d", Days); c.Parameters.AddWithValue("bh_z", Zone);
     }
     const string Case = "case priority when 'critical' then @{0}_critical when 'high' then @{0}_high when 'medium' then @{0}_medium else @{0}_low end";
-    /// <summary>SQL fragments for a ticket's due dates: creation time + target + the time spent waiting for the customer.</summary>
-    public static string RespondDue => "created_at + make_interval(secs => " + string.Format(Case, "rp") + " * 3600 + paused_s)";
-    public static string ResolveDue => "created_at + make_interval(secs => " + string.Format(Case, "rs") + " * 3600 + paused_s)";
+    /// <summary>SQL fragments for a ticket's due dates: the target counted from the creation time (working time only when business hours are on) + the time spent waiting for the customer.</summary>
+    public static string RespondDue => "servicedesk.work_due(created_at, " + string.Format(Case, "rp") + " * 3600, @bh_on, @bh_s, @bh_e, @bh_d, @bh_z) + make_interval(secs => paused_s)";
+    public static string ResolveDue => "servicedesk.work_due(created_at, " + string.Format(Case, "rs") + " * 3600, @bh_on, @bh_s, @bh_e, @bh_d, @bh_z) + make_interval(secs => paused_s)";
 
     /// <summary>ok, warning, breached, paused or met (for finished tickets, met or breached).</summary>
     public string State(string status, DateTime created, DateTime? due, DateTime? paused, DateTime? resolved, long pausedS, DateTime now)
