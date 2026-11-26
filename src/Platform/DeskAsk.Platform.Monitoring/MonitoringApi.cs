@@ -413,6 +413,7 @@ public static class MonitoringApi
                 companies = keys.Select(k => new { companyId = int.Parse(k), company = names.GetValueOrDefault(k, "Customer " + k), recipients = m.Companies.GetValueOrDefault(k, ""), teams = Hint(m.CompanyTeams.GetValueOrDefault(k, "")) }),
                 escalateMinutes = m.EscalateMinutes, escalateRecipients = m.EscalateRecipients, escalateTeams = Hint(m.EscalateTeams),
                 reportEnabled = m.ReportEnabled, reportTo = m.ReportTo, reportCustomers = m.ReportCustomers,
+                routes = m.Routes.Select(x => new { name = x.Name, kinds = x.Kinds, companyId = x.CompanyId, severity = x.Severity, to = x.To }),
             });
         }));
 
@@ -459,6 +460,23 @@ public static class MonitoringApi
                     if (list != "") m.Companies[key] = list;
                     if ((hook ?? "") != "") m.CompanyTeams[key] = hook!;
                 }
+            if (b.TryGetProperty("routes", out var rs))
+            {
+                if (rs.ValueKind != JsonValueKind.Array || rs.GetArrayLength() > 50) return MonitoringModule.Bad("bad_input", "Give at most 50 routes.");
+                foreach (var x in rs.EnumerateArray())
+                {
+                    var to = Str(x, "to"); var name = Str(x, "name"); var sev = Str(x, "severity");
+                    if (CheckList(to) is string e3) return MonitoringModule.Bad("bad_input", e3);
+                    if (MonitorSettings.Split(to).Count == 0) return MonitoringModule.Bad("bad_input", "Every route needs at least one email address.");
+                    if (sev is not ("" or "critical" or "warning")) return MonitoringModule.Bad("bad_input", "A route's severity is empty, critical or warning.");
+                    var kinds = x.ValueKind == JsonValueKind.Object && x.TryGetProperty("kinds", out var kv) && kv.ValueKind == JsonValueKind.Array ? kv.EnumerateArray().Where(k => k.ValueKind == JsonValueKind.String).Select(k => k.GetString()!).ToArray() : Array.Empty<string>();
+                    if (kinds.Any(k => !RulesApi.Kinds.Contains(k))) return MonitoringModule.Bad("bad_input", "A route's kinds may hold " + string.Join(", ", RulesApi.Kinds));
+                    int? co = x.ValueKind == JsonValueKind.Object && x.TryGetProperty("companyId", out var cv2) && cv2.ValueKind == JsonValueKind.Number ? cv2.GetInt32() : null;
+                    if (co != null && await dir.GetAsync(co.Value, ct) == null) return MonitoringModule.Bad("bad_input", "That customer does not exist.");
+                    m.Routes.Add(new AlertRoute { Name = name.Length > 60 ? name[..60] : name, Kinds = kinds, CompanyId = co, Severity = sev, To = to });
+                }
+            }
+            else m.Routes = old.Routes;
             await m.SaveAsync(s, ct);
             await audit.WriteAsync("monitoring.settings_changed", "", $"{MonitorSettings.Split(m.Recipients).Count} default recipients, Teams {(m.Teams != "" ? "on" : "off")}, {m.Companies.Count + m.CompanyTeams.Count} customer overrides, escalation {(m.EscalateMinutes > 0 ? m.EscalateMinutes + " min" : "off")}, monthly report {(m.ReportEnabled ? "on" : "off")}", ct: ct);
             return Results.Ok(new { ok = true });

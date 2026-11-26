@@ -4,6 +4,7 @@ import { Act, Badge, Card, Dl, Err, Field, Loading, fmtDate, fmtBytes, useSubmit
 import { CustomCard, useFields } from './Fields';
 import { KIND, KindBadge, LEVEL, PRIORITY, PriorityBadge, STATUS, SlaBadge, StatusBadge } from './List';
 import { KnownErrorHints } from './Itil';
+import { Impact } from '../assets/Relations';
 
 export default function Detail({ id }: { id: string }) {
   const { data, error, loading, reload } = useLoad<Rec>('/api/servicedesk/tickets/' + id);
@@ -11,6 +12,7 @@ export default function Detail({ id }: { id: string }) {
   const staffList = useLoad<Rec[]>(can.edit ? '/api/servicedesk/staff' : null);
   const fieldDefs = useFields();
   const settings = useLoad<Rec>(can.edit ? '/api/servicedesk/settings' : null);
+  const canned = useLoad<Rec[]>(can.edit ? '/api/servicedesk/canned' : null);
   const [body, setBody] = useState(''); const [internal, setInternal] = useState(false); const file = useRef<HTMLInputElement>(null);
   const reply = useSubmit(() => { setBody(''); setInternal(false); reload(); });
   const patch = (b: Rec) => api(`/api/servicedesk/tickets/${id}`, { method: 'PATCH', body: b }).then(reload);
@@ -30,6 +32,9 @@ export default function Detail({ id }: { id: string }) {
             <li key={c.id} className={c.kind}><div className="who"><b>{c.author}</b>{c.kind === 'internal' && <Badge tone="warn">Internal note</Badge>}<span className="muted">{fmtDate(c.at)}</span></div>
               <div className="said">{c.body}</div></li>)}</ol>}
           {can.comment && !(closed && !can.edit) && <div className="form" style={{ marginTop: 14 }}>
+            {can.edit && Array.isArray(canned.data) && canned.data.length > 0 && <label><span>Canned reply</span>
+              <select value="" aria-label="Canned reply" onChange={(e) => { const c = canned.data!.find((x) => String(x.id) === e.target.value); if (c) setBody((b) => (b ? b + '\n\n' : '') + fillCanned(String(c.body), t)); }}>
+                <option value="">Insert a canned reply…</option>{canned.data.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}</select></label>}
             <textarea rows={4} placeholder="Write a reply…" value={body} onChange={(e) => setBody(e.target.value)} aria-label="Reply" />
             <Err text={reply.err} />
             <div className="actions">
@@ -53,6 +58,7 @@ export default function Detail({ id }: { id: string }) {
         {(can.rate || data?.rating) && <Rating id={id} done={t.status === 'resolved' || closed} rating={data?.rating as Rec | null} canRate={!!can.rate} reload={reload} />}
         <CustomCard defs={fieldDefs} values={(data?.custom ?? {}) as Rec} edit={!!can.edit} save={patch} />
         <Related id={id} />
+        {can.edit && t.assetId && <AssetImpact assetId={String(t.assetId)} />}
         {can.edit && <KnownErrorHints id={id} />}
         {can.edit && <Assist id={id} t={t} patch={patch} fill={setBody} />}
         <Card title="Details">
@@ -87,6 +93,12 @@ export default function Detail({ id }: { id: string }) {
   </>;
 }
 
+/** Fills {requester}, {agent} and {number} in a canned reply. {agent} is the person assigned, or "the support team". */
+export function fillCanned(text: string, t: Rec): string {
+  const first = (n: unknown) => String(n ?? '').trim().split(' ')[0];
+  return text.replace(/\{requester\}/gi, first(t.requester) || 'there').replace(/\{agent\}/gi, String(t.assignee || 'the support team')).replace(/\{number\}/gi, String(t.number ?? ''));
+}
+
 /** Suggestions for the support team: similar earlier tickets, a category and priority, and a reply to start from. */
 function Assist({ id, t, patch, fill }: { id: string; t: Rec; patch: (b: Rec) => Promise<unknown>; fill: (text: string) => void }) {
   const [on, setOn] = useState(false); const a = useLoad<Rec>(on ? `/api/servicedesk/tickets/${id}/assist` : null);
@@ -101,6 +113,12 @@ function Assist({ id, t, patch, fill }: { id: string; t: Rec; patch: (b: Rec) =>
       </>}
     </>}
   </Card>;
+}
+
+/** What else suffers if the ticket's asset is down (needs Assets; hidden when it is not available). */
+function AssetImpact({ assetId }: { assetId: string }) {
+  const i = useLoad<Rec>(`/api/assets/${assetId}/impact`);
+  return <Impact data={i.data} loading={i.loading} error={i.error} title="Affected if this asset fails" />;
 }
 
 /** Problems and changes this ticket is tied to (the team sees them; customers get nothing back). */

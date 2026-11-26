@@ -396,7 +396,7 @@ public static class Evaluator
             ["rule"] = c.Rule.Name, ["message"] = c.Text, ["opened"] = opened.ToString("yyyy-MM-dd HH:mm 'UTC'", Inv),
             ["duration"] = lasted is TimeSpan t ? MonitoringModule.Dur(t) : "", ["ticket"] = "", ["path"] = "#/monitoring/device/" + c.Device.Id,
         };
-        foreach (var to in s.For(c.Device.CompanyId))
+        foreach (var to in s.For(c.Device.CompanyId, c.Device.Kind, c.Severity))
             try { sent |= await mail.EnqueueTemplateAsync(template, to, values, $"mon-alert:{alertId}", ct); } catch (Exception) { /* mail is best effort */ }
         return sent;
     }

@@ -49,3 +49,9 @@ Staff tick **Major incident** on the ticket (incidents only). The ticket shows a
 
 ## Customer users (6.16.0)
 Customer administrators and employees, and whether they *may open tickets* and *may reply and close*, are set under Administration › Devices setup › Customers › a company › Users (with one company: Devices setup › Our organisation). The Service Desk › People page is removed. See [assets.md](assets.md#a-companys-users-6160).
+
+## Canned replies, working hours and affected assets (6.22.0)
+
+- **Canned replies:** Service Desk › Settings › Canned replies (administrators). Each has a title and a text; `{requester}` (first name), `{agent}` (the person the ticket is assigned to, else "the support team") and `{number}` are filled in from the ticket. Staff pick one under the reply box ("Insert a canned reply…"); it is added to the text, which they can change before sending. A reply switched off is not offered. API: `GET /api/servicedesk/canned` (staff; `?all=1` for administrators), `POST`, `PUT /{id}`, `DELETE /{id}`.
+- **Working hours:** Service Desk › Settings › Working hours. With "Count working hours only" on, first-reply and resolution targets count only the chosen days and hours in the chosen time zone (an IANA name such as `Asia/Kolkata`). A critical ticket with a 4-hour target opened at 17:00 on Friday is due at 12:00 on Monday when the day is 09:00 to 18:00. Saving applies the new hours to every open ticket. Time a ticket waited for the customer is added to the due time as plain clock time (a small approximation). Off by default; with it off the targets are exactly as before.
+- **Affected assets:** a ticket with an asset shows "Affected if this asset fails" (from the CMDB relationships under [assets.md](assets.md#relationships-between-assets-6220)). Staff only, and only when the Assets module is available.

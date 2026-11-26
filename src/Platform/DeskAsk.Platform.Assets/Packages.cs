@@ -40,11 +40,11 @@ public static class PackagesApi
     static ITimeLimitedDataProtector Links(IDataProtectionProvider dp) => dp.CreateProtector("assets.package.link").ToTimeLimitedDataProtector();
 
     static string Row(NpgsqlDataReader r, int i) => r.GetString(i);
-    const string Cols = "p.id, p.name, p.version, p.publisher, p.os, p.kind, p.source, p.file_name, p.size, p.sha256, p.args, p.notes, p.enabled, p.by_name, p.created_at, p.updated_at, (select count(*) from assets.package_installs i where i.package_id = p.id)";
+    const string Cols = "p.id, p.name, p.version, p.publisher, p.os, p.kind, p.source, p.file_name, p.size, p.sha256, p.args, p.notes, p.enabled, p.by_name, p.created_at, p.updated_at, (select count(*) from assets.package_installs i where i.package_id = p.id), p.rule, p.match_name";
     static object Out(NpgsqlDataReader r) => new
     {
         id = r.GetInt32(0), name = Row(r, 1), version = Row(r, 2), publisher = Row(r, 3), os = Row(r, 4), kind = Row(r, 5), source = Row(r, 6), fileName = Row(r, 7),
-        size = r.GetInt64(8), sha256 = Row(r, 9), args = Row(r, 10), notes = Row(r, 11), enabled = r.GetBoolean(12), by = Row(r, 13), createdAt = r.GetDateTime(14), updatedAt = r.GetDateTime(15), installs = r.GetInt64(16),
+        size = r.GetInt64(8), sha256 = Row(r, 9), args = Row(r, 10), notes = Row(r, 11), enabled = r.GetBoolean(12), by = Row(r, 13), createdAt = r.GetDateTime(14), updatedAt = r.GetDateTime(15), installs = r.GetInt64(16), rule = r.GetString(17), matchName = r.GetString(18),
     };
 
     static string Text(JsonElement b, string n, int max)
@@ -133,11 +133,16 @@ public static class PackagesApi
             var name = Text(b, "name", 120); var args = Text(b, "args", 500);
             if (!Clean(name + args + Text(b, "version", 60) + Text(b, "publisher", 120))) return AgentsApi.Bad("bad_input", "No line breaks.");
             bool? enabled = b.TryGetProperty("enabled", out var en) && en.ValueKind is JsonValueKind.True or JsonValueKind.False ? en.GetBoolean() : null;
+            string? rule = b.TryGetProperty("rule", out var ru) && ru.ValueKind == JsonValueKind.String ? ru.GetString()!.Trim() : null;
+            if (rule != null && rule is not ("" or "required" or "prohibited")) return AgentsApi.Bad("bad_input", "rule must be empty, required or prohibited");
+            var matchName = b.TryGetProperty("matchName", out _) ? Text(b, "matchName", 120) : null;
+            if (matchName != null && !Clean(matchName)) return AgentsApi.Bad("bad_input", "No line breaks.");
             await using var db = await AgentsApi.Open(t, ct);
             await using var c = new NpgsqlCommand(@"update assets.packages set name = coalesce(nullif(@n, ''), name), version = coalesce(@v, version), publisher = coalesce(@p, publisher), args = coalesce(@a, args),
-                notes = coalesce(@no, notes), enabled = coalesce(@en, enabled), updated_at = now() where id = @i", db);
+                notes = coalesce(@no, notes), enabled = coalesce(@en, enabled), rule = coalesce(@ru, rule), match_name = coalesce(@mn, match_name), updated_at = now() where id = @i", db);
             object? Opt(string n, int max) => b.TryGetProperty(n, out _) ? Text(b, n, max) : null;
             AgentsApi.P(c, "n", name); AgentsApi.P(c, "v", Opt("version", 60)); AgentsApi.P(c, "p", Opt("publisher", 120)); AgentsApi.P(c, "a", Opt("args", 500)); AgentsApi.P(c, "no", Opt("notes", 1000)); AgentsApi.P(c, "en", enabled); AgentsApi.P(c, "i", id);
+            AgentsApi.P(c, "ru", rule); AgentsApi.P(c, "mn", matchName);
             if (await c.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound();
             await audit.WriteAsync("assets.package_changed", id.ToString(), name, ct: ct);
             return Results.Ok(new { id });

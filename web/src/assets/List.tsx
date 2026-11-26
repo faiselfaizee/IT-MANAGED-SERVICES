@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api, download, go, openPage, saveFile, useLoad, type Rec } from '../http';
 import { usePerms } from '../perms';
-import { Act, Badge, Empty, Err, Field, Loading, Modal, fmtDay, useSubmit } from '../ui';
+import { Act, Badge, Empty, Err, Field, Loading, Modal, PageSize, fmtDay, useSubmit, usePageSize } from '../ui';
 import { PurchaseFields, purchaseBody } from './Purchase';
 import { DuplicateNotice, matchesOf } from './Duplicates';
 import { AddSeveral, CustomFields, MainDevicePicker } from './Peripherals';
@@ -25,7 +25,7 @@ export default function List() {
   const placeName = place ? String(((placeInfo.data?.items ?? []) as Rec[]).find((p) => String(p.id) === place)?.name ?? '…') : '';
   const vendorName = vendor ? String(vendorInfo.data?.vendor?.name ?? '…') : '';
   const drill = Object.keys(DRILL).map((k) => [k, qs.get(k) ?? ''] as const).filter(([k, v]) => v && DRILL[k][v]);
-  const perms = usePerms('assets'); const [search, setSearch] = useState(''); const [status, setStatus] = useState(qs.get('status') ?? ''); const [agent, setAgent] = useState(qs.get('agent') ?? ''); const [skip, setSkip] = useState(0); const take = 50;
+  const perms = usePerms('assets'); const [search, setSearch] = useState(''); const [status, setStatus] = useState(qs.get('status') ?? ''); const [agent, setAgent] = useState(qs.get('agent') ?? ''); const [skip, setSkip] = useState(0); const [take, setTake] = usePageSize('assets', 50);
   const companies = useLoad<Rec[]>('/api/assets/companies'); const cos = Array.isArray(companies.data) ? companies.data : [];
   const types = useLoad<Rec[]>(typeId && typeId !== 'none' ? '/api/assets/types' : null);
   const typeName = typeId === 'none' ? 'No kind' : typeId ? String((Array.isArray(types.data) ? types.data : []).find((x) => String(x.id) === typeId)?.name ?? '…') : '';
@@ -65,7 +65,7 @@ export default function List() {
       {items.map((a) => <tr key={a.id}><td><input type="checkbox" aria-label={'Select ' + a.name} checked={sel.has(a.id)} onChange={() => toggle(a.id)} /></td>
         <td className="mono">{a.tag}</td><td><a href={`#/assets/${a.id}`}>{a.name}</a>{[a.manufacturer, a.model].filter(Boolean).length ? <div className="muted small">{[a.manufacturer, a.model].filter(Boolean).join(' ')}</div> : null}</td><td>{a.type ?? ''}</td><td>{label(a.status)}</td><td>{a.os ?? ''}</td><td className="mono">{a.ip ?? ''}</td><td><AgentCell a={(a.agent ?? { state: 'none' }) as Rec} /></td>
         <td>{a.assignedTo}</td><td>{a.site ? <>{a.site}{a.siteCode ? <span className="muted mono"> {a.siteCode}</span> : null}<div className="muted small">{[a.location, a.state, a.country].filter(Boolean).join(', ')}</div></> : a.location}</td><td>{fmtDay(a.warrantyEnd)}</td></tr>)}</tbody></table>)}
-    <div className="tools" style={{ marginTop: 10 }}><button disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - take))}>Previous</button><span className="muted">{total ? `${skip + 1}–${Math.min(total, skip + take)} of ${total}` : ''}</span><button disabled={skip + take >= total} onClick={() => setSkip(skip + take)}>Next</button></div>
+    <div className="tools" style={{ marginTop: 10 }}><button disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - take))}>Previous</button><span className="muted">{total ? `${skip + 1}–${Math.min(total, skip + take)} of ${total}` : ''}</span><button disabled={skip + take >= total} onClick={() => setSkip(skip + take)}>Next</button><PageSize value={take} onChange={(n) => { setTake(n); setSkip(0); }} /></div>
     {several && <AddSeveral onClose={(ch) => { setSeveral(false); if (ch) reload(); }} />}
     {add && <AddAsset onClose={(id) => { setAdd(false); if (id) go(`assets/${id}`); else reload(); }} />}
     {print && <PrintDialog ids={[...sel]} onClose={() => setPrint(false)} />}

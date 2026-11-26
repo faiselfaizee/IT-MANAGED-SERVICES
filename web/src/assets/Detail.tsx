@@ -1,3 +1,4 @@
+import { Relations } from './Relations';
 import PersonInput from './PersonInput';
 import { InstallFromRepository } from './Packages';
 import { PurchaseFields, purchaseBody } from './Purchase';
@@ -18,7 +19,7 @@ import { PrinterPanel } from './Printer';
 import { LIFECYCLE_TABS, useAssetsLite } from './lite';
 
 const TABS = [
-  ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['services', 'Services'], ['tickets', 'Tickets'],
+  ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['services', 'Services'], ['tickets', 'Tickets'], ['relations', 'Relationships'],
   ['logs', 'Logs'], ['commands', 'Commands'], ['shell', 'Shell'], ['ise', 'PowerShell ISE'], ['remote', 'Remote control'],
 ] as const;
 
@@ -93,6 +94,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
     {tab === 'apps' && <Apps id={id} canUninstall={hasAgent && !!perms.modify} os={d.system?.osFamily === 'linux' ? 'linux' : 'windows'} />}
     {tab === 'services' && <ServicesPanel assetId={id} />}
     {tab === 'tickets' && <Tickets id={id} d={d} />}
+    {tab === 'relations' && <Relations id={id} canEdit={!!perms.modify} />}
     {tab === 'logs' && <Logs id={id} />}
     {tab === 'commands' && <Commands id={id} d={d} />}
     {tab === 'shell' && <Shell id={id} d={d} />}

@@ -17,11 +17,12 @@ export default function Packages() {
     <div className="tools"><button className="primary" onClick={() => setAdd(true)}>Add a program</button></div>
     <Loading loading={loading && !data} error={error} />
     {data && (items.length === 0 ? <Empty>No programs yet. Add an installer (.msi, .exe, .deb, .rpm) or a winget, Chocolatey or package-manager name.</Empty> : <table><thead><tr><th>Program</th><th>For</th><th>Kind</th><th>Size</th><th className="num">Installs</th><th /></tr></thead><tbody>
-      {items.map((p) => <tr key={p.id}><td>{p.name} {p.version} {!p.enabled && <Badge>off</Badge>}<div className="muted small">{p.publisher}{p.kind === 'file' ? ` · ${p.fileName} · SHA-256 ${String(p.sha256).slice(0, 12)}…` : ` · ${p.source}`}</div></td>
+      {items.map((p) => <tr key={p.id}><td>{p.name} {p.version} {!p.enabled && <Badge>off</Badge>}{p.rule === 'required' && <> <Badge tone="ok">Required</Badge></>}{p.rule === 'prohibited' && <> <Badge tone="bad">Prohibited</Badge></>}<div className="muted small">{p.publisher}{p.kind === 'file' ? ` · ${p.fileName} · SHA-256 ${String(p.sha256).slice(0, 12)}…` : ` · ${p.source}`}</div></td>
         <td>{p.os === 'windows' ? 'Windows' : 'Linux'}</td><td>{KIND[p.kind] ?? p.kind}</td><td>{size(p.size)}</td>
         <td className="num"><a href="#" onClick={(e) => { e.preventDefault(); setHistory(p); }}>{p.installs}</a></td>
         <td><button disabled={!p.enabled} onClick={() => setInstall(p)}>Install on…</button> <button onClick={() => setEdit(p)}>Edit</button>{' '}
           <Act label="Remove" danger confirm={`Remove ${p.name} ${p.version} from the repository? Computers that have it keep it.`} run={async () => { await api(`/api/assets/packages/${p.id}`, { method: 'DELETE' }); reload(); }} /></td></tr>)}</tbody></table>)}
+    <RuleBreaks key={items.map((p) => p.id + p.rule + p.matchName).join()} />
     {add && <AddPackage onClose={(ch) => { setAdd(false); if (ch) reload(); }} />}
     {edit && <EditPackage p={edit} onClose={(ch) => { setEdit(null); if (ch) reload(); }} />}
     {install && <InstallOn p={install} onClose={() => { setInstall(null); reload(); }} />}
@@ -60,13 +61,15 @@ function AddPackage({ onClose }: { onClose: (changed: boolean) => void }) {
 }
 
 function EditPackage({ p, onClose }: { p: Rec; onClose: (changed: boolean) => void }) {
-  const [v, setV] = useState({ name: p.name, version: p.version, publisher: p.publisher, args: p.args, notes: p.notes, enabled: !!p.enabled }); const f = useSubmit(() => onClose(true));
+  const [v, setV] = useState({ name: p.name, version: p.version, publisher: p.publisher, args: p.args, notes: p.notes, enabled: !!p.enabled, rule: p.rule ?? '', matchName: p.matchName ?? '' }); const f = useSubmit(() => onClose(true));
   return <Modal title={`Edit ${p.name}`} onClose={() => onClose(false)}><div className="form">
     <div className="row"><Field label="Name"><input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} /></Field><Field label="Version"><input value={v.version} onChange={(e) => setV({ ...v, version: e.target.value })} /></Field></div>
     <Field label="Publisher"><input value={v.publisher} onChange={(e) => setV({ ...v, publisher: e.target.value })} /></Field>
     {p.kind !== 'apt' && <Field label="Switches"><input value={v.args} onChange={(e) => setV({ ...v, args: e.target.value })} spellCheck={false} /></Field>}
     <Field label="Notes"><textarea rows={2} value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} /></Field>
     <label><input type="checkbox" checked={v.enabled} onChange={(e) => setV({ ...v, enabled: e.target.checked })} /> Can be installed</label>
+    <div className="row"><Field label="Company rule"><select value={v.rule} onChange={(e) => setV({ ...v, rule: e.target.value })}><option value="">None</option><option value="required">Required: every computer should have it</option><option value="prohibited">Prohibited: no computer should have it</option></select></Field>
+      {v.rule && <Field label="Name in the inventory" hint="Part of the program's name as the agent lists it. Empty means the name above."><input value={v.matchName} onChange={(e) => setV({ ...v, matchName: e.target.value })} placeholder={v.name} /></Field>}</div>
     <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button>
       <button className="primary" disabled={f.busy || !v.name.trim()} onClick={() => void f.submit(() => api(`/api/assets/packages/${p.id}`, { method: 'PUT', body: v }))}>Save</button></div></div></Modal>;
 }
@@ -117,4 +120,20 @@ export function InstallFromRepository({ assetId, os, onClose }: { assetId: numbe
       : <table><tbody>{items.map((x) => <tr key={x.id}><td>{x.name} {x.version}<div className="muted small">{x.publisher} · {KIND[x.kind]}</div></td><td><button onClick={() => setP(x)}>Install</button></td></tr>)}</tbody></table>)}
     <div className="actions"><button onClick={onClose}>Close</button></div>
   </Modal>;
+}
+
+/** Computers that break a required or prohibited rule, from their last program list. */
+function RuleBreaks() {
+  const { data, error, loading } = useLoad<Rec>('/api/assets/packages/violations');
+  const items = (data?.items ?? []) as Rec[];
+  if (!data && !error) return loading ? <p className="muted">Checking the software rules…</p> : null;
+  if (data && items.length === 0) return null;
+  return <section className="card"><h2 style={{ marginTop: 0 }}>Computers that break a software rule</h2>
+    <Loading loading={false} error={error} />
+    <table><thead><tr><th>Computer</th><th>Customer</th><th>Rule</th></tr></thead><tbody>
+      {items.map((x) => <tr key={x.packageId + '-' + x.assetId}><td><a href={`#/assets/${x.assetId}`}>{x.asset}</a> <span className="muted">{x.tag}</span></td><td>{x.company}</td>
+        <td>{x.rule === 'prohibited' ? <Badge tone="bad">Has {x.program}{x.version ? ' ' + x.version : ''}</Badge> : <Badge tone="warn">Missing {x.program}</Badge>}</td></tr>)}
+    </tbody></table>
+    {data?.truncated && <p className="muted">Showing the first 1000.</p>}
+  </section>;
 }

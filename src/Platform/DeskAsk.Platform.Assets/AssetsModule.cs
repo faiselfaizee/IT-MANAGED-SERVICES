@@ -458,6 +458,17 @@ public sealed class AssetsSchema : ITenantSchema
               job_id text primary key, package_id int not null references assets.packages(id) on delete cascade, asset_id bigint not null,
               at timestamptz not null default now(), by_name text not null default '');
             create index if not exists package_installs_package on assets.package_installs (package_id, at desc)"),
+        new(33, "CMDB relationships between assets, and required or prohibited software", @"
+            create table if not exists assets.relations (
+              id bigserial primary key, from_id bigint not null references assets.assets(id) on delete cascade, to_id bigint not null references assets.assets(id) on delete cascade,
+              kind text not null check (kind in ('runs_on','depends_on','part_of','connected_to')), note text not null default '',
+              by_name text not null default '', created_at timestamptz not null default now(), check (from_id <> to_id));
+            create unique index if not exists relations_unique on assets.relations (from_id, to_id, kind);
+            create index if not exists relations_to on assets.relations (to_id);
+            alter table assets.packages add column if not exists rule text not null default '';
+            alter table assets.packages drop constraint if exists packages_rule_check;
+            alter table assets.packages add constraint packages_rule_check check (rule in ('', 'required', 'prohibited'));
+            alter table assets.packages add column if not exists match_name text not null default ''"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -799,6 +810,8 @@ public sealed class AssetsModule : IPlatformModule
         LicensesApi.Map(r, Key);
         DeleteApproval.Map(r, Key);
         PeripheralsApi.Map(r, Key);
+        RelationsApi.Map(r, Key);
+        SoftwareRulesApi.Map(r, Key);
 
         // ---- types
         anyone(r.MapGet("/api/assets/types", async (ITenantContext t, CancellationToken ct) =>
