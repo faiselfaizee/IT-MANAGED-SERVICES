@@ -214,7 +214,7 @@ public static class AdEndpoints
                 if (!email.Contains('@') || email.Length > 320 || !Guid.TryParse(id, out var gid)) { skipped++; continue; }
                 var ext = "ad:" + gid;
                 var ex = await db.Users.FirstOrDefaultAsync(x => x.Email == email, ct);
-                if (ex != null) { if (ex.ExternalId != ext && ex.ExternalId == null) { ex.ExternalId = ext; linked++; } else skipped++; continue; }
+                if (ex != null) { if (ex.ExternalId != ext && ex.ExternalId == null) { ex.ExternalId = ext; ex.PasswordHash = hasher.HashPassword(ex, Rnd()); linked++; } else skipped++; continue; }   // the old local password is thrown away: from now on the directory decides
                 var acc = new UserAccount { Email = email, Name = name == "" ? email : (name.Length > 200 ? name[..200] : name), Role = role, ExternalId = ext };
                 acc.PasswordHash = hasher.HashPassword(acc, Rnd());
                 db.Users.Add(acc); created++; madeUsers.Add(acc);

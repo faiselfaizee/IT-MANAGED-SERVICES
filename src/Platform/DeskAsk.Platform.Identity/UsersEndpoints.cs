@@ -98,6 +98,7 @@ public static class UsersEndpoints
         {
             var u = await db.Users.FirstOrDefaultAsync(x => x.Id == id, ct);
             if (u == null) return Results.NotFound();
+            if (DirectoryAccount.Is(u.ExternalId)) return Results.BadRequest(new { error = "This person signs in with their Windows (directory) password. Change it in Active Directory; DeskAsk keeps no password for them." });
             if (PasswordProblem(b.Password) is { } pp) return Results.BadRequest(new { error = pp });
             u.PasswordHash = hasher.HashPassword(u, b.Password!);
             await db.SaveChangesAsync(ct);
@@ -123,7 +124,7 @@ public static class UsersEndpoints
                 if (ex != null)
                 {
                     // only a customer user who is not linked to another sign-in is taken over; staff and other links are left alone
-                    if (ex.Role is "customer" or "cadmin" && (ex.ExternalId == null || ex.ExternalId == ext)) { ex.ExternalId = ext; tie.Add(ex.Id); linked++; } else skipped++;
+                    if (ex.Role is "customer" or "cadmin" && (ex.ExternalId == null || ex.ExternalId == ext)) { ex.ExternalId = ext; ex.PasswordHash = hasher.HashPassword(ex, Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))); tie.Add(ex.Id); linked++; } else skipped++;
                     continue;
                 }
                 var u = new UserAccount { Email = email, Name = name == "" ? email : (name.Length > 200 ? name[..200] : name), Role = role, ExternalId = ext };

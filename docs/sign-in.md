@@ -27,6 +27,7 @@ Users › **Active Directory…**
 - **Account:** an ordinary read-only account (`svc-deskask@acme.local`). DeskAsk reads users with it and uses it to find a person before checking their password.
 - **Import from Active Directory** lists people (up to 3,000; disabled accounts are marked), and creates accounts with the chosen role. They are recognised by their AD object GUID.
 - **Sign-in:** people imported from AD sign in on the normal page with their email and **AD password**; DeskAsk checks it against the controller each time and never stores it. The DeskAsk two-step code still applies if they turned it on. Disabled or locked AD accounts are refused by the controller. Switching "sign in with AD password" off stops it at once.
+- **Directory accounts have no local password (6.23.0).** A person who came from Active Directory (or from a customer's domain controller) is signed in only by the directory. Any local password they had before is thrown away when they are linked, a local password is never accepted for them, an administrator cannot set one (Users shows no *Set password* button), and a set-password link no longer works for them. If directory sign-in is switched off or the controller cannot be reached, they cannot sign in until it is back; keep at least one local administrator for that case. Before 6.23.0 a local account that was *linked* to the directory kept its old password, so both passwords worked.
 
 Planned: Google Workspace.
 

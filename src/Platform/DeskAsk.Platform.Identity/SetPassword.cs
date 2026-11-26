@@ -49,7 +49,7 @@ public sealed class FirstAdmin : IFirstAdmin
         var p = plain.Split('|');
         if (p.Length != 3 || p[0] != tenantId || !Guid.TryParse(p[1], out var id)) return null;
         var u = await db.Users.FirstOrDefaultAsync(x => x.Id == id && x.Active, ct);
-        return u != null && Stamp(u) == p[2] ? u : null;
+        return u != null && !DirectoryAccount.Is(u.ExternalId) && Stamp(u) == p[2] ? u : null;
     }
 
     public static void Map(IEndpointRouteBuilder r)

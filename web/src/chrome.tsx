@@ -11,6 +11,7 @@ const PATHS: Record<string, ReactNode> = {
   'AD Manager': <><circle cx="9.5" cy="8" r="3.5" /><path d="M3.5 20v-1a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v1" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M20.5 19v-1a4 4 0 0 0-3-3.9" /></>,
   Vault: <><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /><circle cx="12" cy="16" r="1" /></>,
   Backup: <><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" /></>,
+  ask: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H11l-4.500 4v-4H6.5A2.5 2.5 0 0 1 4 13.500z" /><path d="M12 6.500v.5M9.500 9.500a2.500 2.500 0 1 1 3.500 2.300c-.600.300-1 .800-1 1.400" /></>,
   users: <><circle cx="12" cy="8" r="3.5" /><path d="M5 20v-1a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v1" /></>,
   access: <><path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.500 7-10V6z" /><path d="m9 12 2 2 4-4" /></>,
   mail: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></>,

@@ -497,3 +497,6 @@ Edit a program in the repository and choose a **Company rule**: *Required* (ever
 ## Rows per page (6.22.0)
 
 The asset list, the ticket list and the Monitoring device list have a "Rows per page" choice (10, 25, 50, 100 or 200), remembered in the browser for each list.
+
+## 6.23.0
+- Ask DeskAsk: see [assistant.md](assistant.md).

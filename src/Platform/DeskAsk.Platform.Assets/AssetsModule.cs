@@ -811,6 +811,7 @@ public sealed class AssetsModule : IPlatformModule
         DeleteApproval.Map(r, Key);
         PeripheralsApi.Map(r, Key);
         RelationsApi.Map(r, Key);
+        AssistantApi.Map(r, Key);
         SoftwareRulesApi.Map(r, Key);
 
         // ---- types

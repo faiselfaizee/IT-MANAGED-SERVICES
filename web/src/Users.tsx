@@ -32,11 +32,11 @@ export default function Users({ meId, embedded = false }: { meId?: string; embed
     <Loading loading={loading && !data} error={error} />
     {data && (list.length === 0 ? <Empty>No users yet.</Empty> : <table><thead><tr><th>Name</th><th>Role</th><th>Two-step</th><th>Status</th><th /></tr></thead><tbody>
       {list.map((u) => <tr key={u.id}>
-        <td>{u.name}<div className="muted">{u.email}</div></td>
+        <td>{u.name}<div className="muted">{u.email}{u.signIn === 'ad' || u.signIn === 'windows' ? ' · signs in with their AD password' : ''}</div></td>
         <td>{roleName(u.role)}</td>
         <td>{u.twoStep ? <Badge tone="ok">On</Badge> : <span className="muted">Off</span>}</td>
         <td><Badge tone={u.active ? 'ok' : undefined}>{u.active ? 'Active' : 'Disabled'}</Badge></td>
-        <td><button onClick={() => setForm(u)}>Edit</button> <button onClick={() => setPw(u)}>Set password</button>{' '}
+        <td><button onClick={() => setForm(u)}>Edit</button> {u.signIn === 'ad' || u.signIn === 'windows' ? null : <button onClick={() => setPw(u)}>Set password</button>}{' '}
           {u.twoStep && <Act label="Reset two-step" confirm={`Turn off two-step sign-in for ${u.name}? They can set it up again.`} run={async () => { await api(`/api/platform/users/${u.id}/two-step/reset`, { method: 'POST', body: {} }); reload(); }} />}{' '}
           {u.id !== meId && <Act label={u.active ? 'Disable' : 'Enable'} danger={u.active} confirm={u.active ? `Disable ${u.name}? They can no longer sign in.` : undefined}
             run={async () => { await api(`/api/platform/users/${u.id}`, { method: 'PATCH', body: { active: !u.active } }); reload(); }} />}</td>
