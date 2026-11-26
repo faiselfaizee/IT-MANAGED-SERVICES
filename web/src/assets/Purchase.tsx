@@ -60,6 +60,11 @@ export function PurchaseFields({ v, set, companyId }: { v: Rec; set: (patch: Rec
       <Field label="Purchase order"><input value={v.poNumber ?? ''} onChange={(e) => set({ poNumber: e.target.value })} /></Field>
       <Field label="Invoice"><input value={v.invoiceNumber ?? ''} onChange={(e) => set({ invoiceNumber: e.target.value })} /></Field></div>
     <div className="row">
+      <Field label="Ownership"><select value={v.ownershipKind ?? ''} onChange={(e) => set({ ownershipKind: e.target.value })}>
+        <option value="">(not recorded)</option><option value="owned">Owned</option><option value="rented">Rented</option><option value="leased">Leased</option></select></Field>
+      <Field label="Hosted at" hint="Where it runs: head office, a data centre, AWS, Azure…"><input value={v.hostedAt ?? ''} onChange={(e) => set({ hostedAt: e.target.value })} maxLength={120} /></Field>
+    </div>
+    <div className="row">
       <Field label="Purchase date"><input type="date" value={String(v.purchaseDate ?? '').slice(0, 10)} onChange={(e) => { const end = warrantyEnd(e.target.value, months); set({ purchaseDate: e.target.value, ...(end ? { warrantyEnd: end } : {}) }); }} /></Field>
       <Field label="Warranty period"><select value={PERIODS.includes(months) || !months ? String(months || '') : 'other'} onChange={(e) => {
         const m = e.target.value === 'other' ? months || 1 : Number(e.target.value) || 0; const end = warrantyEnd(String(v.purchaseDate ?? '').slice(0, 10), m);
@@ -74,6 +79,6 @@ export function PurchaseFields({ v, set, companyId }: { v: Rec; set: (patch: Rec
 
 /** The asset fields PurchaseFields edits, ready for the API. */
 export function purchaseBody(v: Rec) {
-  return { siteId: v.siteId ?? null, vendorId: v.vendorId ?? null, poNumber: v.poNumber ?? '', invoiceNumber: v.invoiceNumber ?? '', location: v.location ?? '',
+  return { ownershipKind: v.ownershipKind ?? '', hostedAt: String(v.hostedAt ?? '').trim(), siteId: v.siteId ?? null, vendorId: v.vendorId ?? null, poNumber: v.poNumber ?? '', invoiceNumber: v.invoiceNumber ?? '', location: v.location ?? '',
     purchaseDate: v.purchaseDate ? String(v.purchaseDate).slice(0, 10) : null, warrantyEnd: v.warrantyEnd ? String(v.warrantyEnd).slice(0, 10) : null, warrantyMonths: v.warrantyMonths ? Number(v.warrantyMonths) : null };
 }

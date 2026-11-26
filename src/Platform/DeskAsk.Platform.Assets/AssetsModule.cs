@@ -469,6 +469,33 @@ public sealed class AssetsSchema : ITenantSchema
             alter table assets.packages drop constraint if exists packages_rule_check;
             alter table assets.packages add constraint packages_rule_check check (rule in ('', 'required', 'prohibited'));
             alter table assets.packages add column if not exists match_name text not null default ''"),
+        new(34, "ownership and hosting of an asset, number prefixes per type, package scripts, last patch check", @"
+            alter table assets.assets add column if not exists ownership_kind text not null default '';
+            alter table assets.assets drop constraint if exists assets_ownership_kind_check;
+            alter table assets.assets add constraint assets_ownership_kind_check check (ownership_kind in ('', 'owned', 'rented', 'leased'));
+            alter table assets.assets add column if not exists hosted_at text not null default '';
+            alter table assets.assets add column if not exists patch_check jsonb;
+            alter table assets.assets add column if not exists patch_check_at timestamptz;
+            alter table assets.types add column if not exists tag_prefix text not null default '';
+            create table if not exists assets.tag_counters (prefix text primary key, last int not null default 0);
+            create or replace function assets.apply_tag_prefix() returns trigger language plpgsql as $f$
+            declare p text; n int;
+            begin
+              if new.type_id is null or new.tag !~ '^AST-[0-9]{6}$' then return new; end if;
+              if tg_op = 'UPDATE' and new.type_id is not distinct from old.type_id then return new; end if;
+              select tag_prefix into p from assets.types where id = new.type_id;
+              if p is null or p = '' then return new; end if;
+              loop
+                insert into assets.tag_counters (prefix, last) values (p, 1) on conflict (prefix) do update set last = assets.tag_counters.last + 1 returning last into n;
+                new.tag := p || '-' || lpad(n::text, 4, '0');
+                exit when not exists (select 1 from assets.assets where tag = new.tag);
+              end loop;
+              return new;
+            end
+            $f$;
+            drop trigger if exists assets_apply_tag_prefix on assets.assets;
+            create trigger assets_apply_tag_prefix before insert or update of type_id on assets.assets for each row execute function assets.apply_tag_prefix();
+            alter table assets.packages add column if not exists script text not null default ''"),
     };
     public async Task EnsureAsync(IServiceProvider services, TenantInfo tenant, CancellationToken ct)
     {
@@ -511,9 +538,9 @@ public sealed class AssetsModule : IPlatformModule
 
     const string Cols = "a.id, a.tag, a.name, a.type_id, t.name, a.status, a.manufacturer, a.model, a.serial, a.location, a.assigned_to, a.purchase_date, a.purchase_cost, a.warranty_end, a.notes, a.custom, a.source, a.created_at, a.updated_at, "
         + "a.site_id, coalesce(s.name, ''), coalesce(s.code, ''), coalesce(case when ps.level = 'state' then ps.name end, ''), coalesce(case when ps.level = 'country' then ps.name else pps.name end, ''), "
-        + "a.vendor_id, coalesce(v.name, ''), a.po_number, a.invoice_number, a.warranty_months, a.company_id";
+        + "a.vendor_id, coalesce(v.name, ''), a.po_number, a.invoice_number, a.warranty_months, a.company_id, a.ownership_kind, a.hosted_at";
     /// <summary>How many columns Cols has: what a query selects after it starts at this index.</summary>
-    const int N = 30;
+    const int N = 32;
     const string From = "assets.assets a left join assets.types t on t.id = a.type_id left join assets.places s on s.id = a.site_id left join assets.places ps on ps.id = s.parent_id "
         + "left join assets.places pps on pps.id = ps.parent_id left join assets.vendors v on v.id = a.vendor_id";
 
@@ -585,6 +612,18 @@ public sealed class AssetsModule : IPlatformModule
         public string? Error;
     }
 
+    /// <summary>The number prefix of a type ("SRV" gives SRV-0001, SRV-0002 ...): empty switches it off, null means the body did not say.</summary>
+    static string? TypePrefix(JsonElement body, out string? error)
+    {
+        error = null;
+        if (body.ValueKind != JsonValueKind.Object || !body.TryGetProperty("tagPrefix", out var v)) return null;
+        if (v.ValueKind == JsonValueKind.Null) return "";
+        if (v.ValueKind != JsonValueKind.String) { error = "tagPrefix must be text"; return null; }
+        var s = v.GetString()!.Trim().ToUpperInvariant();
+        if (s != "" && !Regex.IsMatch(s, "^[A-Z][A-Z0-9]{1,7}$")) { error = "tagPrefix: 2 to 8 letters or digits, starting with a letter, for example SRV"; return null; }
+        return s;
+    }
+
     static string? Str(JsonElement b, string name, int max, out bool present)
     {
         present = b.TryGetProperty(name, out var v);
@@ -634,6 +673,9 @@ public sealed class AssetsModule : IPlatformModule
             foreach (var (json, col) in new[] { ("manufacturer", "manufacturer"), ("model", "model"), ("serial", "serial"), ("location", "location"), ("assignedTo", "assigned_to") })
             { var v = Str(b, json, 200, out var has); if (has) r.Set[col] = col == "serial" && v != null && DuplicateCheck.IsPlaceholder(v) ? "" : v; }
             var notes = Str(b, "notes", 4000, out var hasNotes); if (hasNotes) r.Set["notes"] = notes;
+            var ownKind = Str(b, "ownershipKind", 10, out var hasOwn);
+            if (hasOwn) { if (ownKind is not ("" or "owned" or "rented" or "leased")) throw new FormatException("ownershipKind must be empty, owned, rented or leased"); r.Set["ownership_kind"] = ownKind; }
+            var hostedAt = Str(b, "hostedAt", 120, out var hasHosted); if (hasHosted) r.Set["hosted_at"] = hostedAt;
             var host = Str(b, "hostname", 255, out var hasHost); if (hasHost) r.Set["hostname"] = host;
             var macIn = Str(b, "macAddress", 400, out var hasMac);
             if (hasMac)
@@ -726,6 +768,7 @@ public sealed class AssetsModule : IPlatformModule
         siteId = r.IsDBNull(19) ? (int?)null : r.GetInt32(19), site = r.GetString(20), siteCode = r.GetString(21), state = r.GetString(22), country = r.GetString(23),
         vendorId = r.IsDBNull(24) ? (int?)null : r.GetInt32(24), vendor = r.GetString(25), poNumber = r.GetString(26), invoiceNumber = r.GetString(27),
         warrantyMonths = r.IsDBNull(28) ? (int?)null : r.GetInt32(28), companyId = r.IsDBNull(29) ? (int?)null : r.GetInt32(29),
+        ownershipKind = r.GetString(30), hostedAt = r.GetString(31),
     };
 
     static string Like(string q) => "%" + q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
@@ -802,6 +845,7 @@ public sealed class AssetsModule : IPlatformModule
         AssetDash.Map(r, Key);
         AssetReports.Map(r, Key);
         ServicesApi.Map(r, Key);
+        RemoteActionsApi.Map(r, Key);
         PackagesApi.Map(r, Key);
         DeviceHealth.Map(r, Key);
         SecretHandoff.Map(r, Key);
@@ -818,10 +862,10 @@ public sealed class AssetsModule : IPlatformModule
         anyone(r.MapGet("/api/assets/types", async (ITenantContext t, CancellationToken ct) =>
         {
             await using var db = await Open(t, ct);
-            await using var c = new NpgsqlCommand("select t.id, t.name, t.fields, (select count(*) from assets.assets a where a.type_id = t.id), t.peripheral from assets.types t order by lower(t.name)", db);
+            await using var c = new NpgsqlCommand("select t.id, t.name, t.fields, (select count(*) from assets.assets a where a.type_id = t.id), t.peripheral, t.tag_prefix from assets.types t order by lower(t.name)", db);
             var rows = new List<object>();
             await using var rd = await c.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) rows.Add(new { id = rd.GetInt32(0), name = rd.GetString(1), fields = JsonDocument.Parse(rd.GetString(2)).RootElement.Clone(), assets = rd.GetInt64(3), peripheral = rd.GetBoolean(4) });
+            while (await rd.ReadAsync(ct)) rows.Add(new { id = rd.GetInt32(0), name = rd.GetString(1), fields = JsonDocument.Parse(rd.GetString(2)).RootElement.Clone(), assets = rd.GetInt64(3), peripheral = rd.GetBoolean(4), tagPrefix = rd.GetString(5) });
             return Results.Ok(rows);
         }));
 
@@ -832,9 +876,10 @@ public sealed class AssetsModule : IPlatformModule
             string? err = null;
             var fields = body.TryGetProperty("fields", out var f) ? ParseFields(f, out err) : new List<FieldDef>();
             if (fields == null) return Bad("bad_input", err);
+            var newPrefix = TypePrefix(body, out var prefixErr); if (prefixErr != null) return Bad("bad_input", prefixErr);
             await using var db = await Open(t, ct);
-            await using var c = new NpgsqlCommand("insert into assets.types (name, fields, peripheral) values (@n, @f, @p) on conflict do nothing returning id", db);
-            P(c, "n", name); P(c, "f", FieldsJson(fields)); P(c, "p", body.TryGetProperty("peripheral", out var pf) && pf.ValueKind == JsonValueKind.True);
+            await using var c = new NpgsqlCommand("insert into assets.types (name, fields, peripheral, tag_prefix) values (@n, @f, @p, @tp) on conflict do nothing returning id", db);
+            P(c, "n", name); P(c, "f", FieldsJson(fields)); P(c, "p", body.TryGetProperty("peripheral", out var pf) && pf.ValueKind == JsonValueKind.True); P(c, "tp", newPrefix ?? "");
             if (await c.ExecuteScalarAsync(ct) is not int id) return Results.Conflict(new { error = "type_exists" });
             await audit.WriteAsync("assets.type_created", id.ToString(), name, ct: ct);
             return Results.Ok(new { id, name });
@@ -853,10 +898,11 @@ public sealed class AssetsModule : IPlatformModule
             }
             object peripheralValue = DBNull.Value;
             if (body.ValueKind == JsonValueKind.Object && body.TryGetProperty("peripheral", out var pp) && (pp.ValueKind == JsonValueKind.True || pp.ValueKind == JsonValueKind.False)) peripheralValue = pp.GetBoolean();
+            var tagPrefix = TypePrefix(body, out var prefixErr); if (prefixErr != null) return Bad("bad_input", prefixErr);
             try
             {
-                await using var c = new NpgsqlCommand("update assets.types set name = coalesce(@n, name), fields = coalesce(@f, fields), peripheral = coalesce(@p, peripheral) where id = @i", db);
-                P(c, "n", name); P(c, "f", fieldsJson); P(c, "i", id);
+                await using var c = new NpgsqlCommand("update assets.types set name = coalesce(@n, name), fields = coalesce(@f, fields), peripheral = coalesce(@p, peripheral), tag_prefix = coalesce(@tp, tag_prefix) where id = @i", db);
+                P(c, "n", name); P(c, "f", fieldsJson); P(c, "i", id); P(c, "tp", tagPrefix);
                 c.Parameters.Add(new NpgsqlParameter("p", NpgsqlDbType.Boolean) { Value = peripheralValue });
                 if (await c.ExecuteNonQueryAsync(ct) == 0) return Results.NotFound();
             }

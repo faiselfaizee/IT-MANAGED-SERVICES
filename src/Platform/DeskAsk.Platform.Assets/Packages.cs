@@ -24,7 +24,8 @@ public static class PackagesApi
     static readonly Regex SourceId = new(@"^[A-Za-z0-9][A-Za-z0-9.+_:~-]{0,127}$");
     static readonly Regex FileName = new(@"^[A-Za-z0-9][A-Za-z0-9 ._()+-]{0,150}\.(msi|exe|deb|rpm|sh)$", RegexOptions.IgnoreCase);
     static readonly Regex UploadId = new(@"^up[A-Za-z0-9_-]{20,40}$");   // "up" + AgentsApi.Rand(20): 27 characters of base64url
-    static readonly string[] Kinds = { "file", "winget", "choco", "apt" };
+    static readonly string[] Kinds = { "file", "winget", "choco", "apt", "script" };
+    const int MaxScript = 20000;
 
     /// <summary>Where installers are kept: Assets:PackageDir, or the install folder's data\packages, one folder per customer.</summary>
     internal static string Dir(IConfiguration cfg, ITenantContext t)
@@ -40,11 +41,11 @@ public static class PackagesApi
     static ITimeLimitedDataProtector Links(IDataProtectionProvider dp) => dp.CreateProtector("assets.package.link").ToTimeLimitedDataProtector();
 
     static string Row(NpgsqlDataReader r, int i) => r.GetString(i);
-    const string Cols = "p.id, p.name, p.version, p.publisher, p.os, p.kind, p.source, p.file_name, p.size, p.sha256, p.args, p.notes, p.enabled, p.by_name, p.created_at, p.updated_at, (select count(*) from assets.package_installs i where i.package_id = p.id), p.rule, p.match_name";
+    const string Cols = "p.id, p.name, p.version, p.publisher, p.os, p.kind, p.source, p.file_name, p.size, p.sha256, p.args, p.notes, p.enabled, p.by_name, p.created_at, p.updated_at, (select count(*) from assets.package_installs i where i.package_id = p.id), p.rule, p.match_name, p.script";
     static object Out(NpgsqlDataReader r) => new
     {
         id = r.GetInt32(0), name = Row(r, 1), version = Row(r, 2), publisher = Row(r, 3), os = Row(r, 4), kind = Row(r, 5), source = Row(r, 6), fileName = Row(r, 7),
-        size = r.GetInt64(8), sha256 = Row(r, 9), args = Row(r, 10), notes = Row(r, 11), enabled = r.GetBoolean(12), by = Row(r, 13), createdAt = r.GetDateTime(14), updatedAt = r.GetDateTime(15), installs = r.GetInt64(16), rule = r.GetString(17), matchName = r.GetString(18),
+        size = r.GetInt64(8), sha256 = Row(r, 9), args = Row(r, 10), notes = Row(r, 11), enabled = r.GetBoolean(12), by = Row(r, 13), createdAt = r.GetDateTime(14), updatedAt = r.GetDateTime(15), installs = r.GetInt64(16), rule = r.GetString(17), matchName = r.GetString(18), script = r.GetString(19),
     };
 
     static string Text(JsonElement b, string n, int max)
@@ -54,6 +55,14 @@ public static class PackagesApi
         return s.Length > max ? s[..max] : s;
     }
     static bool Clean(string s) => !s.Any(char.IsControl);
+    /// <summary>A script may have line breaks and tabs, but no other control characters.</summary>
+    static bool CleanScript(string s) => !s.Any(ch => char.IsControl(ch) && ch is not ('\n' or '\r' or '\t'));
+    static string RawScript(JsonElement b)
+    {
+        if (b.ValueKind != JsonValueKind.Object || !b.TryGetProperty("script", out var v) || v.ValueKind != JsonValueKind.String) return "";
+        var s = v.GetString()!.Replace("\r\n", "\n").Trim('\n', ' ', '\t');
+        return s.Length > MaxScript ? s[..MaxScript] : s;
+    }
 
     public static void Map(IEndpointRouteBuilder r, string key)
     {
@@ -96,9 +105,9 @@ public static class PackagesApi
             var source = Text(b, "source", 128); var args = Text(b, "args", 500); var notes = Text(b, "notes", 1000); var upload = Text(b, "upload", 40); var fileName = Text(b, "fileName", 160);
             if (name == "" || !Clean(name + version + publisher + args)) return AgentsApi.Bad("bad_input", "Give the program's name (no line breaks).");
             if (os is not ("windows" or "linux")) return AgentsApi.Bad("bad_input", "os must be windows or linux");
-            if (!Kinds.Contains(kind)) return AgentsApi.Bad("bad_input", "kind must be file, winget, choco or apt");
+            if (!Kinds.Contains(kind)) return AgentsApi.Bad("bad_input", "kind must be file, winget, choco, apt or script");
             if ((os == "windows" && kind == "apt") || (os == "linux" && (kind == "winget" || kind == "choco"))) return AgentsApi.Bad("bad_input", "winget and Chocolatey are for Windows; the package manager kind is for Linux.");
-            string sha = ""; long size = 0; string? part = null;
+            string sha = ""; long size = 0; string? part = null; var script = "";
             if (kind == "file")
             {
                 if (!FileName.IsMatch(fileName)) return AgentsApi.Bad("bad_input", "The installer must be a .msi or .exe (Windows), or a .deb, .rpm or .sh (Linux), with a plain file name.");
@@ -111,14 +120,24 @@ public static class PackagesApi
                 if (given != "" && given != sha) { File.Delete(part); return AgentsApi.Bad("hash_mismatch", "The file that arrived does not match the SHA-256 you gave. Upload it again."); }
                 source = "";
             }
+            else if (kind == "script")
+            {
+                script = RawScript(b);
+                if (script == "") return AgentsApi.Bad("bad_input", "Type the install script: PowerShell for Windows, bash for Linux.");
+                if (!CleanScript(script)) return AgentsApi.Bad("bad_input", "The script has characters that are not text.");
+                if (Text(b, "script", MaxScript + 10).Length > MaxScript) return AgentsApi.Bad("too_large", "A script can be at most 20,000 characters.");
+                source = ""; fileName = "";
+                sha = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(script)));   // so a change to the script shows in the audit log
+            }
             else
             {
                 if (!SourceId.IsMatch(source)) return AgentsApi.Bad("bad_input", kind == "apt" ? "Give the package name, for example htop." : "Give the package id, for example Google.Chrome (winget) or googlechrome (Chocolatey).");
                 fileName = "";
             }
             await using var db = await AgentsApi.Open(t, ct);
-            await using var c = new NpgsqlCommand(@"insert into assets.packages (name, version, publisher, os, kind, source, file_name, size, sha256, args, notes, by_name)
-                values (@n, @v, @p, @o, @k, @s, @f, @z, @h, @a, @no, @by) returning id", db);
+            await using var c = new NpgsqlCommand(@"insert into assets.packages (name, version, publisher, os, kind, source, file_name, size, sha256, args, notes, by_name, script)
+                values (@n, @v, @p, @o, @k, @s, @f, @z, @h, @a, @no, @by, @sc) returning id", db);
+            AgentsApi.P(c, "sc", script);
             AgentsApi.P(c, "n", name); AgentsApi.P(c, "v", version); AgentsApi.P(c, "p", publisher); AgentsApi.P(c, "o", os); AgentsApi.P(c, "k", kind); AgentsApi.P(c, "s", source); AgentsApi.P(c, "f", fileName);
             AgentsApi.P(c, "z", size); AgentsApi.P(c, "h", sha); AgentsApi.P(c, "a", args); AgentsApi.P(c, "no", notes); AgentsApi.P(c, "by", AgentsApi.Actor(http.User));
             var id = (int)(await c.ExecuteScalarAsync(ct))!;
@@ -136,10 +155,15 @@ public static class PackagesApi
             string? rule = b.TryGetProperty("rule", out var ru) && ru.ValueKind == JsonValueKind.String ? ru.GetString()!.Trim() : null;
             if (rule != null && rule is not ("" or "required" or "prohibited")) return AgentsApi.Bad("bad_input", "rule must be empty, required or prohibited");
             var matchName = b.TryGetProperty("matchName", out _) ? Text(b, "matchName", 120) : null;
+            string? newScript = b.TryGetProperty("script", out _) ? RawScript(b) : null;
+            if (newScript != null && !CleanScript(newScript)) return AgentsApi.Bad("bad_input", "The script has characters that are not text.");
             if (matchName != null && !Clean(matchName)) return AgentsApi.Bad("bad_input", "No line breaks.");
             await using var db = await AgentsApi.Open(t, ct);
             await using var c = new NpgsqlCommand(@"update assets.packages set name = coalesce(nullif(@n, ''), name), version = coalesce(@v, version), publisher = coalesce(@p, publisher), args = coalesce(@a, args),
-                notes = coalesce(@no, notes), enabled = coalesce(@en, enabled), rule = coalesce(@ru, rule), match_name = coalesce(@mn, match_name), updated_at = now() where id = @i", db);
+                notes = coalesce(@no, notes), enabled = coalesce(@en, enabled), rule = coalesce(@ru, rule), match_name = coalesce(@mn, match_name),
+                script = case when kind = 'script' and @sc::text is not null and @sc::text <> '' then @sc::text else script end,
+                sha256 = case when kind = 'script' and @sc::text is not null and @sc::text <> '' then @sh::text else sha256 end, updated_at = now() where id = @i", db);
+            AgentsApi.P(c, "sc", newScript); AgentsApi.P(c, "sh", newScript == null || newScript == "" ? null : Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(newScript))));
             object? Opt(string n, int max) => b.TryGetProperty(n, out _) ? Text(b, n, max) : null;
             AgentsApi.P(c, "n", name); AgentsApi.P(c, "v", Opt("version", 60)); AgentsApi.P(c, "p", Opt("publisher", 120)); AgentsApi.P(c, "a", Opt("args", 500)); AgentsApi.P(c, "no", Opt("notes", 1000)); AgentsApi.P(c, "en", enabled); AgentsApi.P(c, "i", id);
             AgentsApi.P(c, "ru", rule); AgentsApi.P(c, "mn", matchName);
@@ -163,12 +187,12 @@ public static class PackagesApi
         {
             if (!b.TryGetProperty("assetIds", out var ids) || ids.ValueKind != JsonValueKind.Array || ids.GetArrayLength() is 0 or > 200) return AgentsApi.Bad("bad_input", "Choose 1 to 200 computers.");
             await using var db = await AgentsApi.Open(t, ct);
-            string name, version, os, kind, source, fileName, sha, args; bool enabled;
-            await using (var q = new NpgsqlCommand("select name, version, os, kind, source, file_name, sha256, args, enabled from assets.packages where id = @i", db))
+            string name, version, os, kind, source, fileName, sha, args, script; bool enabled;
+            await using (var q = new NpgsqlCommand("select name, version, os, kind, source, file_name, sha256, args, enabled, script from assets.packages where id = @i", db))
             {
                 AgentsApi.P(q, "i", id); await using var rd = await q.ExecuteReaderAsync(ct);
                 if (!await rd.ReadAsync(ct)) return Results.NotFound();
-                (name, version, os, kind, source, fileName, sha, args, enabled) = (rd.GetString(0), rd.GetString(1), rd.GetString(2), rd.GetString(3), rd.GetString(4), rd.GetString(5), rd.GetString(6), rd.GetString(7), rd.GetBoolean(8));
+                (name, version, os, kind, source, fileName, sha, args, enabled, script) = (rd.GetString(0), rd.GetString(1), rd.GetString(2), rd.GetString(3), rd.GetString(4), rd.GetString(5), rd.GetString(6), rd.GetString(7), rd.GetBoolean(8), rd.GetString(9));
             }
             if (!enabled) return AgentsApi.Bad("package_off", "This program is switched off in the repository.");
             if (kind == "file" && !File.Exists(FilePath(cfg, t, id))) return AgentsApi.Bad("file_missing", "The installer file is missing on the server. Add the program again.");
@@ -192,6 +216,7 @@ public static class PackagesApi
                     "file" => win ? WinFile(link, sha, fileName, args) : LinFile(link, sha, fileName, args),
                     "winget" => Winget(source, args),
                     "choco" => Choco(source, args),
+                    "script" => win ? WinScript(script) : LinScript(script),
                     _ => LinPackage(source),
                 };
                 var jid = await ServicesApi.Queue(db, hub, t, tg, win ? "powershell" : "bash", "Install " + AgentsApi.Clip(label, 80), body, 3600, by, ct);
@@ -299,6 +324,10 @@ case ""$f"" in
 esac
 rc=$?; rm -f ""$f""
 [ $rc -eq 0 ] && echo ""Installed."" || echo ""The installer stopped with code $rc.""; exit $rc";
+
+    /// <summary>The administrator's own PowerShell install script: stops at the first error and reports the exit code (0, 1641 and 3010 are success).</summary>
+    static string WinScript(string script) => "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'\n" + script + "\nif ($LASTEXITCODE -and @(0, 1641, 3010) -notcontains $LASTEXITCODE) { exit $LASTEXITCODE }";
+    static string LinScript(string script) => "set -e\n" + script;
 
     static string LinPackage(string pkg) => "PKG=" + Sh(pkg) + @"
 export DEBIAN_FRONTEND=noninteractive

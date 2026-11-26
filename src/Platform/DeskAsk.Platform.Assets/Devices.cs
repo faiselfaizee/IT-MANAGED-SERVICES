@@ -143,7 +143,7 @@ public static class AssetsDevice
         exists (select 1 from assets.rentals m where m.asset_ids @> to_jsonb(a.id) and (m.end_date is null or m.end_date >= current_date)),
         a.hw_extra::text, a.monitor, a.collector_id, coalesce(col.name, ''), a.read_req, a.check_up, a.checked_at, a.bmc_extra::text, a.bmc_address, a.bmc_at,
         (select concat_ws(', ', s.name, ps.name, pps.name) from assets.places s left join assets.places ps on ps.id = s.parent_id left join assets.places pps on pps.id = ps.parent_id where s.id = a.site_id),
-        (select s.code from assets.places s where s.id = a.site_id), (select v.name from assets.vendors v where v.id = a.vendor_id), a.po_number, a.invoice_number, a.warranty_months
+        (select s.code from assets.places s where s.id = a.site_id), (select v.name from assets.vendors v where v.id = a.vendor_id), a.po_number, a.invoice_number, a.warranty_months, a.ownership_kind, a.hosted_at
         from assets.assets a left join assets.companies c on c.id = a.company_id left join assets.collectors col on col.id = a.collector_id where a.id = @i";
 
     static async Task<object?> Device(NpgsqlConnection db, long id, int offlineSec, CancellationToken ct)
@@ -163,7 +163,7 @@ public static class AssetsDevice
             system = new { hostname = S(20), dnsName = S(21), ip = S(22), domainType = S(23), domain = S(24), osFamily = S(25), os = S(26), osVersion = S(27), antivirus = S(28), antivirusProducts = Clone(r.GetString(29)), lastPatch = Dt(30), uptimeSeconds = L(36) },
             agent = new { id = S(31), online, lastSeen = seen, source = S(34), inventoryAt = T(35) },
             ownership = new { site = S(59), siteCode = S(60), location = S(37), assignedTo = S(38), vendor = S(61), poNumber = S(62), invoiceNumber = S(63), purchaseDate = Dt(39),
-                warrantyMonths = r.IsDBNull(64) ? "" : r.GetInt32(64).ToString(System.Globalization.CultureInfo.InvariantCulture), warrantyEnd = Dt(40), underAmc = r.GetBoolean(46), amc = S(47), rented = r.GetBoolean(48), notes = S(41) },
+                warrantyMonths = r.IsDBNull(64) ? "" : r.GetInt32(64).ToString(System.Globalization.CultureInfo.InvariantCulture), warrantyEnd = Dt(40), underAmc = r.GetBoolean(46), amc = S(47), rented = r.GetBoolean(48) || S(65) == "rented", kind = S(65), hostedAt = S(66), notes = S(41) },
             remote = new { assetAllows = r.GetBoolean(32), companyAllows = r.GetBoolean(45) },
             storage = Clone(r.GetString(42)), network = Clone(r.GetString(43)), connectedIps = Clone(r.GetString(44)),
             hardware = MergeHardware(r.GetString(49), r.GetString(56)),

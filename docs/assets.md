@@ -500,3 +500,20 @@ The asset list, the ticket list and the Monitoring device list have a "Rows per 
 
 ## 6.23.0
 - Ask DeskAsk: see [assistant.md](assistant.md).
+
+## 6.25.0: ownership, numbering, maintenance
+
+**Ownership and hosting.** Add or edit an asset and choose *Owned*, *Rented* or *Leased*, and where it is hosted (head office, a data centre, AWS, Azure…). Both show on the asset's Overview; *Rented* from a rental contract still shows too. Columns: `assets.assets.ownership_kind`, `hosted_at` (migration 34).
+
+**Numbers per kind.** Under **Settings › Kinds of asset**, give a kind a prefix (2 to 8 letters or digits, for example `SRV`). New assets of that kind are numbered `SRV-0001`, `SRV-0002`… and a kind without a prefix keeps `AST-000123`. Giving an existing asset a kind with a prefix numbers it once, if it still has the automatic `AST-` number; numbers that were typed or already given never change. A database trigger does it, so assets made by agents, discovery and import are numbered the same way.
+
+**Maintenance tab** (computers with the agent). Every action is an ordinary agent job, so it shows in Remote activity with its output and nothing changes in the agent.
+- *Updates:* **Check for updates** (Windows Update through its own API as the agent's SYSTEM account; `apt`, `dnf` or `yum` on Linux), then **Install all** or **Install N selected**, with an option to restart afterwards if the computer asks for it. A reason is required; it goes to the asset history and the audit log (`assets.patch_check`, `assets.patch_install`). The last check is kept, and **Assets › Agents › Patching** lists every computer with what is waiting and whether a restart is needed.
+- *Busiest processes:* reads the processes that use most processor (measured over three seconds, as a share of the whole computer) and memory. Open it from an alert about a full processor or memory.
+- *Print server* (Windows): queues with driver, port, status and waiting jobs; ports; drivers. **Clear queue**, **Clear all stuck jobs** (stops the spooler, deletes the spool files, starts it) and **Restart spooler** need a reason (`assets.printserver_*`).
+
+Values that people type never become script code: KB numbers and package names are matched against a pattern and printer names are passed as quoted literals. API: `POST /api/assets/{id}/patches/check`, `POST /api/assets/{id}/patches/install`, `GET /api/assets/{id}/patches`, `GET /api/assets/patching`, `POST /api/assets/{id}/processes`, `POST /api/assets/{id}/printserver`, `GET /api/assets/{id}/remote/{job}`.
+
+**Install scripts in the repository.** A program of kind **Script** is an administrator's own multi-line script: PowerShell on Windows (run as SYSTEM, stops at the first error) or bash on Linux (`set -e`, run as root), up to 20,000 characters. Use it for installs that need several steps, such as downloading an installer and enrolling an agent. Its SHA-256 is kept and shows in the audit log when it changes. Do not put passwords in it: it is stored in the repository and shown to administrators. Column `assets.packages.script` (migration 34).
+
+Not in this release: small encrypted extra files that travel with a package (for example an enrolment key), assisted install on the user's screen, and adding the busiest processes to the alert text itself.

@@ -15,12 +15,13 @@ import { Configs } from './Configs';
 import { DuplicateNotice, matchesOf } from './Duplicates';
 import { AttachedCard, CustomFields } from './Peripherals';
 import { ServicesPanel, UninstallForm } from './Services';
+import Maintenance from './Maintenance';
 import { PrinterPanel } from './Printer';
 import { LIFECYCLE_TABS, useAssetsLite } from './lite';
 
 const TABS = [
   ['overview', 'Overview'], ['storage', 'Storage'], ['network', 'Network'], ['checks', 'Service checks'], ['apps', 'Applications'], ['services', 'Services'], ['tickets', 'Tickets'], ['relations', 'Relationships'],
-  ['logs', 'Logs'], ['commands', 'Commands'], ['shell', 'Shell'], ['ise', 'PowerShell ISE'], ['remote', 'Remote control'],
+  ['maintenance', 'Maintenance'], ['logs', 'Logs'], ['commands', 'Commands'], ['shell', 'Shell'], ['ise', 'PowerShell ISE'], ['remote', 'Remote control'],
 ] as const;
 
 /** The Hardware tab appears for devices a controller reads in depth (VMware today). */
@@ -60,7 +61,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
     <section className="asset-hero">
       <span className={'hero-ico ' + heroKind(d)}><Icon name={HERO_ICON[heroKind(d)]} size={30} /></span>
       <div className="hero-main">
-        <h1>{d.name} <span className="muted mono">{d.tag}</span> {hasAgent && <Badge tone={online ? 'ok' : 'bad'}>{online ? 'Online' : 'Offline'}</Badge>} {d.ownership.underAmc && <Badge tone="ok">AMC</Badge>} {d.ownership.rented && <Badge>Rented</Badge>}</h1>
+        <h1>{d.name} <span className="muted mono">{d.tag}</span> {hasAgent && <Badge tone={online ? 'ok' : 'bad'}>{online ? 'Online' : 'Offline'}</Badge>} {d.ownership.underAmc && <Badge tone="ok">AMC</Badge>} {d.ownership.rented && <Badge>Rented</Badge>} {d.ownership.kind === 'leased' && <Badge>Leased</Badge>}</h1>
         <div className="hero-meta">
           {d.company && <span className="for-customers"><b>Customer</b>{d.company}</span>}
           {d.identity?.serial && <span><b>Serial</b>{d.identity.serial}</span>}
@@ -83,7 +84,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
         : perms.modify && <button className={approval.data?.required ? '' : 'danger'} onClick={() => setModal('ask')}>{approval.data?.required ? 'Request deletion' : 'Delete'}</button>}
       {perms.admin && hasAgent && <Act label="Refresh inventory" run={async () => { await api(`/api/assets/${id}/refresh`, { method: 'POST', body: {} }); reload(); }} />}
     </div>
-    <nav className="sub" aria-label="Asset tabs">{tabsFor(d).filter(([k]) => !(lite && LIFECYCLE_TABS.includes(k)) && (k !== 'services' || hasAgent) && (!quiet || !['checks', 'commands', 'shell', 'ise', 'remote', 'apps', 'logs', 'network', 'storage'].includes(k))).map(([k, label]) => <a key={k} href={`#/assets/${id}/${k}`} className={tab === k ? 'on' : ''}>{label}</a>)}</nav>
+    <nav className="sub" aria-label="Asset tabs">{tabsFor(d).filter(([k]) => !(lite && LIFECYCLE_TABS.includes(k)) && (!['services', 'maintenance'].includes(k) || hasAgent) && (!quiet || !['checks', 'commands', 'shell', 'ise', 'remote', 'apps', 'logs', 'network', 'storage'].includes(k))).map(([k, label]) => <a key={k} href={`#/assets/${id}/${k}`} className={tab === k ? 'on' : ''}>{label}</a>)}</nav>
     {tab === 'overview' && <><Overview id={id} d={d} reload={reload} admin={!!perms.admin} quiet={quiet} /><AttachedCard id={id} d={d} data={att.data} reload={att.reload} canEdit={!!perms.modify} /><Details id={id} /></>}
     {tab === 'printer' && <PrinterPanel id={id} canAct={!!perms.modify} />}
     {tab === 'storage' && <Storage d={d} />}
@@ -93,6 +94,7 @@ export default function Detail({ id, tab }: { id: string; tab: string }) {
     {tab === 'checks' && <Checks id={id} />}
     {tab === 'apps' && <Apps id={id} canUninstall={hasAgent && !!perms.modify} os={d.system?.osFamily === 'linux' ? 'linux' : 'windows'} />}
     {tab === 'services' && <ServicesPanel assetId={id} />}
+    {tab === 'maintenance' && hasAgent && <Maintenance id={id} os={d.system?.osFamily === 'linux' ? 'linux' : 'windows'} canModify={!!perms.modify} />}
     {tab === 'tickets' && <Tickets id={id} d={d} />}
     {tab === 'relations' && <Relations id={id} canEdit={!!perms.modify} />}
     {tab === 'logs' && <Logs id={id} />}
@@ -116,7 +118,7 @@ function Overview({ id, d, reload, admin, quiet }: { id: string; d: Rec; reload:
     <Card title="Identity"><Dl rows={[['Make', i.make], ['Model', i.model], ['Serial number', i.serial], ['BIOS', i.bios], ['Processor', [i.cpuMake, i.cpuModel].filter(Boolean).join(' ')], ['Sockets / cores', i.cpus ? `${i.cpus} / ${i.cores}${i.logical ? ` (${i.logical} threads)` : ''}` : ''], ['Memory', i.ramBytes ? fmtBytes(i.ramBytes) : ''], ['Storage', i.storageBytes ? fmtBytes(i.storageBytes) : '']]} /></Card>
     {!quiet && <Card title="System"><Dl rows={[['Host name', s.hostname], ['DNS name', s.dnsName], ['IP address', s.ip], ['Domain', s.domainType ? `${s.domainType}${s.domain ? ': ' + s.domain : ''}` : ''], ['Operating system', [s.os, s.osVersion].filter(Boolean).join(' ')], ['Antivirus', s.antivirus ? <Badge tone={s.antivirus === 'Protected' ? 'ok' : 'warn'}>{s.antivirus}</Badge> : ''], ['Last patch', s.lastPatch], ['Uptime', s.uptimeSeconds ? fmtUptime(s.uptimeSeconds) : '']]} /></Card>}
     <Card title="Ownership"><Dl rows={[['Customer', d.company || '(own)'], ['Category', d.category], ['Status', d.status], ['Assigned to', o.assignedTo], ['Site', o.site ? `${o.site}${o.siteCode ? ` (${o.siteCode})` : ''}` : ''], ['Room or area', o.location],
-      ['Vendor', o.vendor], ['Purchase order', o.poNumber], ['Invoice', o.invoiceNumber], ['Purchased', o.purchaseDate], ['Warranty period', o.warrantyMonths ? `${o.warrantyMonths} months` : ''], ['Warranty ends', o.warrantyEnd ? <>{fmtDay(o.warrantyEnd)} {warrantyLeft !== null && <Badge tone={warrantyLeft < 0 ? 'bad' : warrantyLeft < 60 ? 'warn' : 'ok'}>{warrantyLeft < 0 ? 'expired' : warrantyLeft + ' days left'}</Badge>}</> : ''], ['AMC', cov?.amc ? `${cov.amc.title}${cov.amc.vendor ? ' (' + cov.amc.vendor + ')' : ''}` : o.amc || (o.underAmc ? 'Yes' : '')], ['Rental', cov?.rental ? `${cov.rental.title}${cov.rental.vendor ? ' (' + cov.rental.vendor + ')' : ''}` : ''], ['Monitoring', cov ? (cov.monitored ? 'On' : 'Not monitored') : ''], ['Notes', o.notes]]} /></Card>
+      ['Vendor', o.vendor], ['Purchase order', o.poNumber], ['Invoice', o.invoiceNumber], ['Purchased', o.purchaseDate], ['Warranty period', o.warrantyMonths ? `${o.warrantyMonths} months` : ''], ['Ownership', o.kind ? ({ owned: 'Owned', rented: 'Rented', leased: 'Leased' } as Record<string, string>)[String(o.kind)] ?? o.kind : ''], ['Hosted at', o.hostedAt], ['Warranty ends', o.warrantyEnd ? <>{fmtDay(o.warrantyEnd)} {warrantyLeft !== null && <Badge tone={warrantyLeft < 0 ? 'bad' : warrantyLeft < 60 ? 'warn' : 'ok'}>{warrantyLeft < 0 ? 'expired' : warrantyLeft + ' days left'}</Badge>}</> : ''], ['AMC', cov?.amc ? `${cov.amc.title}${cov.amc.vendor ? ' (' + cov.amc.vendor + ')' : ''}` : o.amc || (o.underAmc ? 'Yes' : '')], ['Rental', cov?.rental ? `${cov.rental.title}${cov.rental.vendor ? ' (' + cov.rental.vendor + ')' : ''}` : ''], ['Monitoring', cov ? (cov.monitored ? 'On' : 'Not monitored') : ''], ['Notes', o.notes]]} /></Card>
     {!quiet && <Card title="Agent &amp; remote access">
       <Dl rows={[['Agent', a.id ? (a.online ? 'Online' : 'Offline') : 'None'], ['Last seen', a.lastSeen ? `${ago(a.lastSeen)} (${fmtDate(a.lastSeen)})` : ''], ['Data from', a.source], ['Inventory at', a.inventoryAt ? fmtDate(a.inventoryAt) : '']]} />
       <p><label><input type="checkbox" checked={rm.assetAllows} onChange={async (e) => { await api(`/api/assets/${id}/remote`, { body: { on: e.target.checked } }); reload(); }} /> Allow remote commands, shell and remote control on this device</label></p>
@@ -230,7 +232,7 @@ function EditAsset({ id, d, onClose }: { id: string; d: Rec; onClose: (changed: 
 function EditForm({ id, d, a, cov, onClose }: { id: string; d: Rec; a: Rec; cov: Rec; onClose: (changed: boolean) => void }) {
   const [v, setV] = useState<Rec>({ name: a.name ?? '', status: a.status ?? 'in_use', manufacturer: a.manufacturer ?? '', model: a.model ?? '', serial: a.serial ?? '', assignedTo: a.assignedTo ?? '',
     ipAddress: d.system?.ip ?? '', location: a.location ?? '', siteId: a.siteId ?? null, vendorId: a.vendorId ?? null, poNumber: a.poNumber ?? '', invoiceNumber: a.invoiceNumber ?? '',
-    purchaseDate: a.purchaseDate ?? '', warrantyMonths: a.warrantyMonths ?? null, warrantyEnd: a.warrantyEnd ?? '',
+    purchaseDate: a.purchaseDate ?? '', warrantyMonths: a.warrantyMonths ?? null, warrantyEnd: a.warrantyEnd ?? '', ownershipKind: a.ownershipKind ?? '', hostedAt: a.hostedAt ?? '',
     hostname: cov.hostname ?? '', macAddress: cov.macAddress ?? '', monitored: cov.monitored !== false, custom: a.custom ?? {}, amcId: cov.amc?.id ?? null, rentalId: cov.rental?.id ?? null });
   const [dup, setDup] = useState<ReturnType<typeof matchesOf>>(null);
   const f = useSubmit(() => onClose(true)); const set = (k: string, x: string) => setV({ ...v, [k]: x });
