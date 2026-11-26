@@ -286,7 +286,7 @@ internal static class InsightApi
         AdModule.Use(r.MapGet("/api/adsuite/domains/{id:int}/health", async (int id, ClaimsPrincipal u, ITenantContext t, IDataProtectionProvider dp, IControllerRelay relay, IAccess access, IAuditLog audit, CancellationToken ct) =>
         {
             var (d, fail) = await Gate(id, u, t, dp, access, ct); if (d == null) return fail!;
-            try { var res = await Health(relay, d, ct); await audit.WriteAsync("adsuite.health", d.Name, null, null, ct); return Results.Ok(res); }
+            try { var res = await Health(relay, d, ct); await audit.WriteAsync("adsuite.health", d.Name, "health check read", null, ct); return Results.Ok(res); }
             catch (DirError e) { return Dir.Explain(e); }
             catch (Exception e) { return Results.Json(new { error = "insight_failed", detail = e.GetType().Name + ": " + e.Message }, statusCode: 500); }
         }), key);
