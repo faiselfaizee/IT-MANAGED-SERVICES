@@ -15,6 +15,7 @@ import List from './List';
 import Dashboard, { CustomerDash } from './Dashboard';
 import Reports from './Reports';
 import Software from './Software';
+import Patching from './Patching';
 import Packages from './Packages';
 import Licenses, { LicenseDetail } from './Licenses';
 import { RemoteLog, Repository, Settings } from './Admin';
@@ -27,7 +28,7 @@ const MENU: { group: string; items: Nav[] }[] = [
   { group: 'Inventory', items: [{ key: 'list', label: 'All assets' }, { key: 'stock', label: 'Stock' }, { key: 'delete-requests', label: 'Delete requests' }] },
   { group: 'Software', items: [{ key: 'software', label: 'Installed software' }, { key: 'repository', label: 'Repository' }, { key: 'licenses', label: 'Licences & subscriptions' }] },
   { group: 'Contracts', items: [{ key: 'amc', label: 'AMC' }, { key: 'rentals', label: 'Rentals' }, { key: 'renewals', label: 'Renewals' }, { key: 'vendors', label: 'Vendors' }] },
-  { group: 'Agents', items: [{ key: 'commands', label: 'Command repository' }, { key: 'remote-log', label: 'Remote activity' }] },
+  { group: 'Agents', items: [{ key: 'patching', label: 'Patching' }, { key: 'commands', label: 'Command repository' }, { key: 'remote-log', label: 'Remote activity' }] },
   { group: 'Reports', items: [{ key: 'reports', label: 'Asset reports' }] },
   { group: 'Settings', items: [{ key: 'locations', label: 'Locations' }, { key: 'types', label: 'Kinds of asset' }, { key: 'settings', label: 'Settings' }] },
 ];
@@ -38,7 +39,7 @@ export default function AssetsApp() {
   const perms = usePerms('assets'); const amcOk = useAmcAccess(); const parts = useHash(); const [, a, b] = parts;
   // administrators see every page; other people see the pages they may read (a customer administrator sees only assets and companies)
   const approval = useLoad<Rec>('/api/assets/delete-approval');
-  const may = (k: string) => (k !== 'delete-requests' || !!approval.data?.required) && (perms.admin || ['dashboard', 'list', 'stock', 'reports', 'companies', 'locations', 'vendors', 'renewals', 'duplicates', 'licenses'].includes(k) || (k === 'delete-requests' && (perms.modify || perms.delete)) || (k === 'repository' && perms.modify) || (perms.readAll && ['software', 'amc', 'rentals'].includes(k)) || (k === 'amc' && amcOk)); const section = /^\d+$/.test(a ?? '') ? 'list' : a === 'customer' ? 'dashboard' : a ?? 'list';
+  const may = (k: string) => (k !== 'delete-requests' || !!approval.data?.required) && (perms.admin || ['dashboard', 'list', 'stock', 'reports', 'companies', 'locations', 'vendors', 'renewals', 'duplicates', 'licenses'].includes(k) || (k === 'delete-requests' && (perms.modify || perms.delete)) || (k === 'repository' && perms.modify) || (perms.readAll && ['software', 'amc', 'rentals', 'patching'].includes(k)) || (k === 'amc' && amcOk)); const section = /^\d+$/.test(a ?? '') ? 'list' : a === 'customer' ? 'dashboard' : a ?? 'list';
   let page;
   if (/^\d+$/.test(a ?? '')) page = <Detail id={a} tab={b ?? 'overview'} />;
   else if (lite && (a === undefined || a === 'dashboard' || LIFECYCLE_PAGES.includes(a ?? ''))) page = a === undefined ? <List key={location.hash} /> : <p className="muted">This part of Asset management is not in your licence. Customers, logins, agents and the device list are under Administration › Devices setup and Assets › All assets.</p>;
@@ -48,6 +49,7 @@ export default function AssetsApp() {
     case 'reports': page = <Reports key={b ?? ''} name={b} />; break;
     case 'software': page = <Software />; break;
     case 'repository': page = <Packages />; break;
+    case 'patching': page = <Patching />; break;
     case 'licenses': page = b ? <LicenseDetail key={b} id={b} /> : <Licenses />; break;
     case 'discover': page = <Discover />; break;
     case 'fleet': page = <Fleet />; break;

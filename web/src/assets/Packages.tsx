@@ -3,7 +3,7 @@ import { api, uploadInPieces, useLoad, type Rec } from '../http';
 import { Act, Badge, Empty, Err, Field, Loading, Modal, useSubmit } from '../ui';
 import { JobView } from './DetailOps';
 
-const KIND: Record<string, string> = { file: 'Installer', winget: 'winget', choco: 'Chocolatey', apt: 'Package manager' };
+const KIND: Record<string, string> = { file: 'Installer', winget: 'winget', choco: 'Chocolatey', apt: 'Package manager', script: 'Script' };
 const size = (n: number) => n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)} GB` : n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n > 0 ? `${Math.max(1, Math.round(n / 1024))} KB` : '';
 
 /** Assets › Software › Repository: the approved programs engineers install on computers in one step. */
@@ -17,7 +17,7 @@ export default function Packages() {
     <div className="tools"><button className="primary" onClick={() => setAdd(true)}>Add a program</button></div>
     <Loading loading={loading && !data} error={error} />
     {data && (items.length === 0 ? <Empty>No programs yet. Add an installer (.msi, .exe, .deb, .rpm) or a winget, Chocolatey or package-manager name.</Empty> : <table><thead><tr><th>Program</th><th>For</th><th>Kind</th><th>Size</th><th className="num">Installs</th><th /></tr></thead><tbody>
-      {items.map((p) => <tr key={p.id}><td>{p.name} {p.version} {!p.enabled && <Badge>off</Badge>}{p.rule === 'required' && <> <Badge tone="ok">Required</Badge></>}{p.rule === 'prohibited' && <> <Badge tone="bad">Prohibited</Badge></>}<div className="muted small">{p.publisher}{p.kind === 'file' ? ` · ${p.fileName} · SHA-256 ${String(p.sha256).slice(0, 12)}…` : ` · ${p.source}`}</div></td>
+      {items.map((p) => <tr key={p.id}><td>{p.name} {p.version} {!p.enabled && <Badge>off</Badge>}{p.rule === 'required' && <> <Badge tone="ok">Required</Badge></>}{p.rule === 'prohibited' && <> <Badge tone="bad">Prohibited</Badge></>}<div className="muted small">{p.publisher}{p.kind === 'file' ? ` · ${p.fileName} · SHA-256 ${String(p.sha256).slice(0, 12)}…` : p.kind === 'script' ? ` · script, ${String(p.script ?? '').split('\n').length} lines · SHA-256 ${String(p.sha256).slice(0, 12)}…` : ` · ${p.source}`}</div></td>
         <td>{p.os === 'windows' ? 'Windows' : 'Linux'}</td><td>{KIND[p.kind] ?? p.kind}</td><td>{size(p.size)}</td>
         <td className="num"><a href="#" onClick={(e) => { e.preventDefault(); setHistory(p); }}>{p.installs}</a></td>
         <td><button disabled={!p.enabled} onClick={() => setInstall(p)}>Install on…</button> <button onClick={() => setEdit(p)}>Edit</button>{' '}
@@ -31,9 +31,9 @@ export default function Packages() {
 }
 
 function AddPackage({ onClose }: { onClose: (changed: boolean) => void }) {
-  const [v, setV] = useState({ os: 'windows', kind: 'file', name: '', version: '', publisher: '', source: '', args: '', notes: '', sha256: '' }); const set = (k: string, x: string) => setV({ ...v, [k]: x });
+  const [v, setV] = useState({ os: 'windows', kind: 'file', name: '', version: '', publisher: '', source: '', args: '', notes: '', sha256: '', script: '' }); const set = (k: string, x: string) => setV({ ...v, [k]: x });
   const [file, setFile] = useState<File | null>(null); const [sent, setSent] = useState(0); const f = useSubmit(() => onClose(true));
-  const kinds = v.os === 'windows' ? ['file', 'winget', 'choco'] : ['file', 'apt'];
+  const kinds = v.os === 'windows' ? ['file', 'winget', 'choco', 'script'] : ['file', 'apt', 'script'];
   const accept = v.os === 'windows' ? '.msi,.exe' : '.deb,.rpm,.sh';
   const pick = (x?: File) => { setFile(x ?? null); if (x && !v.name) set('name', x.name.replace(/\.(msi|exe|deb|rpm|sh)$/i, '').replace(/[-_]+/g, ' ')); };
   const save = async () => {
@@ -50,22 +50,25 @@ function AddPackage({ onClose }: { onClose: (changed: boolean) => void }) {
       <Field label="Kind"><select value={v.kind} onChange={(e) => set('kind', e.target.value)}>{kinds.map((k) => <option key={k} value={k}>{KIND[k]}</option>)}</select></Field></div>
     {v.kind === 'file' ? <><Field label={`Installer (${accept})`}><input type="file" accept={accept} onChange={(e) => pick(e.target.files?.[0])} /></Field>
       <Field label="SHA-256 from the vendor (optional, checked after upload)"><input value={v.sha256} onChange={(e) => set('sha256', e.target.value.trim())} spellCheck={false} /></Field></>
+      : v.kind === 'script' ? <Field label={v.os === 'windows' ? 'Install script (PowerShell, run as SYSTEM)' : 'Install script (bash, run as root)'} hint="Any number of lines. It stops at the first error. Keep passwords out of it: it is stored here and shown to administrators.">
+        <textarea rows={10} className="mono" value={v.script} onChange={(e) => set('script', e.target.value)} spellCheck={false} placeholder={v.os === 'windows' ? '# for example: download, install, register\n' : '# for example: curl, install, enable the service\n'} /></Field>
       : <Field label={v.kind === 'apt' ? 'Package name (apt, dnf, yum or zypper)' : v.kind === 'winget' ? 'winget id, for example Google.Chrome' : 'Chocolatey id, for example googlechrome'}><input value={v.source} onChange={(e) => set('source', e.target.value.trim())} spellCheck={false} /></Field>}
     <div className="row"><Field label="Name"><input value={v.name} onChange={(e) => set('name', e.target.value)} /></Field><Field label="Version"><input value={v.version} onChange={(e) => set('version', e.target.value)} /></Field></div>
     <Field label="Publisher"><input value={v.publisher} onChange={(e) => set('publisher', e.target.value)} /></Field>
-    {v.kind !== 'apt' && <Field label={v.kind === 'file' ? 'Silent switches (an .msi gets /qn /norestart already; for an .exe, for example /S or /quiet)' : 'Installer switches to pass on (optional)'}><input value={v.args} onChange={(e) => set('args', e.target.value)} spellCheck={false} /></Field>}
+    {!['apt', 'script'].includes(v.kind) && <Field label={v.kind === 'file' ? 'Silent switches (an .msi gets /qn /norestart already; for an .exe, for example /S or /quiet)' : 'Installer switches to pass on (optional)'}><input value={v.args} onChange={(e) => set('args', e.target.value)} spellCheck={false} /></Field>}
     <Field label="Notes"><textarea rows={2} value={v.notes} onChange={(e) => set('notes', e.target.value)} /></Field>
     {file && f.busy && <p role="status">Uploading {Math.round((sent / Math.max(1, file.size)) * 100)}%…</p>}
     <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button>
-      <button className="primary" disabled={f.busy || !v.name.trim() || (v.kind === 'file' ? !file : !v.source)} onClick={() => void f.submit(save)}>Add</button></div></div></Modal>;
+      <button className="primary" disabled={f.busy || !v.name.trim() || (v.kind === 'file' ? !file : v.kind === 'script' ? !v.script.trim() : !v.source)} onClick={() => void f.submit(save)}>Add</button></div></div></Modal>;
 }
 
 function EditPackage({ p, onClose }: { p: Rec; onClose: (changed: boolean) => void }) {
-  const [v, setV] = useState({ name: p.name, version: p.version, publisher: p.publisher, args: p.args, notes: p.notes, enabled: !!p.enabled, rule: p.rule ?? '', matchName: p.matchName ?? '' }); const f = useSubmit(() => onClose(true));
+  const [v, setV] = useState({ name: p.name, version: p.version, publisher: p.publisher, args: p.args, notes: p.notes, enabled: !!p.enabled, rule: p.rule ?? '', matchName: p.matchName ?? '', script: p.script ?? '' }); const f = useSubmit(() => onClose(true));
   return <Modal title={`Edit ${p.name}`} onClose={() => onClose(false)}><div className="form">
     <div className="row"><Field label="Name"><input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} /></Field><Field label="Version"><input value={v.version} onChange={(e) => setV({ ...v, version: e.target.value })} /></Field></div>
     <Field label="Publisher"><input value={v.publisher} onChange={(e) => setV({ ...v, publisher: e.target.value })} /></Field>
-    {p.kind !== 'apt' && <Field label="Switches"><input value={v.args} onChange={(e) => setV({ ...v, args: e.target.value })} spellCheck={false} /></Field>}
+    {p.kind === 'script' && <Field label="Install script" hint="Saving a new script changes what runs on computers from now on."><textarea rows={10} className="mono" value={v.script} onChange={(e) => setV({ ...v, script: e.target.value })} spellCheck={false} /></Field>}
+    {!['apt', 'script'].includes(p.kind) && <Field label="Switches"><input value={v.args} onChange={(e) => setV({ ...v, args: e.target.value })} spellCheck={false} /></Field>}
     <Field label="Notes"><textarea rows={2} value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} /></Field>
     <label><input type="checkbox" checked={v.enabled} onChange={(e) => setV({ ...v, enabled: e.target.checked })} /> Can be installed</label>
     <div className="row"><Field label="Company rule"><select value={v.rule} onChange={(e) => setV({ ...v, rule: e.target.value })}><option value="">None</option><option value="required">Required: every computer should have it</option><option value="prohibited">Prohibited: no computer should have it</option></select></Field>

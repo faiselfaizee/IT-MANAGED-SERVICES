@@ -167,14 +167,14 @@ export function Types() {
     <p className="muted">Each kind keeps its own extra details (a phone's IMEI, a monitor's screen size). A kind marked <b>not reached remotely</b> has no agent, shell or remote control and is not watched by monitoring.</p>
     <div className="tools"><button className="primary" onClick={() => setEdit('new')}>New kind</button></div>
     <Loading loading={loading && !data} error={error} />
-    {data && <table><thead><tr><th>Kind</th><th>Details</th><th>Not reached remotely</th><th className="num">Assets</th><th /></tr></thead><tbody>
-      {list.map((t) => <tr key={t.id}><td>{t.name}</td><td className="muted">{((t.fields ?? []) as Rec[]).map((f) => f.label).join(', ')}</td><td>{t.peripheral ? 'Yes' : ''}</td><td className="num">{t.assets}</td><td><button onClick={() => setEdit(t)}>Change</button></td></tr>)}</tbody></table>}
+    {data && <table><thead><tr><th>Kind</th><th>Details</th><th>Numbers</th><th>Not reached remotely</th><th className="num">Assets</th><th /></tr></thead><tbody>
+      {list.map((t) => <tr key={t.id}><td>{t.name}</td><td className="muted">{((t.fields ?? []) as Rec[]).map((f) => f.label).join(', ')}</td><td className="mono small">{t.tagPrefix ? `${t.tagPrefix}-0001…` : <span className="muted">AST-…</span>}</td><td>{t.peripheral ? 'Yes' : ''}</td><td className="num">{t.assets}</td><td><button onClick={() => setEdit(t)}>Change</button></td></tr>)}</tbody></table>}
     {edit && <TypeForm t={edit === 'new' ? null : edit} onClose={(ch) => { setEdit(null); if (ch) reload(); }} />}
   </>;
 }
 
 function TypeForm({ t, onClose }: { t: Rec | null; onClose: (changed: boolean) => void }) {
-  const [name, setName] = useState<string>(t?.name ?? ''); const [peripheral, setPeripheral] = useState<boolean>(!!t?.peripheral);
+  const [name, setName] = useState<string>(t?.name ?? ''); const [peripheral, setPeripheral] = useState<boolean>(!!t?.peripheral); const [prefix, setPrefix] = useState<string>(t?.tagPrefix ?? '');
   const [text, setText] = useState<string>(((t?.fields ?? []) as Rec[]).map((f) => `${f.label}:${f.kind}${f.kind === 'choice' ? ':' + (f.options ?? []).join('/') : ''}`).join('\n'));
   const f = useSubmit(() => onClose(true));
   const fields = () => {
@@ -188,8 +188,9 @@ function TypeForm({ t, onClose }: { t: Rec | null; onClose: (changed: boolean) =
   };
   return <Modal title={t ? `Change ${t.name}` : 'New kind of asset'} onClose={() => onClose(false)}><div className="form">
     <Field label="Name"><input value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
+    <Field label="Number prefix" hint="New assets of this kind are numbered SRV-0001, SRV-0002… with the prefix you type here (2 to 8 letters or digits). Empty keeps AST-000123. Numbers already given do not change."><input value={prefix} onChange={(e) => setPrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} maxLength={8} placeholder="SRV" spellCheck={false} /></Field>
     <label><input type="checkbox" checked={peripheral} onChange={(e) => setPeripheral(e.target.checked)} /> Not reached remotely (no agent, shell or remote control; not monitored)</label>
     <Field label="Extra details, one per line as  Label:kind  (kinds: text, number, date, bool, choice; a choice lists its options like  OS:choice:Android/iOS)"><textarea rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder={'IMEI:text\nStorage (GB):number'} spellCheck={false} /></Field>
     <Err text={f.err} /><div className="actions"><button onClick={() => onClose(false)}>Cancel</button>
-      <button className="primary" disabled={f.busy || !name.trim()} onClick={() => void f.submit(() => api(t ? `/api/assets/types/${t.id}` : '/api/assets/types', { method: t ? 'PUT' : 'POST', body: { name: name.trim(), peripheral, fields: fields() } }))}>Save</button></div></div></Modal>;
+      <button className="primary" disabled={f.busy || !name.trim()} onClick={() => void f.submit(() => api(t ? `/api/assets/types/${t.id}` : '/api/assets/types', { method: t ? 'PUT' : 'POST', body: { name: name.trim(), peripheral, tagPrefix: prefix, fields: fields() } }))}>Save</button></div></div></Modal>;
 }
