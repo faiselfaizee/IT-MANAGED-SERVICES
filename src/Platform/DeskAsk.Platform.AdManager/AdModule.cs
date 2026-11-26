@@ -42,6 +42,7 @@ public sealed class AdModule : IPlatformModule
         DomainsApi.Map(r, Key);
         BrowseApi.Map(r, Key);
         ReportsApi.Map(r, Key);
+        InsightApi.Map(r, Key);
         RequestsApi.Map(r, Key);
         ManageApi.Map(r, Key);
     }
